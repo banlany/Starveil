@@ -15,6 +15,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use tungstenite::client::IntoClientRequest;
 
 /// 一条弹幕（或系统提示）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -25,6 +26,22 @@ pub struct DanmakuMessage {
     pub color: Option<u32>,
     /// 系统消息（进房提示、人气值等），UI 用弱化样式。
     pub system: bool,
+    /// 0=滚动，1=顶部固定，2=底部固定（B 站弹幕模式 5/4）。
+    #[serde(default)]
+    pub position: u8,
+    /// B 站醒目留言（SC）；普通弹幕为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sc: Option<SuperChatMessage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SuperChatMessage {
+    pub price: u64,
+    pub avatar: String,
+    pub background_color: String,
+    pub background_bottom_color: String,
+    pub start_time: u64,
+    pub end_time: u64,
 }
 
 impl DanmakuMessage {
@@ -34,6 +51,8 @@ impl DanmakuMessage {
             text: text.into(),
             color: None,
             system: false,
+            position: 0,
+            sc: None,
         }
     }
 
@@ -43,6 +62,8 @@ impl DanmakuMessage {
             text: text.into(),
             color: None,
             system: true,
+            position: 0,
+            sc: None,
         }
     }
 }
@@ -131,7 +152,17 @@ fn sleep_while(stop: &AtomicBool, duration: Duration) -> bool {
 
 fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
     ensure_crypto_provider();
-    let RoomExtra::Bilibili { token, host, .. } = extra else {
+    let RoomExtra::Bilibili {
+        token,
+        host,
+        buvid3,
+        buvid4,
+        cookie,
+        uid,
+        room_id: _,
+        ..
+    } = extra
+    else {
         let _ = tx.send(DanmakuMessage::system("B 站弹幕参数缺失，已跳过弹幕"));
         return;
     };
@@ -147,7 +178,28 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
     let mut attempt = 0;
     while !stop.load(Ordering::Relaxed) && attempt < 3 {
         attempt += 1;
-        match tungstenite::connect(url.as_str()) {
+        // B 站弹幕服务器会校验 Origin，并可能根据 buvid 下发不同的房间流。
+        let mut request = match url.as_str().into_client_request() {
+            Ok(request) => request,
+            Err(error) => {
+                let _ = tx.send(DanmakuMessage::system(format!(
+                    "B 站弹幕握手失败：{error}"
+                )));
+                return;
+            }
+        };
+        let mut ws_cookie = cookie.trim().to_string();
+        if !ws_cookie.contains("buvid3=") {
+            if !ws_cookie.is_empty() {
+                ws_cookie.push_str("; ");
+            }
+            ws_cookie.push_str(&format!("buvid3={buvid3}; buvid4={buvid4}"));
+        }
+        if let Ok(value) = tungstenite::http::HeaderValue::from_str(&ws_cookie) {
+            request.headers_mut().insert("Cookie", value);
+        }
+
+        match tungstenite::connect(request) {
             Ok((mut socket, _)) => {
                 // 给底层 TCP 设个读超时：否则房间安静时 read() 会永久阻塞，
                 // 切房后线程退不出去，socket 与缓冲区都泄漏。
@@ -156,9 +208,13 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
                         .sock
                         .set_read_timeout(Some(Duration::from_millis(600)));
                 }
-                let _ = socket.send(tungstenite::Message::Binary(
-                    bilibili_packet(7, bilibili_join_body(&room_id, token)).into(),
-                ));
+                if let Err(error) = socket.send(tungstenite::Message::Binary(
+                    bilibili_packet(7, bilibili_join_body(&room_id, token, buvid3, *uid)).into(),
+                )) {
+                    let _ = tx.send(DanmakuMessage::system(format!(
+                        "B 站弹幕进房失败：{error}"
+                    )));
+                }
 
                 let mut last_heartbeat = std::time::Instant::now();
                 loop {
@@ -209,9 +265,9 @@ fn bilibili_room_id(extra: &RoomExtra) -> Option<String> {
     }
 }
 
-fn bilibili_join_body(room_id: &str, token: &str) -> Vec<u8> {
+fn bilibili_join_body(room_id: &str, token: &str, buvid: &str, uid: u64) -> Vec<u8> {
     format!(
-        r#"{{"uid":0,"roomid":{room_id},"protover":3,"buvid":"","platform":"web","type":2,"key":"{token}"}}"#
+        r#"{{"uid":{uid},"roomid":{room_id},"protover":3,"buvid":"{buvid}","platform":"web","type":2,"key":"{token}"}}"#
     )
     .into_bytes()
 }
@@ -220,7 +276,8 @@ fn bilibili_packet(action: u32, body: Vec<u8>) -> Vec<u8> {
     let mut packet = Vec::with_capacity(16 + body.len());
     packet.extend_from_slice(&((16 + body.len()) as u32).to_be_bytes());
     packet.extend_from_slice(&16u16.to_be_bytes());
-    packet.extend_from_slice(&1u16.to_be_bytes()); // ver=1：心跳包正文不压缩
+    // 发送包 version=0（JSON 正文）；原版 Dart 也是这样写的。
+    packet.extend_from_slice(&0u16.to_be_bytes());
     packet.extend_from_slice(&action.to_be_bytes());
     packet.extend_from_slice(&1u32.to_be_bytes());
     packet.extend_from_slice(&body);
@@ -281,6 +338,60 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             continue;
         };
         let cmd = value.get("cmd").and_then(|cmd| cmd.as_str()).unwrap_or("");
+        if cmd == "SUPER_CHAT_MESSAGE" {
+            let Some(data) = value.get("data") else {
+                continue;
+            };
+            let text = data
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let user = data
+                .get("user_info")
+                .and_then(|info| info.get("uname"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let avatar = data
+                .get("user_info")
+                .and_then(|info| info.get("face"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let price = data.get("price").and_then(|v| v.as_u64()).unwrap_or(0);
+            let background_color = data
+                .get("background_color")
+                .and_then(|v| v.as_str())
+                .unwrap_or("#fb7299")
+                .to_string();
+            let background_bottom_color = data
+                .get("background_bottom_color")
+                .and_then(|v| v.as_str())
+                .unwrap_or("#fb7299")
+                .to_string();
+            let start_time = data.get("start_time").and_then(|v| v.as_u64()).unwrap_or(0);
+            let end_time = data.get("end_time").and_then(|v| v.as_u64()).unwrap_or(0);
+            let _ = tx.send(DanmakuMessage {
+                user,
+                text,
+                color: None,
+                system: false,
+                position: 0,
+                sc: Some(SuperChatMessage {
+                    price,
+                    avatar,
+                    background_color,
+                    background_bottom_color,
+                    start_time,
+                    end_time,
+                }),
+            });
+            continue;
+        }
         if !cmd.starts_with("DANMU_MSG") {
             continue;
         }
@@ -298,9 +409,18 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let color = info
-            .first()
-            .and_then(|v| v.as_array())
+        let meta = info.first().and_then(|v| v.as_array());
+        // B 站 info[0]: [1]=mode(1 滚动/4 底部/5 顶部), [3]=颜色。
+        let mode = meta
+            .and_then(|arr| arr.get(1))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+        let position = match mode {
+            5 => 1,
+            4 => 2,
+            _ => 0,
+        };
+        let color = meta
             .and_then(|arr| arr.get(3))
             .and_then(|v| v.as_u64())
             .filter(|color| *color > 0)
@@ -311,6 +431,8 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             text,
             color,
             system: false,
+            position,
+            sc: None,
         });
     }
 }
@@ -445,6 +567,8 @@ fn douyu_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
                     text: message,
                     color,
                     system: false,
+                    position: 0,
+                    sc: None,
                 });
             }
             return;
@@ -475,6 +599,26 @@ mod tests {
         assert_eq!(messages[0].user, "");
         assert_eq!(messages[0].text, "你好");
         assert_eq!(messages[0].color, Some(16711680));
+        assert_eq!(messages[0].position, 0);
+    }
+
+    #[test]
+    fn b站固定弹幕和sc能解析() {
+        let fixed = r#"{"cmd":"DANMU_MSG","info":[[0,5,25,16777215],"顶部","[uid]"]}"#;
+        let (tx, rx) = channel();
+        bilibili_parse_json(fixed, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].position, 1);
+
+        let sc = r##"{"cmd":"SUPER_CHAT_MESSAGE","data":{"message":"SC 内容","price":30,"background_color":"#111111","background_bottom_color":"#222222","start_time":10,"end_time":20,"user_info":{"uname":"用户","face":"https://example.com/a.jpg"}}}"##;
+        let (tx, rx) = channel();
+        bilibili_parse_json(sc, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "SC 内容");
+        assert_eq!(messages[0].sc.as_ref().unwrap().price, 30);
+        assert_eq!(messages[0].sc.as_ref().unwrap().avatar, "https://example.com/a.jpg");
     }
 
     #[test]

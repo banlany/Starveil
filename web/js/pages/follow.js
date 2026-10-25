@@ -137,7 +137,7 @@ export function renderFollow(ctx) {
       card.tabIndex = 0;
       card.innerHTML = `
         <span class="card-platform">${platformIcon(item.platform, 17)}</span>
-        ${avatarHtml(item.user_name, item.cover, state.followView === 'grid' ? 62 : 44)}
+        ${avatarHtml(item.user_name, item.avatar || item.cover, state.followView === 'grid' ? 62 : 44)}
         <div class="follow-name">${escapeHtml(item.user_name || '未知主播')}</div>
         <div class="follow-meta">
           <span class="follow-status${item.live ? ' live' : ''}">${item.live ? '直播中' : '未开播'}</span>
@@ -227,7 +227,7 @@ export function renderFollow(ctx) {
             for (const item of list) {
               const card = document.createElement('article');
               card.className = 'follow-card';
-              card.innerHTML = `${avatarHtml(item.user_name, item.cover, 62)}<div class="follow-name">${escapeHtml(item.user_name)}</div><div class="follow-meta">${escapeHtml(item.tag || '默认')}</div>`;
+              card.innerHTML = `${avatarHtml(item.user_name, item.avatar || item.cover, 62)}<div class="follow-name">${escapeHtml(item.user_name)}</div><div class="follow-meta">${escapeHtml(item.tag || '默认')}</div>`;
               card.addEventListener('click', () => ctx.openRoom(item.platform, item.room_id));
               grid.appendChild(card);
             }

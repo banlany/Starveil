@@ -68,6 +68,7 @@ pub fn parse_detail(
         platform: Platform::Bilibili,
         title: text(data, "room_info.title").unwrap_or_default(),
         user_name: text(data, "anchor_info.base_info.uname").unwrap_or_default(),
+        avatar: absolute(&text(data, "anchor_info.base_info.face").unwrap_or_default()),
         cover: absolute(&text(data, "room_info.cover").unwrap_or_default()),
         online: u64_of(data, "room_info.online"),
         live: u32_of(data, "room_info.live_status") == 1,
@@ -80,6 +81,8 @@ pub fn parse_detail(
             token: String::new(),
             host: "broadcastlv.chat.bilibili.com".to_string(),
             room_id: room_id.clone(),
+            cookie: String::new(),
+            uid: 0,
         },
         room_id,
     })
@@ -423,6 +426,19 @@ impl LiveSite for BilibiliSite {
             ],
         )?;
         let mut detail = parse_detail(&value, buvid3, buvid4, room_id)?;
+        if let RoomExtra::Bilibili {
+            cookie: slot_cookie,
+            uid: slot_uid,
+            ..
+        } = &mut detail.extra
+        {
+            *slot_cookie = cookie.clone();
+            *slot_uid = cookie
+                .split(';')
+                .find_map(|part| part.trim().strip_prefix("DedeUserID="))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+        }
         // 弹幕 token 拿不到不影响进房，只是没有弹幕。
         if let Ok((token, host)) = self.danmu_info(http, &detail.room_id, &cookie)
             && let RoomExtra::Bilibili {

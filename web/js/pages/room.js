@@ -132,6 +132,12 @@ export function renderRoom(ctx, params = {}) {
     refreshTimer: 0,
     danmakuTimer: 0,
     laneFree: [],
+    laneCursor: 0,
+    fixedTopFree: [],
+    fixedBottomFree: [],
+    fixedTopCursor: 0,
+    fixedBottomCursor: 0,
+    scMessages: [],
     activeDanmaku: new Set(),
     dedupe: new Map(),
     recentBlocked: 0,
@@ -253,7 +259,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function spawnDanmaku(message) {
-    if (!session.danmakuEnabled || message.system) return;
+    if (!session.danmakuEnabled || message.system || message.sc) return;
     if (blocked(message)) return;
     if (deduped(message)) return;
     const width = stage.clientWidth;
@@ -266,24 +272,79 @@ export function renderRoom(ctx, params = {}) {
       element.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
     }
     if (!config.stroke) element.classList.add('no-stroke');
+    const laneHeight = Math.max(config.font * 1.35, 24);
+    const now = performance.now();
+    const position = Number(message.position) || 0;
+
+    // B 站顶部/底部固定弹幕：水平居中，不参与滚动轨道。
+    if (position === 1 || position === 2) {
+      const top = position === 1;
+      const key = top ? 'fixedTopFree' : 'fixedBottomFree';
+      const cursorKey = top ? 'fixedTopCursor' : 'fixedBottomCursor';
+      const laneCount = Math.max(
+        1,
+        Math.min(4, Math.floor((stage.clientHeight * Math.min(60, config.area)) / 100 / laneHeight))
+      );
+      if (session[key].length !== laneCount) session[key] = new Array(laneCount).fill(0);
+      let lane = -1;
+      for (let offset = 0; offset < laneCount; offset++) {
+        const index = (session[cursorKey] + offset) % laneCount;
+        if (session[key][index] <= now + 30) {
+          lane = index;
+          break;
+        }
+      }
+      if (lane < 0) lane = session[key].indexOf(Math.min(...session[key]));
+      session[cursorKey] = (lane + 1) % laneCount;
+      session[key][lane] = now + 3600;
+      element.classList.add('fixed', top ? 'fixed-top' : 'fixed-bottom');
+      const safeTop = Number(config.safeTop) || 0;
+      const safeBottom = Number(config.safeBottom) || 0;
+      element.style.top = top
+        ? `${safeTop + lane * laneHeight}px`
+        : `${Math.max(safeTop, stage.clientHeight - safeBottom - (lane + 1) * laneHeight)}px`;
+      element.style.left = '50%';
+      element.style.transform = 'translateX(-50%)';
+      element.style.opacity = '';
+      layer.appendChild(element);
+      const active = { fixed: true, duration: 3600 };
+      session.activeDanmaku.add(active);
+      const cleanup = () => {
+        element.remove();
+        session.activeDanmaku.delete(active);
+      };
+      active.timer = setTimeout(cleanup, 4000);
+      if (layer.childElementCount > 140) layer.firstElementChild?.remove();
+      return;
+    }
+
     element.style.opacity = '0';
     layer.appendChild(element);
     const textWidth = element.offsetWidth;
     const lanes = laneCount();
-    const lineHeight = Math.max(config.font * 1.35, 24);
-    const now = performance.now();
-    if (session.laneFree.length !== lanes) session.laneFree = new Array(lanes).fill(0);
-    let lane = session.laneFree.findIndex((free) => free <= now + 60);
-    if (lane < 0) {
-      lane = session.laneFree.indexOf(Math.min(...session.laneFree));
+    if (session.laneFree.length !== lanes) {
+      session.laneFree = new Array(lanes).fill(0);
+      session.laneCursor = 0;
     }
-    const top = Math.min(lane * lineHeight, Math.max(0, stage.clientHeight * (config.area / 100) - lineHeight));
+    // 轮询各轨道，避免短时间连续弹幕都挤在第一条轨道。
+    let lane = -1;
+    for (let offset = 0; offset < lanes; offset++) {
+      const index = (session.laneCursor + offset) % lanes;
+      if (session.laneFree[index] <= now + 30) {
+        lane = index;
+        break;
+      }
+    }
+    if (lane < 0) lane = session.laneFree.indexOf(Math.min(...session.laneFree));
+    session.laneCursor = (lane + 1) % lanes;
+    const top = Math.min(lane * laneHeight, Math.max(0, stage.clientHeight * (config.area / 100) - laneHeight));
     element.style.top = `${top}px`;
     element.style.transform = `translateX(${width}px)`;
     element.style.opacity = '';
     const duration = Math.max(2.5, config.speed) * 1000;
-    const speed = (width + textWidth) / duration;
-    session.laneFree[lane] = now + ((textWidth + 18) / speed) * 1000;
+    const speed = (width + Math.max(textWidth, 1)) / duration;
+    // 上一条弹幕尾部离开右侧后再放同轨，至少留 280ms 间距。
+    session.laneFree[lane] = now + Math.max(280, ((textWidth + 24) / speed) * 1000);
     const animation = element.animate(
       [
         { transform: `translateX(${width}px)` },
@@ -306,6 +367,7 @@ export function renderRoom(ctx, params = {}) {
   function retimeDanmaku(seconds) {
     const duration = Math.max(2.5, Number(seconds) || 8) * 1000;
     for (const item of session.activeDanmaku) {
+      if (item.fixed) continue;
       try {
         const rate = item.duration / duration;
         if (typeof item.animation.updatePlaybackRate === 'function') {
@@ -325,11 +387,20 @@ export function renderRoom(ctx, params = {}) {
       text: message.text || '',
       color: message.color,
       system: Boolean(message.system),
+      position: Number(message.position) || 0,
+      sc: message.sc || null,
       at: Date.now(),
     };
     session.messages.push(entry);
     if (session.messages.length > MAX_MESSAGES) session.messages.shift();
-    if (!entry.system) spawnDanmaku(entry);
+    if (entry.sc) {
+      session.scMessages.push(entry);
+      if (session.scMessages.length > 100) session.scMessages.shift();
+      const counter = $('sc-count');
+      if (counter) counter.textContent = String(session.scMessages.length);
+      if (session.tab === 'sc') renderChatTab();
+    }
+    if (!entry.system && !entry.sc) spawnDanmaku(entry);
     if (session.tab === 'chat') appendChatLine(entry);
   }
 
@@ -337,16 +408,29 @@ export function renderRoom(ctx, params = {}) {
     const empty = chatList.querySelector('.chat-placeholder');
     if (empty) empty.remove();
     const line = document.createElement('div');
-    line.className = `chat-line${message.system ? ' system' : ''}`;
+    line.className = `chat-line${message.system ? ' system' : ''}${message.sc ? ' sc' : ''}`;
     if (!message.system) {
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = `${message.user}：`;
-      const text = document.createElement('span');
-      text.className = 'text';
-      text.textContent = message.text;
-      if (message.color && message.color !== 0xffffff) text.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
-      line.append(who, text);
+      if (message.sc) {
+        const tag = document.createElement('span');
+        tag.className = 'sc-tag';
+        tag.textContent = `SC ¥${message.sc.price}`;
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = `${message.user}：`;
+        const text = document.createElement('span');
+        text.className = 'text';
+        text.textContent = message.text;
+        line.append(tag, who, text);
+      } else {
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = `${message.user}：`;
+        const text = document.createElement('span');
+        text.className = 'text';
+        text.textContent = message.text;
+        if (message.color && message.color !== 0xffffff) text.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
+        line.append(who, text);
+      }
     } else {
       line.textContent = message.text;
     }
@@ -375,7 +459,26 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     if (session.tab === 'sc') {
-      chatList.appendChild(placeholder('当前直播还没有醒目留言（SC）', 'spark'));
+      if (!session.scMessages.length) {
+        chatList.appendChild(placeholder('当前直播还没有醒目留言（SC）', 'spark'));
+        return;
+      }
+      for (const message of session.scMessages.slice().reverse()) {
+        const card = document.createElement('div');
+        card.className = 'sc-card';
+        const background = message.sc.background_color || '#fb7299';
+        const bottom = message.sc.background_bottom_color || background;
+        card.style.background = `linear-gradient(140deg, ${background}, ${bottom})`;
+        card.innerHTML = `
+          <div class="sc-card-head">
+            ${avatarHtml(message.user, message.sc.avatar, 32)}
+            <b>${escapeHtml(message.user || 'B 站用户')}</b>
+            <span class="sc-price">¥${Number(message.sc.price) || 0}</span>
+          </div>
+          <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
+        chatList.appendChild(card);
+      }
+      bindImageFallback(chatList);
       return;
     }
     if (session.tab === 'follow') {
@@ -391,7 +494,7 @@ export function renderRoom(ctx, params = {}) {
         card.type = 'button';
         card.className = 'chat-follow-card';
         card.innerHTML = `
-          ${avatarHtml(item.user_name, item.cover, 38)}
+          ${avatarHtml(item.user_name, item.avatar || item.cover, 38)}
           <span class="chat-follow-info">
             <b title="${escapeHtml(item.user_name || '未知主播')}">${escapeHtml(item.user_name || '未知主播')}</b>
             <small><i class="chat-follow-dot${item.live ? ' live' : ''}"></i>${escapeHtml(PLATFORM_META[item.platform]?.short || item.platform)} · ${item.live ? '直播中' : '未开播'}</small>
@@ -508,7 +611,7 @@ export function renderRoom(ctx, params = {}) {
     }
     openMenu($('ctrl-line'), session.urls.map((url, index) => ({
       label: `线路 ${index + 1}`,
-      value: shortHost(url),
+      value: url.includes('127.0.0.1') ? '' : shortHost(url),
       active: index === session.lineIndex,
       onClick: () => playLine(index),
     })), { align: 'end', placement: 'top' });
@@ -747,7 +850,8 @@ export function renderRoom(ctx, params = {}) {
     const detail = session.detail;
     if (!detail) return;
     $('room-title').textContent = detail.title || '(无标题)';
-    const avatar = canonicalImage(detail.cover);
+    const avatar = canonicalImage(detail.avatar || detail.cover);
+    const cover = canonicalImage(detail.cover || detail.avatar);
     $('room-sub').innerHTML = `
       ${avatarHtml(detail.user_name, avatar, 22, 'avatar-mini')}
       <span class="name">${escapeHtml(detail.user_name || '未知主播')}</span>
@@ -759,8 +863,8 @@ export function renderRoom(ctx, params = {}) {
     $('chat-name').textContent = detail.user_name || '聊天';
     $('chat-meta').innerHTML = `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span><span>·</span><span class="online">${icon('flame', 11)}${formatOnline(detail.online)}</span>`;
     document.title = `${detail.title || '直播间'} · 星幕直播`;
-    if (avatar) {
-      $('stage-bg').style.backgroundImage = `url("${avatar}")`;
+    if (cover) {
+      $('stage-bg').style.backgroundImage = `url("${cover}")`;
     }
   }
 
@@ -783,6 +887,7 @@ export function renderRoom(ctx, params = {}) {
       room_id: session.roomId,
       title: session.detail.title,
       user_name: session.detail.user_name,
+      avatar: session.detail.avatar,
       cover: session.detail.cover,
       online: session.detail.online,
       live: session.detail.live,

@@ -152,6 +152,11 @@ pub fn parse_detail(
         room_id: room_id.clone(),
         title,
         user_name: text(profile, "sNick").unwrap_or_default(),
+        avatar: absolute(
+            &text(profile, "sAvatar180")
+                .or_else(|| text(profile, "sAvatar"))
+                .unwrap_or_default(),
+        ),
         cover: absolute(&text(live_info, "sScreenshot").unwrap_or_default()),
         online: u64_of(live_info, "lTotalCount"),
         live: u32_of(root, "roomInfo.eLiveStatus") == 2,

@@ -90,6 +90,22 @@
   -webkit-text-stroke: 0;
 }
 
+/* B 站顶部/底部固定弹幕 */
+.danmaku.fixed {
+  max-width: 80%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.danmaku.fixed-top,
+.danmaku.fixed-bottom {
+  z-index: 4;
+}
+
 .danmaku img.emoji {
   width: 1.25em;
   height: 1.25em;
@@ -522,6 +538,15 @@ input[type="range"]::-webkit-slider-thumb {
   transform: translateY(8px);
 }
 
+/* 全屏时保留底部控制条，保证清晰度/线路/弹幕开关始终可操作；
+   只自动隐藏顶部返回/标题浮层。 */
+.room-page.is-fullscreen.ui-idle .player-controls,
+.room-page:fullscreen.ui-idle .player-controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
 .room-page.is-paused .room-topbar,
 .room-page.is-paused .player-controls {
   opacity: 1;
@@ -624,6 +649,62 @@ input[type="range"]::-webkit-slider-thumb {
 .chat-head-actions .icon-btn.active {
   color: var(--accent);
   background: transparent;
+}
+
+.sc-card {
+  margin: 8px 10px;
+  padding: 10px 11px;
+  border-radius: 10px;
+  color: #2a1c0d;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+.sc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sc-card-head .avatar {
+  width: 32px;
+  height: 32px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+}
+
+.sc-card-head b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.sc-price {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sc-card-text {
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.chat-line.sc {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(251, 114, 153, 0.12);
+}
+
+.sc-tag {
+  margin-right: 5px;
+  color: #fb7299;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .chat-follow-grid {

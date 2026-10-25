@@ -986,6 +986,36 @@ async fn douyu_play(
     })
 }
 
+/// 所有平台的 FLV 都走本机代理：B 站/虎牙部分 CDN 不返回 CORS 头，
+/// 浏览器直连会在预检或 Referer 上失败，表现为“只有某一条线路能播”。
+fn proxy_play_urls(
+    state: &AppState,
+    key: &str,
+    index: usize,
+    urls: Vec<String>,
+    referer: String,
+) -> Vec<String> {
+    let mut proxied = Vec::with_capacity(urls.len());
+    if let Ok(mut targets) = state.proxy_targets.lock() {
+        for (line, url) in urls.into_iter().enumerate() {
+            let token = format!("{}-{}-{line}", key.replace(':', "_"), index);
+            targets.insert(
+                token.clone(),
+                ProxyTarget {
+                    url,
+                    referer: referer.clone(),
+                    user_agent: DESKTOP_UA.to_string(),
+                },
+            );
+            proxied.push(format!(
+                "http://127.0.0.1:{}/stream/{token}",
+                state.proxy_port
+            ));
+        }
+    }
+    proxied
+}
+
 #[tauri::command]
 async fn play(
     state: State<'_, AppState>,
@@ -1008,11 +1038,23 @@ async fn play(
         (session.detail.clone(), quality)
     };
 
-    let core = state.core(detail.platform);
-    let urls = blocking(move || core.play(&detail, &quality)).await?;
+    let platform = detail.platform;
+    let room_id = detail.room_id.clone();
+    let core = state.core(platform);
+    let mut urls = blocking(move || core.play(&detail, &quality)).await?.urls;
+    // 当前播放器是 mpegts.js，只能吃 FLV；B 站清晰度接口会混入 HLS 线路。
+    urls.retain(|url| !url.to_ascii_lowercase().contains(".m3u8"));
+    if urls.is_empty() {
+        return Err("这个清晰度只有 HLS 线路，当前播放器暂不支持".to_string());
+    }
+    let referer = match platform {
+        Platform::Bilibili => format!("https://live.bilibili.com/{room_id}"),
+        Platform::Huya => format!("https://www.huya.com/{room_id}"),
+        Platform::Douyu => format!("https://www.douyu.com/{room_id}"),
+    };
     Ok(PlayPayload {
-        urls: urls.urls,
-        headers: urls.headers,
+        urls: proxy_play_urls(&state, &key, index, urls, referer),
+        headers: Vec::new(),
     })
 }
 

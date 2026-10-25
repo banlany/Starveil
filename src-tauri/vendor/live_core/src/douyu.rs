@@ -126,6 +126,10 @@ pub fn parse_detail(value: &Value, fallback_room_id: &str) -> Result<LiveRoomDet
         room_id: rid.clone(),
         title: text(room, "room_name").unwrap_or_default(),
         user_name: text(room, "owner_name").unwrap_or_default(),
+        avatar: text(room, "owner_avatar")
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| text(room, "avatar.big"))
+            .unwrap_or_default(),
         cover: text(room, "room_pic").unwrap_or_default(),
         online: u64_of(room, "room_biz_all.hot"),
         live,

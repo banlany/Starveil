@@ -260,6 +260,7 @@ export function toggleFollow(room) {
     room_id: String(room.room_id),
     user_name: room.user_name || '',
     title: room.title || '',
+    avatar: canonicalImage(room.avatar || room.cover || ''),
     cover: canonicalImage(room.cover || ''),
     online: Number(room.online) || 0,
     live: Boolean(room.live),

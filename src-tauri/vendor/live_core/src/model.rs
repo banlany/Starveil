@@ -74,6 +74,9 @@ pub struct LiveRoomDetail {
     pub room_id: String,
     pub title: String,
     pub user_name: String,
+    /// 主播头像；部分平台详情页只给封面，解析时尽量取真正的头像。
+    #[serde(default)]
+    pub avatar: String,
     pub cover: String,
     pub online: u64,
     pub live: bool,
@@ -97,6 +100,13 @@ pub enum RoomExtra {
         host: String,
         /// 真实房间号，弹幕 join 需要。
         room_id: String,
+        /// 登录 Cookie（匿名时也含 buvid3/buvid4），弹幕握手需要。
+        /// 不序列化给前端，避免把 SESSDATA 暴露到 WebView。
+        #[serde(default, skip_serializing)]
+        cookie: String,
+        /// 登录用户 UID，匿名时为 0。
+        #[serde(default)]
+        uid: u64,
     },
     Huya {
         lines: Vec<HuyaLine>,
