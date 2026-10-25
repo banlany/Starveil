@@ -10,6 +10,7 @@ const PATHS = {
   back: '<path d="m14.5 5-7 7 7 7"/><path d="M20 12H7.5"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',
   chevronDown: '<path d="m5 9 7 7 7-7"/>',
+  chevronUp: '<path d="m5 15 7-7 7 7"/>',
   refresh: '<path d="M20 11a8 8 0 1 0 .6 4"/><path d="M20 4v7h-7"/>',
   play: '<path d="M8 5.5v13l10-6.5-10-6.5Z" fill="currentColor" stroke="none"/>',
   pause: '<path d="M8.5 5.5v13M15.5 5.5v13"/>',

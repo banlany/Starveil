@@ -538,14 +538,7 @@ input[type="range"]::-webkit-slider-thumb {
   transform: translateY(8px);
 }
 
-/* 全屏时保留底部控制条，保证清晰度/线路/弹幕开关始终可操作；
-   只自动隐藏顶部返回/标题浮层。 */
-.room-page.is-fullscreen.ui-idle .player-controls,
-.room-page:fullscreen.ui-idle .player-controls {
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
-}
+/* 全屏时顶部/底部控件都自动隐藏，鼠标移动后恢复。 */
 
 .room-page.is-paused .room-topbar,
 .room-page.is-paused .player-controls {
@@ -694,6 +687,101 @@ input[type="range"]::-webkit-slider-thumb {
   word-break: break-word;
 }
 
+.sc-card-close {
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.45);
+  flex: none;
+}
+
+.sc-card-close:hover {
+  color: #000;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.sc-float-layer {
+  position: absolute;
+  left: 16px;
+  bottom: 86px;
+  z-index: 6;
+  width: 258px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.sc-float-layer.hidden {
+  display: none;
+}
+
+.sc-float-card {
+  pointer-events: auto;
+  padding: 8px 9px;
+  border-radius: 9px;
+  color: #2a1c0d;
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.28);
+}
+
+.sc-float-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.sc-float-head .avatar {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.sc-float-head b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.sc-float-head > span {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sc-delete {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.sc-delete:hover {
+  color: #000;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.sc-float-text {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .chat-line.sc {
   padding: 4px 8px;
   border-radius: 6px;
@@ -705,6 +793,22 @@ input[type="range"]::-webkit-slider-thumb {
   color: #fb7299;
   font-size: 10px;
   font-weight: 700;
+}
+
+.chat-follow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px 0;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 10.5px;
+}
+
+.chat-follow-toolbar .btn.small {
+  height: 24px;
+  font-size: 10.5px;
+  padding: 0 7px;
 }
 
 .chat-follow-grid {
@@ -886,6 +990,16 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ------------------------------------------------------------ 聊天设置 */
 
+.room-settings-modal {
+  max-height: 66vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.room-settings-modal .chat-settings {
+  padding: 0 0 4px;
+}
+
 .chat-settings {
   padding: 10px 2px 20px;
   display: flex;
@@ -983,7 +1097,18 @@ input[type="range"]::-webkit-slider-thumb {
 .chat-setting-row input[type="range"]::-webkit-slider-thumb {
   width: 12px;
   height: 12px;
-  background: #fff;
+  background: var(--accent);
+}
+
+/* 直播间设置控件跟随主题色 */
+.chat-setting-row .switch[aria-checked="true"] {
+  background: var(--accent);
+}
+
+.chat-setting-select:focus,
+.chat-setting-input:focus,
+.chat-setting-textarea:focus {
+  border-color: var(--accent);
 }
 
 .chat-setting-row em {
@@ -1004,6 +1129,134 @@ input[type="range"]::-webkit-slider-thumb {
   color: rgba(255, 255, 255, 0.34);
   font-size: 10.5px;
   line-height: 1.6;
+}
+
+/* ------------------------------------------------------------ 浅色主题直播间 */
+
+html[data-theme="light"] .room-page {
+  background: #f2f3f7;
+  color: #1b1b21;
+}
+
+html[data-theme="light"] .room-chat {
+  background: #ffffff;
+  border-left-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .chat-head {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+html[data-theme="light"] .chat-head-text h3 {
+  color: #1b1b21;
+}
+
+html[data-theme="light"] .chat-head-meta {
+  color: #777783;
+}
+
+html[data-theme="light"] .chat-head-actions .icon-btn {
+  color: #66666f;
+}
+
+html[data-theme="light"] .chat-head-actions .icon-btn:hover {
+  color: #1b1b21;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="light"] .chat-tabs {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+html[data-theme="light"] .chat-tab {
+  color: #777783;
+}
+
+html[data-theme="light"] .chat-tab:hover,
+html[data-theme="light"] .chat-tab.active {
+  color: #1b1b21;
+}
+
+html[data-theme="light"] .chat-line {
+  color: #35353d;
+}
+
+html[data-theme="light"] .chat-line .who {
+  color: var(--accent);
+}
+
+html[data-theme="light"] .chat-line.system,
+html[data-theme="light"] .chat-placeholder {
+  color: #94949e;
+}
+
+html[data-theme="light"] .chat-follow-toolbar {
+  color: #777783;
+}
+
+html[data-theme="light"] .chat-follow-card {
+  background: #f7f8fb;
+  border-color: rgba(0, 0, 0, 0.07);
+}
+
+html[data-theme="light"] .chat-follow-card:hover {
+  background: #eef0f5;
+}
+
+html[data-theme="light"] .chat-follow-info b {
+  color: #1b1b21;
+}
+
+html[data-theme="light"] .chat-follow-info small {
+  color: #8a8a95;
+}
+
+html[data-theme="light"] .room-footer {
+  background: #ffffff;
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .footer-action {
+  color: #55555f;
+}
+
+html[data-theme="light"] .footer-action:hover {
+  color: #1b1b21;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="light"] .chat-expand {
+  background: #ffffff;
+  color: #33333b;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+html[data-theme="light"] .chat-settings-group {
+  background: #f7f8fb;
+  border-color: rgba(0, 0, 0, 0.07);
+}
+
+html[data-theme="light"] .chat-settings-group h4,
+html[data-theme="light"] .chat-setting-row,
+html[data-theme="light"] .chat-setting-field {
+  color: #44444d;
+}
+
+html[data-theme="light"] .chat-setting-input,
+html[data-theme="light"] .chat-setting-select,
+html[data-theme="light"] .chat-setting-textarea {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.13);
+  color: #1b1b21;
+}
+
+html[data-theme="light"] .chat-setting-tip {
+  color: #8a8a95;
+}
+
+html[data-theme="light"] .sc-card-close,
+html[data-theme="light"] .sc-delete {
+  color: rgba(0, 0, 0, 0.55);
 }
 
 /* ------------------------------------------------------------ 底部动作栏 */

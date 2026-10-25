@@ -184,8 +184,14 @@ export function toast(message, type = 'info', duration = 2400) {
   }, duration);
 }
 
+function portalRoot() {
+  const fullscreen = document.fullscreenElement;
+  if (fullscreen && fullscreen !== document.documentElement) return fullscreen;
+  return document.getElementById('overlay-root');
+}
+
 export function openModal({ title = '', subtitle = '', body, actions = [], width = 460, className = '', onClose }) {
-  const root = document.getElementById('overlay-root');
+  const root = portalRoot();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   const panel = document.createElement('div');
@@ -290,7 +296,7 @@ export function promptDialog({ title = '输入', text = '', placeholder = '', va
 
 export function openMenu(anchor, items, { align = 'end', placement = 'bottom', gap = 6 } = {}) {
   const rect = anchor.getBoundingClientRect();
-  const root = document.getElementById('overlay-root');
+  const root = portalRoot();
   const overlay = document.createElement('div');
   overlay.className = 'menu-overlay';
   const menu = document.createElement('div');
@@ -338,6 +344,33 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
     document.addEventListener('keydown', onKey);
   }, 0);
   return close;
+}
+
+export async function saveJsonFile(filename, payload) {
+  const text = JSON.stringify(payload, null, 2);
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'JSON 备份', accept: { 'application/json': ['.json'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      return true;
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+      // 某些 WebView 不允许 File System Access，回退到下载。
+    }
+  }
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return true;
 }
 
 export function spinner(label = '加载中…') {

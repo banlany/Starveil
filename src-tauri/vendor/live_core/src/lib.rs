@@ -10,7 +10,7 @@ pub mod douyu_sign;
 pub mod error;
 pub mod http;
 pub mod huya;
-mod huya_token;
+pub(crate) mod huya_token;
 pub mod model;
 pub mod site;
 pub mod url_parser;

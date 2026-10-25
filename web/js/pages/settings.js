@@ -22,6 +22,7 @@ import {
   openModal,
   promptDialog,
   roomGrid,
+  saveJsonFile,
   toast,
   loadMore,
 } from '../ui.js';
@@ -588,23 +589,22 @@ function paintSync(content, ctx, repaint) {
   card.appendChild(note);
   content.appendChild(card);
 
-  card.querySelector('#sync-export').addEventListener('click', () => {
+  card.querySelector('#sync-export').addEventListener('click', async () => {
     const payload = {
       version: 1,
       app: '星幕直播 Starveil',
       exportedAt: new Date().toISOString(),
       settings: state.settings,
+      shield: {
+        keywords: state.settings.danmaku?.blockKeywords || '',
+        users: state.settings.danmaku?.blockUsers || '',
+      },
       follows: JSON.parse(localStorage.getItem('simple-live.follow.v2') || '[]'),
       history: state.history,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `simple-live-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    toast('备份已导出', 'success');
+    const filename = `starveil-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const saved = await saveJsonFile(filename, payload);
+    if (saved) toast('备份已导出', 'success');
   });
 
   card.querySelector('#sync-import').addEventListener('click', () => {
@@ -616,6 +616,12 @@ function paintSync(content, ctx, repaint) {
       if (!file) return;
       try {
         const data = JSON.parse(await file.text());
+        if (data.shield) {
+          data.settings = data.settings || {};
+          data.settings.danmaku = data.settings.danmaku || {};
+          if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
+          if (!data.settings.danmaku.blockUsers) data.settings.danmaku.blockUsers = data.shield.users || '';
+        }
         if (data.settings) localStorage.setItem('simple-live.settings.v2', JSON.stringify(data.settings));
         if (Array.isArray(data.follows)) localStorage.setItem('simple-live.follow.v2', JSON.stringify(data.follows));
         if (Array.isArray(data.history)) localStorage.setItem('simple-live.history.v2', JSON.stringify(data.history));
@@ -682,7 +688,7 @@ function paintAbout(content, ctx) {
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
     <h2>星幕直播</h2>
     <p>Starveil · 聚合直播桌面客户端 · Tauri 2 + WebView2</p>
-    <span class="about-version">0.3.4</span>
+    <span class="about-version">0.3.5</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
       <div class="setting-row"><div class="setting-info"><div class="setting-title">播放</div><div class="setting-desc">mpegts.js · FLV over MSE</div></div></div>

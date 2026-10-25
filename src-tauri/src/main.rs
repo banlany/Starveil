@@ -765,10 +765,19 @@ async fn open_room(
         let detail = core.detail(platform, &requested).map_err(fail)?;
         if platform == Platform::Douyu {
             let did = live_core::douyu_sign::device_id();
-            let script = douyu_script(&detail.room_id, &did, &login_cookie)?;
-            Ok::<_, String>((detail, Vec::new(), Some(script), Some(did)))
+            // 未开播时取流脚本可能也拿不到，但房间详情/关注仍应可用。
+            let script = if detail.live {
+                douyu_script(&detail.room_id, &did, &login_cookie).ok()
+            } else {
+                None
+            };
+            Ok::<_, String>((detail, Vec::new(), script, Some(did)))
         } else {
-            let qualities = core.qualities(&detail).map_err(fail)?;
+            let qualities = match core.qualities(&detail) {
+                Ok(qualities) => qualities,
+                Err(_) if !detail.live => Vec::new(),
+                Err(error) => return Err(fail(error)),
+            };
             Ok::<_, String>((detail, qualities, None, None))
         }
     })

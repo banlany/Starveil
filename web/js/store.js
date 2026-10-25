@@ -51,6 +51,8 @@ export const DEFAULT_SETTINGS = {
     showStats: false,
     scaleMode: 'contain',
     forceHttps: true,
+    superChatOverlay: false,
+    superChatAutoRemove: true,
   },
   live: {
     autoFullscreen: false,

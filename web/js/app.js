@@ -403,6 +403,8 @@ async function setupWindowState() {
 }
 
 function init() {
+  // 禁用 WebView 默认右键菜单，避免露出浏览器菜单/刷新等开发项。
+  document.addEventListener('contextmenu', (event) => event.preventDefault());
   applyTheme();
   document.body.dataset.density = state.settings.appearance?.density || 'comfortable';
   document.body.dataset.cardSize = state.settings.home?.cardSize || 'medium';

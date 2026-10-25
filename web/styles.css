@@ -19,8 +19,8 @@
   --success: #57d38c;
   --danger: #ff6b6b;
   --warning: #ffc857;
-  --switch-on: #8ecdf7;
-  --switch-knob: #14354a;
+  --switch-on: var(--accent);
+  --switch-knob: #ffffff;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
   --radius: 12px;
   --rail-width: 88px;
@@ -39,7 +39,7 @@ html[data-theme="light"] {
   --fg: #1b1b21;
   --muted: #66666f;
   --dim: #96969f;
-  --switch-on: #3b9ee0;
+  --switch-on: var(--accent);
   --switch-knob: #ffffff;
   --shadow: 0 18px 48px rgba(15, 20, 30, 0.16);
   color-scheme: light;

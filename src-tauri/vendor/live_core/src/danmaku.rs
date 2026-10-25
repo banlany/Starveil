@@ -15,6 +15,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use base64::Engine as _;
+use crate::huya_token::{Reader, Writer};
 use tungstenite::client::IntoClientRequest;
 
 /// 一条弹幕（或系统提示）。
@@ -689,6 +691,131 @@ fn douyu_color(code: u32) -> Option<u32> {
 
 // ---------------------------------------------------------------- 虎牙
 
+fn huya_join_packet(ayyuid: u64, top_sid: u64) -> Vec<u8> {
+    // 原版 HuyaDanmaku.getJoinData 的 Tars 结构：
+    // {0: ayyuid, 1: true, 2:"", 3:"", 4: topSid, 5: sid, 6:0, 7:0}
+    let mut args = Writer::new();
+    args.int(ayyuid as i64, 0);
+    args.int(1, 1);
+    args.string("", 2);
+    args.string("", 3);
+    args.int(top_sid as i64, 4);
+    args.int(top_sid as i64, 5);
+    args.int(0, 6);
+    args.int(0, 7);
+
+    let mut packet = Writer::new();
+    packet.int(1, 0);
+    packet.bytes(&args.buf, 1);
+    packet.buf
+}
+
+fn huya_read_sender(reader: &mut Reader<'_>) -> String {
+    let mut nickname = String::new();
+    while !reader.eof() {
+        let Ok((ty, tag)) = reader.head() else {
+            break;
+        };
+        if ty == 11 {
+            break;
+        }
+        match tag {
+            2 => nickname = reader.string_with_type(ty).unwrap_or_default(),
+            _ => {
+                let _ = reader.skip(ty);
+            }
+        }
+    }
+    nickname
+}
+
+fn huya_read_bullet_color(reader: &mut Reader<'_>) -> u32 {
+    let mut color = 0;
+    while !reader.eof() {
+        let Ok((ty, tag)) = reader.head() else {
+            break;
+        };
+        if ty == 11 {
+            break;
+        }
+        match tag {
+            0 => color = reader.int_with_type(ty).unwrap_or(0).max(0) as u32,
+            _ => {
+                let _ = reader.skip(ty);
+            }
+        }
+    }
+    color
+}
+
+fn huya_parse_message(data: &[u8], tx: &Sender<DanmakuMessage>) {
+    let mut reader = Reader::new(data);
+    let mut user = String::new();
+    let mut text = String::new();
+    let mut color = 0;
+    while !reader.eof() {
+        let Ok((ty, tag)) = reader.head() else {
+            break;
+        };
+        match tag {
+            0 if ty == 10 => user = huya_read_sender(&mut reader),
+            3 => text = reader.string_with_type(ty).unwrap_or_default(),
+            6 if ty == 10 => color = huya_read_bullet_color(&mut reader),
+            _ => {
+                let _ = reader.skip(ty);
+            }
+        }
+    }
+    if text.is_empty() {
+        return;
+    }
+    let _ = tx.send(DanmakuMessage {
+        user,
+        text,
+        color: (color > 0).then_some(color),
+        system: false,
+        position: 0,
+        sc: None,
+    });
+}
+
+fn huya_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
+    let mut outer = Reader::new(data);
+    let Ok((ty, _)) = outer.head() else {
+        return;
+    };
+    if outer.int_with_type(ty).unwrap_or(0) != 7 {
+        return;
+    }
+    let Ok((ty, _)) = outer.head() else {
+        return;
+    };
+    if ty != 13 {
+        return;
+    }
+    let Ok(push_bytes) = outer.bytes_after_head() else {
+        return;
+    };
+    let mut push = Reader::new(&push_bytes);
+    let mut uri = 0;
+    let mut message = Vec::new();
+    while !push.eof() {
+        let Ok((ty, tag)) = push.head() else {
+            break;
+        };
+        match tag {
+            1 => uri = push.int_with_type(ty).unwrap_or(0),
+            2 => message = push.bytes_after_head().unwrap_or_default(),
+            _ => {
+                let _ = push.skip(ty);
+            }
+        }
+    }
+    if uri == 1400 && !message.is_empty() {
+        huya_parse_message(&message, tx);
+    }
+}
+
 fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
     ensure_crypto_provider();
     let RoomExtra::Huya {
@@ -703,10 +830,63 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
         let _ = tx.send(DanmakuMessage::system("虎牙弹幕参数缺失"));
         return;
     }
-    let _ = yyid;
-    // 虎牙用 Tars 编码，详见 docs/02-detailed-design.md 的「虎牙弹幕」一节。
-    let _ = stop;
-    let _ = tx.send(DanmakuMessage::system(
-        "虎牙弹幕协议（Tars）尚未接入，稍后在后续版本补齐",
-    ));
+    let top_sid = *presenter_uid;
+    let ayyuid = if *yyid > 0 { *yyid } else { top_sid };
+    let heartbeat = base64::engine::general_purpose::STANDARD
+        .decode("ABQdAAwsNgBM")
+        .unwrap_or_default();
+    let url = "wss://cdnws.api.huya.com";
+    let mut attempt = 0;
+    while !stop.load(Ordering::Relaxed) && attempt < 3 {
+        attempt += 1;
+        match tungstenite::connect(url) {
+            Ok((mut socket, _)) => {
+                if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_ref() {
+                    let _ = stream
+                        .sock
+                        .set_read_timeout(Some(Duration::from_millis(600)));
+                }
+                if socket
+                    .send(tungstenite::Message::Binary(
+                        huya_join_packet(ayyuid, top_sid).into(),
+                    ))
+                    .is_err()
+                {
+                    continue;
+                }
+                let mut last_heartbeat = std::time::Instant::now();
+                loop {
+                    if stop.load(Ordering::Relaxed) {
+                        let _ = socket.close(None);
+                        return;
+                    }
+                    if last_heartbeat.elapsed() >= Duration::from_secs(60) {
+                        let _ = socket.send(tungstenite::Message::Binary(
+                            heartbeat.clone().into(),
+                        ));
+                        last_heartbeat = std::time::Instant::now();
+                    }
+                    match socket.read() {
+                        Ok(tungstenite::Message::Binary(data)) => huya_handle(&data, tx),
+                        Ok(tungstenite::Message::Close(_)) => break,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = tx.send(DanmakuMessage::system(format!(
+                    "虎牙弹幕连接失败：{error}"
+                )));
+            }
+        }
+        if !sleep_while(stop, Duration::from_secs(3)) {
+            return;
+        }
+    }
 }

@@ -10,6 +10,7 @@ import {
   saveSettings,
   state,
   toggleFollow,
+  updateFollow,
 } from '../store.js';
 import {
   avatarHtml,
@@ -36,6 +37,7 @@ export function renderRoom(ctx, params = {}) {
         <div class="stage-bg" id="stage-bg"></div>
         <video id="player" playsinline preload="none"></video>
         <div class="danmaku-layer" id="danmaku-layer"></div>
+        <div class="sc-float-layer" id="sc-float-layer"></div>
         <div class="stage-hint" id="stage-hint"><span class="big-spinner"></span><span>正在读取直播间…</span></div>
         <div class="room-topbar" id="room-topbar">
           <button class="back-btn" id="room-back" title="返回">${icon('back', 21)}</button>
@@ -56,8 +58,8 @@ export function renderRoom(ctx, params = {}) {
           </div>
           <span class="clock" id="player-clock">--:--:--</span>
           <span class="ctrl-spacer"></span>
-          <button class="ctrl-text" id="ctrl-quality">原画 ${icon('chevronDown', 13)}</button>
-          <button class="ctrl-text" id="ctrl-line">线路 1 ${icon('chevronDown', 13)}</button>
+          <button class="ctrl-text" id="ctrl-quality">原画 ${icon('chevronUp', 13)}</button>
+          <button class="ctrl-text" id="ctrl-line">线路 1 ${icon('chevronUp', 13)}</button>
           <button class="ctrl" id="ctrl-danmaku" title="弹幕开关">${icon('danmaku', 21)}</button>
           <button class="ctrl" id="ctrl-settings" title="弹幕与播放设置">${icon('settings', 20)}</button>
           <button class="ctrl" id="ctrl-pip" title="画中画">${icon('screen', 20)}</button>
@@ -138,6 +140,9 @@ export function renderRoom(ctx, params = {}) {
     fixedTopCursor: 0,
     fixedBottomCursor: 0,
     scMessages: [],
+    scTimers: new Map(),
+    scSweep: 0,
+    followRefreshing: false,
     activeDanmaku: new Set(),
     dedupe: new Map(),
     recentBlocked: 0,
@@ -341,11 +346,23 @@ export function renderRoom(ctx, params = {}) {
       return rect.right <= layerRect.right - 28;
     };
     let lane = -1;
-    for (let offset = 0; offset < lanes; offset++) {
-      const index = (session.laneCursor + offset) % lanes;
-      if (laneSafe(index)) {
-        lane = index;
-        break;
+    // 低密度优先最上层，观感更自然；高密度再均匀轮询各轨道。
+    const activeScroll = [...session.activeDanmaku].filter((item) => !item.fixed).length;
+    const dense = activeScroll >= Math.max(2, Math.floor(lanes * 0.55));
+    if (!dense) {
+      for (let index = 0; index < lanes; index++) {
+        if (laneSafe(index)) {
+          lane = index;
+          break;
+        }
+      }
+    } else {
+      for (let offset = 0; offset < lanes; offset++) {
+        const index = (session.laneCursor + offset) % lanes;
+        if (laneSafe(index)) {
+          lane = index;
+          break;
+        }
       }
     }
     // 所有轨道都还没让出安全距离时宁可丢掉这一条，也不叠字。
@@ -358,7 +375,10 @@ export function renderRoom(ctx, params = {}) {
     element.style.top = `${top}px`;
     element.style.transform = `translateX(${width}px)`;
     element.style.opacity = '';
-    const duration = Math.max(2.5, config.speed) * 1000;
+    // 恒定像素速度：speed 表示穿过整个播放器宽度所需秒数，
+    // 长文本只是多花时间，不会比短文本跑得更快。
+    const pxPerMs = width / (Math.max(2.5, config.speed) * 1000);
+    const duration = (width + Math.max(textWidth, 1)) / pxPerMs;
     const animation = element.animate(
       [
         { transform: `translateX(${width}px)` },
@@ -368,7 +388,7 @@ export function renderRoom(ctx, params = {}) {
     );
     const laneEntry = { element };
     session.laneItems[lane].push(laneEntry);
-    const active = { animation, duration };
+    const active = { animation, duration, width, textWidth };
     session.activeDanmaku.add(active);
     const cleanup = () => {
       element.remove();
@@ -386,11 +406,13 @@ export function renderRoom(ctx, params = {}) {
 
   /// 调整滚动速度时让已经在屏幕上的弹幕也立刻变速，而不是只影响下一条。
   function retimeDanmaku(seconds) {
-    const duration = Math.max(2.5, Number(seconds) || 8) * 1000;
+    const width = stage.clientWidth;
+    const speed = Math.max(2.5, Number(seconds) || 8);
     for (const item of session.activeDanmaku) {
       if (item.fixed) continue;
       try {
-        const rate = item.duration / duration;
+        const newDuration = ((item.width || width) + (item.textWidth || 0)) * speed * 1000 / (item.width || width);
+        const rate = item.duration / newDuration;
         if (typeof item.animation.updatePlaybackRate === 'function') {
           item.animation.updatePlaybackRate(rate);
         } else {
@@ -400,6 +422,87 @@ export function renderRoom(ctx, params = {}) {
         /* 动画已结束 */
       }
     }
+  }
+
+  function scTierColors(sc) {
+    const fallback = [
+      [1000, '#e7bb6b', '#d39a32'],
+      [500, '#e86b6b', '#c84444'],
+      [100, '#f0a35e', '#d47a22'],
+      [50, '#7fd8e8', '#3f9fbe'],
+      [30, '#8bb7ff', '#4c78d8'],
+    ];
+    const tier = fallback.find(([price]) => Number(sc.price) >= price) || [0, '#fb7299', '#e05a87'];
+    return {
+      top: sc.background_color || tier[1],
+      bottom: sc.background_bottom_color || tier[2],
+    };
+  }
+
+  function clearScTimer(entry) {
+    const timer = session.scTimers.get(entry);
+    if (timer) clearTimeout(timer);
+    session.scTimers.delete(entry);
+  }
+
+  function removeScMessage(entry) {
+    clearScTimer(entry);
+    session.scMessages = session.scMessages.filter((item) => item !== entry);
+    const counter = $('sc-count');
+    if (counter) counter.textContent = String(session.scMessages.length);
+    renderScOverlay();
+    if (session.tab === 'sc') renderChatTab();
+  }
+
+  function scheduleScRemoval(entry) {
+    clearScTimer(entry);
+    if (!state.settings.player.superChatAutoRemove) return;
+    const end = Number(entry.sc.end_time) || 0;
+    const delay = end > 0 ? Math.max(4000, end * 1000 - Date.now()) : 60_000;
+    session.scTimers.set(
+      entry,
+      setTimeout(() => removeScMessage(entry), Math.min(delay, 24 * 60 * 60 * 1000))
+    );
+  }
+
+  function purgeExpiredSc() {
+    if (!state.settings.player.superChatAutoRemove) return;
+    const now = Date.now();
+    for (const entry of [...session.scMessages]) {
+      const end = Number(entry.sc.end_time) || 0;
+      if (end > 0 && end * 1000 <= now) removeScMessage(entry);
+    }
+  }
+
+  function renderScOverlay() {
+    const layer = $('sc-float-layer');
+    if (!layer) return;
+    layer.innerHTML = '';
+    const enabled = Boolean(state.settings.player.superChatOverlay);
+    layer.classList.toggle('hidden', !enabled);
+    if (!enabled) return;
+    const active = session.scMessages.slice(-3);
+    for (const entry of active) {
+      const { top, bottom } = scTierColors(entry.sc);
+      const card = document.createElement('div');
+      card.className = 'sc-float-card';
+      card.dataset.end = String(entry.sc.end_time ?? '');
+      card.style.background = `linear-gradient(140deg, ${top}, ${bottom})`;
+      card.innerHTML = `
+        <div class="sc-float-head">
+          ${avatarHtml(entry.user, entry.sc.avatar, 28)}
+          <b>${escapeHtml(entry.user || 'B 站用户')}</b>
+          <span>¥${Number(entry.sc.price) || 0}</span>
+          <button class="sc-delete" title="关闭">${icon('close', 12)}</button>
+        </div>
+        <div class="sc-float-text">${escapeHtml(entry.text)}</div>`;
+      card.querySelector('.sc-delete').addEventListener('click', (event) => {
+        event.stopPropagation();
+        removeScMessage(entry);
+      });
+      layer.appendChild(card);
+    }
+    bindImageFallback(layer);
   }
 
   function pushMessage(message) {
@@ -419,6 +522,8 @@ export function renderRoom(ctx, params = {}) {
       if (session.scMessages.length > 100) session.scMessages.shift();
       const counter = $('sc-count');
       if (counter) counter.textContent = String(session.scMessages.length);
+      scheduleScRemoval(entry);
+      renderScOverlay();
       if (session.tab === 'sc') renderChatTab();
     }
     if (!entry.system && !entry.sc) spawnDanmaku(entry);
@@ -468,6 +573,38 @@ export function renderRoom(ctx, params = {}) {
     return box;
   }
 
+  async function refreshRoomFollowStatus() {
+    if (session.followRefreshing) return;
+    const list = loadFollow();
+    if (!list.length) return;
+    session.followRefreshing = true;
+    const button = chatList.querySelector('#chat-follow-refresh');
+    button?.classList.add('is-loading');
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < list.length) {
+        const item = list[cursor++];
+        try {
+          const payload = await api.openRoom(item.platform, item.room_id);
+          updateFollow(item.platform, item.room_id, {
+            live: Boolean(payload.detail.live),
+            title: payload.detail.title || item.title,
+            user_name: payload.detail.user_name || item.user_name,
+            avatar: payload.detail.avatar || item.avatar || '',
+            cover: payload.detail.cover || item.cover || '',
+            online: Number(payload.detail.online) || 0,
+          });
+        } catch {
+          /* 忽略单个失败 */
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    session.followRefreshing = false;
+    if (session.tab === 'follow') renderChatTab();
+    toast('关注直播状态已刷新', 'success');
+  }
+
   function renderChatTab() {
     chatList.innerHTML = '';
     if (session.tab === 'chat') {
@@ -487,16 +624,18 @@ export function renderRoom(ctx, params = {}) {
       for (const message of session.scMessages.slice().reverse()) {
         const card = document.createElement('div');
         card.className = 'sc-card';
-        const background = message.sc.background_color || '#fb7299';
-        const bottom = message.sc.background_bottom_color || background;
-        card.style.background = `linear-gradient(140deg, ${background}, ${bottom})`;
+        card.dataset.end = String(message.sc.end_time ?? '');
+        const { top, bottom } = scTierColors(message.sc);
+        card.style.background = `linear-gradient(140deg, ${top}, ${bottom})`;
         card.innerHTML = `
           <div class="sc-card-head">
             ${avatarHtml(message.user, message.sc.avatar, 32)}
             <b>${escapeHtml(message.user || 'B 站用户')}</b>
             <span class="sc-price">¥${Number(message.sc.price) || 0}</span>
+            <button class="sc-card-close" title="删除这条 SC">${icon('close', 13)}</button>
           </div>
           <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
+        card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message));
         chatList.appendChild(card);
       }
       bindImageFallback(chatList);
@@ -508,6 +647,11 @@ export function renderRoom(ctx, params = {}) {
         chatList.appendChild(placeholder('你还没有关注其他主播', 'heart'));
         return;
       }
+      const toolbar = document.createElement('div');
+      toolbar.className = 'chat-follow-toolbar';
+      toolbar.innerHTML = `<span>${follows.length} 位主播</span><button class="btn small" id="chat-follow-refresh">${icon('refresh', 13)} 刷新状态</button>`;
+      toolbar.querySelector('#chat-follow-refresh').addEventListener('click', refreshRoomFollowStatus);
+      chatList.appendChild(toolbar);
       const grid = document.createElement('div');
       grid.className = 'chat-follow-grid';
       for (const item of follows) {
@@ -532,7 +676,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  function renderChatSettings() {
+  function renderChatSettings(target = chatList) {
     const config = state.settings.danmaku;
     const wrap = document.createElement('div');
     wrap.className = 'chat-settings';
@@ -565,8 +709,13 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>过滤窗口</span><input type="number" class="chat-setting-input" id="cs-dedupe-window" min="1" max="60" step="1" value="${config.dedupeWindow}" /><em>秒</em></div>
         <div class="chat-setting-row"><span>过滤步长</span><input type="number" class="chat-setting-input" id="cs-dedupe-step" min="1" max="10" step="1" value="${config.dedupeStep}" /><em></em></div>
       </div>
+      <div class="chat-settings-group">
+        <h4>SC 设置</h4>
+        <div class="chat-setting-row"><span>到期自动消失</span><button class="switch" id="cs-sc-auto" aria-checked="${state.settings.player.superChatAutoRemove}"></button></div>
+        <div class="chat-setting-row"><span>左下角浮动显示</span><button class="switch" id="cs-sc-float" aria-checked="${state.settings.player.superChatOverlay}"></button></div>
+      </div>
       <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。</div>`;
-    chatList.appendChild(wrap);
+    target.appendChild(wrap);
 
     const bindSwitch = (id, key) => {
       const button = wrap.querySelector(`#${id}`);
@@ -622,6 +771,28 @@ export function renderRoom(ctx, params = {}) {
     bindSelect('cs-dedupe-mode', 'dedupeMode');
     bindNumber('cs-dedupe-window', 'dedupeWindow', 1, 60);
     bindNumber('cs-dedupe-step', 'dedupeStep', 1, 10);
+    const bindPlayerSwitch = (id, key) => {
+      const button = wrap.querySelector(`#${id}`);
+      button.addEventListener('click', () => {
+        const value = button.getAttribute('aria-checked') !== 'true';
+        button.setAttribute('aria-checked', String(value));
+        setPlayerConfig(key, value);
+      });
+    };
+    bindPlayerSwitch('cs-sc-auto', 'superChatAutoRemove');
+    bindPlayerSwitch('cs-sc-float', 'superChatOverlay');
+  }
+
+  function setPlayerConfig(key, value) {
+    state.settings.player[key] = value;
+    saveSettings();
+    if (key === 'superChatAutoRemove') {
+      for (const entry of session.scMessages) {
+        if (value) scheduleScRemoval(entry);
+        else clearScTimer(entry);
+      }
+    }
+    if (key === 'superChatOverlay') renderScOverlay();
   }
 
   function resetDanmakuSurface() {
@@ -681,8 +852,8 @@ export function renderRoom(ctx, params = {}) {
 
   function setQualityLabel() {
     const quality = session.qualities[session.qualityIndex];
-    $('ctrl-quality').innerHTML = `${escapeHtml(quality || '清晰度')} ${icon('chevronDown', 13)}`;
-    $('ctrl-line').innerHTML = `线路 ${session.lineIndex + 1} ${icon('chevronDown', 13)}`;
+    $('ctrl-quality').innerHTML = `${escapeHtml(quality || '清晰度')} ${icon('chevronUp', 13)}`;
+    $('ctrl-line').innerHTML = `线路 ${session.lineIndex + 1} ${icon('chevronUp', 13)}`;
   }
 
   function showQualityMenu() {
@@ -1056,10 +1227,33 @@ export function renderRoom(ctx, params = {}) {
     });
   }
 
+  function openDanmakuSettingsModal() {
+    const body = document.createElement('div');
+    body.className = 'room-settings-modal';
+    openModal({
+      title: '直播设置',
+      subtitle: '弹幕设置 / 屏蔽设置',
+      width: 420,
+      body,
+    });
+    renderChatSettings(body);
+  }
+
   function openQuickSettings() {
     openMenu($('ctrl-settings'), [
       { label: '弹幕开关', icon: 'danmaku', active: session.danmakuEnabled, onClick: () => setDanmakuEnabled(!session.danmakuEnabled) },
-      { label: '弹幕设置', icon: 'text', onClick: () => setChatCollapsed(false) || setChatTab('settings') },
+      {
+        label: '弹幕设置',
+        icon: 'text',
+        onClick: () => {
+          if (document.fullscreenElement) {
+            openDanmakuSettingsModal();
+          } else {
+            setChatCollapsed(false);
+            setChatTab('settings');
+          }
+        },
+      },
       { label: '播放器设置', icon: 'player', onClick: () => toast('完整播放设置请到 设置 → 播放页设置') },
       { label: '刷新直播流', icon: 'refresh', onClick: () => refreshStream() },
       { separator: true },
@@ -1092,6 +1286,8 @@ export function renderRoom(ctx, params = {}) {
   }
 
   async function boot() {
+    session.scSweep = setInterval(purgeExpiredSc, 1000);
+    video.addEventListener('timeupdate', purgeExpiredSc);
     setHint({ spinner: true, text: '正在读取直播间…' });
     applyDanmakuStyle();
     setDanmakuEnabled(session.danmakuEnabled);
@@ -1129,6 +1325,20 @@ export function renderRoom(ctx, params = {}) {
       recordHistory({ ...payload.detail, platform: detailPlatform });
       setChatTab('chat');
       setQualityLabel();
+      if (!payload.detail.live || !session.qualities.length) {
+        // 未开播也要保留房间头、关注/取关和主播信息，只是不取流。
+        $('ctrl-quality').disabled = true;
+        $('ctrl-line').disabled = true;
+        setHint({
+          text: payload.detail.live ? '当前没有可用的直播流' : '主播当前未开播，开播后可以刷新进入',
+          actions: '<button class="btn primary" id="hint-reopen">刷新房间</button>',
+        });
+        hint.querySelector('#hint-reopen')?.addEventListener('click', () => {
+          ctx.openRoom(session.platform, session.roomId);
+        });
+        clock.textContent = currentClock();
+        return;
+      }
       await refreshStream();
       await startDanmaku();
       if (state.settings.player.muteOnStart) {
@@ -1254,6 +1464,10 @@ export function renderRoom(ctx, params = {}) {
     clearInterval(session.refreshTimer);
     clearInterval(session.danmakuTimer);
     clearInterval(session.stallTimer);
+    for (const timer of session.scTimers.values()) clearTimeout(timer);
+    session.scTimers.clear();
+    clearInterval(session.scSweep);
+    video.removeEventListener('timeupdate', purgeExpiredSc);
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     if (typeof state.unlistenDanmaku === 'function') state.unlistenDanmaku();

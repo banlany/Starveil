@@ -22,16 +22,16 @@ const STRUCT_END: u8 = 11;
 const ZERO_TAG: u8 = 12;
 const SIMPLE_LIST: u8 = 13;
 
-struct Writer {
-    buf: Vec<u8>,
+pub(crate) struct Writer {
+    pub(crate) buf: Vec<u8>,
 }
 
 impl Writer {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { buf: Vec::new() }
     }
 
-    fn head(&mut self, ty: u8, tag: u8) {
+    pub(crate) fn head(&mut self, ty: u8, tag: u8) {
         if tag < 15 {
             self.buf.push((tag << 4) | ty);
         } else {
@@ -40,7 +40,7 @@ impl Writer {
         }
     }
 
-    fn int(&mut self, value: i64, tag: u8) {
+    pub(crate) fn int(&mut self, value: i64, tag: u8) {
         if value == 0 {
             self.head(ZERO_TAG, tag);
         } else if (-128..=127).contains(&value) {
@@ -58,7 +58,7 @@ impl Writer {
         }
     }
 
-    fn string(&mut self, value: &str, tag: u8) {
+    pub(crate) fn string(&mut self, value: &str, tag: u8) {
         let bytes = value.as_bytes();
         if bytes.len() > 255 {
             self.head(STRING4, tag);
@@ -70,19 +70,19 @@ impl Writer {
         self.buf.extend_from_slice(bytes);
     }
 
-    fn bytes(&mut self, value: &[u8], tag: u8) {
+    pub(crate) fn bytes(&mut self, value: &[u8], tag: u8) {
         self.head(SIMPLE_LIST, tag);
         self.head(BYTE, 0);
         self.int(value.len() as i64, 0);
         self.buf.extend_from_slice(value);
     }
 
-    fn empty_map(&mut self, tag: u8) {
+    pub(crate) fn empty_map(&mut self, tag: u8) {
         self.head(MAP, tag);
         self.int(0, 0);
     }
 
-    fn one_entry_map(&mut self, key: &str, value: &[u8], tag: u8) {
+    pub(crate) fn one_entry_map(&mut self, key: &str, value: &[u8], tag: u8) {
         self.head(MAP, tag);
         self.int(1, 0);
         self.string(key, 0);
@@ -135,30 +135,30 @@ fn build_request(stream: &str) -> Vec<u8> {
     packet
 }
 
-struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
-    fn byte(&mut self) -> Result<u8, String> {
+    pub(crate) fn byte(&mut self) -> Result<u8, String> {
         let value = *self.data.get(self.pos).ok_or("虎牙 token 响应被截断")?;
         self.pos += 1;
         Ok(value)
     }
 
-    fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
+    pub(crate) fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
         let end = self.pos.checked_add(len).ok_or("虎牙 token 长度溢出")?;
         let slice = self.data.get(self.pos..end).ok_or("虎牙 token 响应被截断")?;
         self.pos = end;
         Ok(slice)
     }
 
-    fn head(&mut self) -> Result<(u8, u8), String> {
+    pub(crate) fn head(&mut self) -> Result<(u8, u8), String> {
         let first = self.byte()?;
         let ty = first & 0x0F;
         let mut tag = (first >> 4) & 0x0F;
@@ -168,7 +168,7 @@ impl<'a> Reader<'a> {
         Ok((ty, tag))
     }
 
-    fn int_with_type(&mut self, ty: u8) -> Result<i64, String> {
+    pub(crate) fn int_with_type(&mut self, ty: u8) -> Result<i64, String> {
         match ty {
             ZERO_TAG => Ok(0),
             BYTE => Ok(self.byte()? as i64),
@@ -190,17 +190,17 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn int(&mut self) -> Result<i64, String> {
+    pub(crate) fn int(&mut self) -> Result<i64, String> {
         let (ty, _tag) = self.head()?;
         self.int_with_type(ty)
     }
 
-    fn string(&mut self) -> Result<String, String> {
+    pub(crate) fn string(&mut self) -> Result<String, String> {
         let (ty, _tag) = self.head()?;
         self.string_with_type(ty)
     }
 
-    fn string_with_type(&mut self, ty: u8) -> Result<String, String> {
+    pub(crate) fn string_with_type(&mut self, ty: u8) -> Result<String, String> {
         let len = match ty {
             STRING1 => self.byte()? as usize,
             STRING4 => {
@@ -213,7 +213,7 @@ impl<'a> Reader<'a> {
         Ok(String::from_utf8_lossy(bytes).to_string())
     }
 
-    fn bytes(&mut self) -> Result<Vec<u8>, String> {
+    pub(crate) fn bytes(&mut self) -> Result<Vec<u8>, String> {
         let (ty, _tag) = self.head()?;
         if ty != SIMPLE_LIST {
             let start = self.pos.saturating_sub(8);
@@ -227,7 +227,7 @@ impl<'a> Reader<'a> {
         self.bytes_after_head()
     }
 
-    fn bytes_after_head(&mut self) -> Result<Vec<u8>, String> {
+    pub(crate) fn bytes_after_head(&mut self) -> Result<Vec<u8>, String> {
         let (elem_ty, _elem_tag) = self.head()?;
         if elem_ty != BYTE {
             return Err("虎牙 token 字节元素类型错误".to_string());
@@ -236,7 +236,7 @@ impl<'a> Reader<'a> {
         Ok(self.take(len)?.to_vec())
     }
 
-    fn skip(&mut self, ty: u8) -> Result<(), String> {
+    pub(crate) fn skip(&mut self, ty: u8) -> Result<(), String> {
         match ty {
             ZERO_TAG | STRUCT_END => {}
             BYTE => {
@@ -300,7 +300,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
-    fn eof(&self) -> bool {
+    pub(crate) fn eof(&self) -> bool {
         self.pos >= self.data.len()
     }
 }
@@ -371,7 +371,7 @@ fn parse_token(packet: &[u8]) -> Result<String, String> {
 mod tests {
     #[test]
     #[ignore]
-    fn fetch_real_token() {
+    pub(crate) fn fetch_real_token() {
         let stream = "78941969-2559461593-10992803837303062528-2693342886-10057-A-0-1-imgplus";
         let token = super::fetch_token(stream).expect("虎牙 token");
         println!("{token}");

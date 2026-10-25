@@ -1,8 +1,8 @@
 // 关注页：本地关注列表、标签与平台筛选。
-import { formatOnline, formatCount } from '../api.js';
+import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { loadFollow, removeFollow, state, updateFollow } from '../store.js';
-import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, toast } from '../ui.js';
+import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
 export function renderFollow(ctx) {
   const page = document.createElement('section');
@@ -265,31 +265,73 @@ export function renderFollow(ctx) {
     ]);
   });
 
-  page.querySelector('#follow-refresh').addEventListener('click', () => {
-    toast('关注状态会在进入直播间时更新；当前版本不做后台轮询。');
-  });
+  let alive = true;
+  let refreshing = false;
+  async function refreshFollowStatus() {
+    if (refreshing) return;
+    const list = loadFollow();
+    if (!list.length) {
+      toast('还没有关注的主播');
+      return;
+    }
+    refreshing = true;
+    const button = page.querySelector('#follow-refresh');
+    button?.classList.add('is-loading');
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < list.length) {
+        const item = list[cursor++];
+        try {
+          const payload = await api.openRoom(item.platform, item.room_id);
+          updateFollow(item.platform, item.room_id, {
+            live: Boolean(payload.detail.live),
+            title: payload.detail.title || item.title,
+            user_name: payload.detail.user_name || item.user_name,
+            avatar: payload.detail.avatar || item.avatar || '',
+            cover: payload.detail.cover || item.cover || '',
+            online: Number(payload.detail.online) || 0,
+          });
+        } catch {
+          /* 单个房间失败不影响其他主播 */
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    refreshing = false;
+    if (!alive) return;
+    button?.classList.remove('is-loading');
+    toast('关注直播状态已刷新', 'success');
+    ctx.go('follow');
+  }
+
+  page.querySelector('#follow-refresh').addEventListener('click', refreshFollowStatus);
 
   document.getElementById('view').appendChild(page);
   renderAll();
-  return () => {};
+  const interval = Math.max(1, Number(state.settings.follow.interval) || 10) * 60 * 1000;
+  const poller = state.settings.follow.autoUpdate ? setInterval(refreshFollowStatus, interval) : null;
+  if (state.settings.follow.autoUpdate) setTimeout(refreshFollowStatus, 600);
+  return () => {
+    alive = false;
+    if (poller) clearInterval(poller);
+  };
 }
 
-function exportFollow() {
+async function exportFollow() {
   const data = {
     version: 1,
     exportedAt: new Date().toISOString(),
     follows: loadFollow(),
     settings: state.settings,
+    shield: {
+      keywords: state.settings.danmaku?.blockKeywords || '',
+      users: state.settings.danmaku?.blockUsers || '',
+    },
     history: state.history,
   };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `simple-live-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-  toast('已导出关注与设置', 'success');
+  const filename = `starveil-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const saved = await saveJsonFile(filename, data);
+  if (saved) toast('已导出关注与设置', 'success');
 }
 
 function importFollow(after) {
@@ -303,6 +345,12 @@ function importFollow(after) {
       const data = JSON.parse(await file.text());
       if (Array.isArray(data.follows)) {
         localStorage.setItem('simple-live.follow.v2', JSON.stringify(data.follows));
+      }
+      if (data.shield) {
+        data.settings = data.settings || {};
+        data.settings.danmaku = data.settings.danmaku || {};
+        if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
+        if (!data.settings.danmaku.blockUsers) data.settings.danmaku.blockUsers = data.shield.users || '';
       }
       if (data.settings) {
         localStorage.setItem('simple-live.settings.v2', JSON.stringify(data.settings));
