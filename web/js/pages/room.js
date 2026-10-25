@@ -699,7 +699,8 @@ export function renderRoom(ctx, params = {}) {
       if (!session.danmakuEnabled) danmaku?.setEnabled(false);
     }
     saveSettings();
-    if (key === 'speed') danmaku?.update(state.settings.danmaku, { relayout: false });
+    // 速度属于布局参数：交给 danmaku.update 走重建分支，避免库的热重排把画面清空。
+    if (key === 'speed') danmaku?.update(state.settings.danmaku);
     // 字号/行数/区域变化后旧弹幕的 top 已经失效，清屏重新排轨，避免和新轨道叠字。
     if (['lines', 'font', 'area', 'safeTop', 'safeBottom'].includes(key)) {
       resetDanmakuSurface();
