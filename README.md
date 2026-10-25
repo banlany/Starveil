@@ -121,7 +121,7 @@
 ## 结构
 
 ```
-tauri_simple_live/
+Starveil/
 ├─ src-tauri/
 │  ├─ src/main.rs           命令：推荐/搜索/分类/房间/取流/弹幕/剪贴板/链接解析
 │  ├─ capabilities/          Tauri 2 权限（事件监听、窗口尺寸/位置）
@@ -163,7 +163,7 @@ tauri_simple_live/
 前端没有构建步骤，起一个静态服务让 Tauri 的 `devUrl` 指向它：
 
 ```powershell
-cd tauri_simple_live
+# 在仓库根目录执行
 python -m http.server 1420 --bind 127.0.0.1 --directory web
 # 另开一个终端
 cargo tauri dev
@@ -182,7 +182,7 @@ node tools/cdp.mjs click "#topbar-search"
 ### 构建独立 exe
 
 ```powershell
-cd tauri_simple_live
+# 在仓库根目录执行
 cargo tauri build --no-bundle
 ```
 
