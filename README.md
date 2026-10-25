@@ -6,7 +6,7 @@
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE），  
 协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.3.9** · Windows 10/11 x64 · GPL-3.0
+> 当前版本 **0.3.9** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/screenshots/home.png)
 
@@ -204,15 +204,21 @@ cargo tauri build --no-bundle
 
 ## 许可与致谢
 
-- 界面结构、交互与平台图标参考 [`dart_simple_live`](https://github.com/xiaoyaocz/dart_simple_live)（GPL-3.0），  
-  本项目随之使用 **GPL-3.0**，见 [LICENSE](LICENSE)。
-- 协议层来自本项目的 GPUI 版本，已迁入 `src-tauri/vendor/live_core`，  
-  其中虎牙部分补了 Tars `getCdnTokenInfoEx` 的实现。
-- 播放使用 [mpegts.js](https://github.com/xqq/mpegts.js)（Apache-2.0）。
-- 弹幕使用 [fly-barrage](https://github.com/feiafei27/fly-barrage)（MIT），本地构建 IIFE 后放进 `web/vendor/`。
-- 斗鱼签名环境使用 CryptoJS（MIT）；登录二维码使用 qrcode-generator（MIT）。
+本项目是**独立仓库**，不是原项目的官方分支，与原项目作者无隶属关系。
+
+- **界面**：布局结构、交互细节与平台图标参考 [`dart_simple_live`](https://github.com/xiaoyaocz/dart_simple_live)（GPL-3.0）。
+- **协议**：各平台的房间信息、清晰度、取流签名与弹幕编解码，是从原项目 Dart 实现
+  （`simple_live_core`）移植为 Rust 的（`src-tauri/vendor/live_core`），并非原创；
+  迁移过程中补充了虎牙 Tars `getCdnTokenInfoEx`、斗鱼 WebView 签名等实现。
+  因此本项目属于原项目的衍生作品，沿用 **GPL-3.0**，完整源码随本仓库提供，见 [LICENSE](LICENSE)。
+- **依赖**：播放使用 [mpegts.js](https://github.com/xqq/mpegts.js)（Apache-2.0）；
+  弹幕使用 [fly-barrage](https://github.com/feiafei27/fly-barrage)（MIT，本地构建 IIFE 后放进 `web/vendor/`）；
+  斗鱼签名环境使用 CryptoJS（MIT）；登录二维码使用 qrcode-generator（MIT）。
 
 ## 免责声明
 
-本项目仅用于学习与技术研究，不提供、不存储、不转播任何直播内容。  
-所有视频流、弹幕、封面与商标归各直播平台及主播所有。请遵守所在地区法律法规与平台服务条款。
+本项目仅用于个人学习与技术研究，**不提供、不存储、不转播任何直播内容**，也不绕过任何平台的付费或登录限制。
+
+所有视频流、弹幕、封面与商标归各直播平台及主播所有。请遵守所在地区法律法规与各平台服务条款，
+**请勿用于商业用途**。因使用本项目产生的任何后果由使用者自行承担。
+
