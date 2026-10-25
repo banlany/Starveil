@@ -84,10 +84,6 @@ export function renderRoom(ctx, params = {}) {
           <button class="chat-tab" data-tab="settings">设置</button>
         </div>
         <div class="chat-list" id="chat-list"></div>
-        <div class="chat-foot">
-          <div class="chat-input">登录后可发送弹幕</div>
-          <button class="chat-send" title="发送">${icon('share', 16)}</button>
-        </div>
       </aside>
     </div>
     <footer class="room-footer">
@@ -187,9 +183,6 @@ export function renderRoom(ctx, params = {}) {
     if (!tab) return;
     setChatTab(tab);
   });
-  page.querySelector('.chat-send').addEventListener('click', () => toast('发送弹幕需要登录，当前版本以游客身份观看。'));
-  page.querySelector('.chat-input').addEventListener('click', () => toast('发送弹幕需要登录，当前版本以游客身份观看。'));
-
   const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
   const wake = () => {
     page.classList.remove('ui-idle');
@@ -469,8 +462,6 @@ export function renderRoom(ctx, params = {}) {
     for (const button of page.querySelectorAll('.chat-tab')) {
       button.classList.toggle('active', button.dataset.tab === tab);
     }
-    const foot = page.querySelector('.chat-foot');
-    foot.style.display = tab === 'chat' ? 'flex' : 'none';
     renderChatTab();
   }
 

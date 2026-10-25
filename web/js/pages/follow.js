@@ -21,7 +21,6 @@ export function renderFollow(ctx) {
         <button class="icon-btn" id="follow-search" title="搜索关注">${icon('search', 19)}</button>
         <button class="icon-btn" id="follow-filter" title="筛选">${icon('filter', 18)}</button>
         <button class="icon-btn" id="follow-view" title="切换布局">${icon('gridView', 18)}</button>
-        <button class="icon-btn" id="follow-multi" title="多开同屏">${icon('screen', 18)}</button>
         <button class="icon-btn" id="follow-more" title="更多">${icon('more', 19)}</button>
       </div>
     </header>
@@ -244,10 +243,6 @@ export function renderFollow(ctx) {
       { label: '只看直播中', active: state.followFilter.status === 'live', onClick: () => { state.followFilter.status = 'live'; renderAll(); } },
       { label: '只看未开播', active: state.followFilter.status === 'offline', onClick: () => { state.followFilter.status = 'offline'; renderAll(); } },
     ]);
-  });
-
-  page.querySelector('#follow-multi').addEventListener('click', () => {
-    toast('多开同屏：当前版本先提供单个直播间，多窗口排布在后续版本接入。');
   });
 
   page.querySelector('#follow-more').addEventListener('click', (event) => {

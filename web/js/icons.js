@@ -39,7 +39,6 @@ const PATHS = {
   sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.3M12 19.7V22M2 12h2.3M19.7 12H22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M19.1 4.9l-1.6 1.6M6.5 17.5l-1.6 1.6"/>',
   player: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.2v5.6l4.8-2.8-4.8-2.8Z" fill="currentColor" stroke="none"/>',
   live: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6"/><path d="M5.4 5.4a9.3 9.3 0 0 0 0 13.2M18.6 5.4a9.3 9.3 0 0 1 0 13.2"/>',
-  multi: '<rect x="3" y="5" width="8" height="6.5" rx="1.2"/><rect x="13" y="5" width="8" height="6.5" rx="1.2"/><rect x="3" y="13.5" width="8" height="6.5" rx="1.2"/><rect x="13" y="13.5" width="8" height="6.5" rx="1.2"/>',
   text: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4.4l3 1.8M9 2h6"/>',
   other: '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',

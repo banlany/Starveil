@@ -1229,74 +1229,167 @@ async fn bili_qr_generate() -> Result<QrPayload, String> {
                 &[
                     ("user-agent", DESKTOP_UA),
                     ("referer", BILIBILI_REFERER),
+                    ("origin", "https://www.bilibili.com"),
+                    ("accept", "application/json, text/plain, */*"),
                 ],
             )
             .map_err(fail)?;
         let data = value
             .get("data")
-            .ok_or_else(|| "B 站二维码接口返回异常".to_string())?;
+            .filter(|data| !data.is_null())
+            .ok_or_else(|| {
+                format!(
+                    "B 站二维码接口没有返回数据：{}",
+                    value
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("接口异常")
+                )
+            })?;
         let url = data
             .get("url")
             .and_then(Value::as_str)
             .ok_or_else(|| "B 站没有返回二维码地址".to_string())?
             .to_string();
+        // 有的返回不带 qrcode_key 字段，但 URL 查询串里一定有。
         let key = data
             .get("qrcode_key")
             .and_then(Value::as_str)
-            .ok_or_else(|| "B 站没有返回二维码 key".to_string())?
-            .to_string();
+            .map(str::to_string)
+            .or_else(|| {
+                url::Url::parse(&url).ok().and_then(|parsed| {
+                    parsed
+                        .query_pairs()
+                        .find(|(key, _)| key == "qrcode_key")
+                        .map(|(_, value)| value.into_owned())
+                })
+            })
+            .ok_or_else(|| "B 站没有返回二维码 key".to_string())?;
         Ok(QrPayload { url, key })
     })
     .await
     .map_err(|error| format!("任务执行失败：{error}"))?
 }
 
-fn cookie_from_bili_url(url: &str) -> Result<String, String> {
-    let parsed = url::Url::parse(url).map_err(|error| format!("B 站登录地址无效：{error}"))?;
-    let keep = [
-        "SESSDATA",
-        "bili_jct",
-        "DedeUserID",
-        "DedeUserID__ckMd5",
-        "sid",
-    ];
+const BILI_COOKIE_KEYS: [&str; 8] = [
+    "SESSDATA",
+    "bili_jct",
+    "DedeUserID",
+    "DedeUserID__ckMd5",
+    "sid",
+    "buvid3",
+    "buvid4",
+    "b_nut",
+];
+
+fn bili_cookie_parts_from_url(url: &str) -> Vec<String> {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return Vec::new();
+    };
     let mut parts = Vec::new();
     for (key, value) in parsed.query_pairs() {
-        if keep.contains(&key.as_ref()) {
+        if BILI_COOKIE_KEYS.contains(&key.as_ref()) {
             parts.push(format!("{key}={value}"));
         }
     }
-    if parts.iter().any(|part| part.starts_with("SESSDATA=")) {
-        Ok(parts.join("; "))
-    } else {
-        Err("B 站登录回调里没有 SESSDATA".to_string())
+    parts
+}
+
+fn bili_cookie_parts_from_headers(headers: &reqwest::header::HeaderMap) -> Vec<String> {
+    let mut parts = Vec::new();
+    for value in headers.get_all("set-cookie").iter() {
+        let Ok(text) = value.to_str() else {
+            continue;
+        };
+        // 只取 name=value，忽略 Path/Domain/HttpOnly 等属性。
+        let Some(first) = text.split(';').next() else {
+            continue;
+        };
+        let Some((name, value)) = first.split_once('=') else {
+            continue;
+        };
+        if BILI_COOKIE_KEYS.contains(&name) && !value.is_empty() {
+            parts.push(format!("{name}={value}"));
+        }
     }
+    parts
+}
+
+fn merge_bili_cookies(url: &str, headers: &reqwest::header::HeaderMap) -> Result<String, String> {
+    let mut merged: Vec<(String, String)> = Vec::new();
+    for part in bili_cookie_parts_from_headers(headers)
+        .into_iter()
+        .chain(bili_cookie_parts_from_url(url))
+    {
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
+        if let Some(existing) = merged.iter_mut().find(|(key, _)| key == name) {
+            existing.1 = value.to_string();
+        } else {
+            merged.push((name.to_string(), value.to_string()));
+        }
+    }
+    if !merged.iter().any(|(name, _)| name == "SESSDATA") {
+        return Err("B 站登录成功但没有返回 SESSDATA，请改用 Cookie 登录".to_string());
+    }
+    Ok(merged
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("; "))
 }
 
 #[tauri::command]
 async fn bili_qr_poll(key: String) -> Result<QrPollResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let http = HttpSession::new();
-        let value = http
-            .get_json(
+        let (value, headers) = http
+            .get_json_with_headers(
                 "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
                 &[("qrcode_key", key.as_str()), ("source", "main-fe-header")],
                 &[
                     ("user-agent", DESKTOP_UA),
                     ("referer", BILIBILI_REFERER),
+                    ("origin", "https://www.bilibili.com"),
+                    ("accept", "application/json, text/plain, */*"),
                 ],
             )
             .map_err(fail)?;
         let data = value.get("data").cloned().unwrap_or(Value::Null);
-        let code = data.get("code").and_then(Value::as_i64).unwrap_or(-1);
+        if data.is_null() {
+            return Err(format!(
+                "B 站轮询接口没有返回数据：{}",
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("接口异常")
+            ));
+        }
+        let code = value_i64(data.get("code"));
         match code {
             0 => {
                 let url = data.get("url").and_then(Value::as_str).unwrap_or("");
-                let cookie = cookie_from_bili_url(url)?;
-                let user = bili_user(&cookie)?;
-                if !user.logged_in {
-                    return Err(user.message);
-                }
+                let cookie = merge_bili_cookies(url, &headers)?;
+                // 扫码成功后用 nav 接口补头像/昵称；nav 偶发风控时仍保留 Cookie。
+                let user = bili_user(&cookie).unwrap_or_else(|error| LoginUser {
+                    logged_in: true,
+                    name: "B 站用户".to_string(),
+                    avatar: String::new(),
+                    uid: String::new(),
+                    message: error,
+                });
+                let user = if user.logged_in {
+                    user
+                } else {
+                    LoginUser {
+                        logged_in: true,
+                        name: "B 站用户".to_string(),
+                        avatar: String::new(),
+                        uid: String::new(),
+                        message: user.message,
+                    }
+                };
                 Ok(QrPollResult {
                     status: "authorized".to_string(),
                     message: "登录成功".to_string(),

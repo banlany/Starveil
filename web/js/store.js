@@ -89,10 +89,6 @@ export const DEFAULT_SETTINGS = {
     threads: 0,
     pageSize: 200,
   },
-  multi: {
-    collapseChat: true,
-    gap: 2,
-  },
   timer: {
     enabled: false,
     minutes: 60,
@@ -100,7 +96,6 @@ export const DEFAULT_SETTINGS = {
   other: {
     rememberWindow: true,
     log: false,
-    autoCheckUpdate: true,
   },
 };
 
@@ -318,7 +313,7 @@ export function recordHistory(room) {
     area: room.area || '',
     watched_at: Date.now(),
   });
-  state.history = filtered.slice(0, 120);
+  state.history = filtered.slice(0, 1000);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
 }
 

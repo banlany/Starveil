@@ -23,6 +23,7 @@ import {
   promptDialog,
   roomGrid,
   toast,
+  loadMore,
 } from '../ui.js';
 
 const SETTINGS_ITEMS = [
@@ -34,15 +35,12 @@ const SETTINGS_ITEMS = [
   { key: 'home', icon: 'home', label: '主页设置' },
   { key: 'player', icon: 'player', label: '播放页设置' },
   { key: 'live', icon: 'live', label: '直播设置' },
-  { key: 'multi', icon: 'multi', label: '多开设置' },
   { key: 'danmaku', icon: 'text', label: '弹幕设置' },
   { key: 'follow', icon: 'heart', label: '关注设置' },
   { key: 'timer', icon: 'timer', label: '定时关闭' },
   { key: 'other', icon: 'other', label: '其他设置' },
   { key: 'disclaimer', icon: 'shield', label: '免责声明' },
   { key: 'github', icon: 'github', label: '开源主页', action: 'github' },
-  { key: 'update', icon: 'refresh', label: '检查更新', action: 'update' },
-  { key: 'sponsor', icon: 'heart', label: '赞助作者', action: 'sponsor' },
 ];
 
 const DETAIL_TITLES = {
@@ -54,7 +52,6 @@ const DETAIL_TITLES = {
   home: '主页设置',
   player: '播放页设置',
   live: '直播设置',
-  multi: '多开设置',
   danmaku: '弹幕设置',
   follow: '关注设置',
   timer: '定时关闭',
@@ -467,22 +464,6 @@ function detailSections(key, ctx, repaint) {
           ],
         },
       ];
-    case 'multi':
-      return [
-        {
-          label: '多窗口',
-          rows: [
-            { type: 'switch', key: 'multi.collapseChat', title: '默认收起聊天区', desc: '从关注页多开时，独立直播窗口默认只保留展开按钮' },
-            { type: 'number', key: 'multi.gap', title: '布局间距', desc: '影响独立窗口铺排与桌面同屏多开', min: 0, max: 24, unit: ' px' },
-          ],
-        },
-        {
-          label: '',
-          rows: [
-            { type: 'action', icon: 'close', title: '关闭所有多开窗口', desc: '关闭本次从关注页多开启动的独立直播窗口', onClick: () => toast('当前没有打开的多开窗口') },
-          ],
-        },
-      ];
     case 'timer':
       return [
         {
@@ -500,7 +481,6 @@ function detailSections(key, ctx, repaint) {
           label: '桌面窗口',
           rows: [
             { type: 'switch', key: 'other.rememberWindow', title: '记住窗口大小和位置', desc: '下次启动时恢复上次的窗口尺寸' },
-            { type: 'switch', key: 'other.autoCheckUpdate', title: '自动检查更新' },
             { type: 'switch', key: 'other.log', title: '启用日志记录', desc: '记录调试日志，便于排查播放问题' },
           ],
         },
@@ -559,6 +539,7 @@ function paintHistory(content, ctx) {
     clearHistory();
     paintCurrent();
   });
+  let shown = 120;
   const paintCurrent = () => {
     content.innerHTML = '';
     if (!state.history.length) {
@@ -570,13 +551,22 @@ function paintHistory(content, ctx) {
     content.appendChild(head);
     const hint = document.createElement('div');
     hint.className = 'search-hint';
-    hint.innerHTML = `共 <strong>${state.history.length}</strong> 条记录，最多保留最近 120 条`;
+    hint.innerHTML = `共 <strong>${state.history.length}</strong> 条记录，最多保留最近 1000 条`;
     content.appendChild(hint);
+    const pageItems = state.history.slice(0, shown);
     const grid = roomGrid(
-      state.history.map((item) => ({ ...item, live: true })),
+      pageItems.map((item) => ({ ...item, live: true })),
       { onOpen: (room) => ctx.openRoom(room.platform, room.room_id), className: 'history-grid' }
     );
     content.appendChild(grid);
+    if (shown < state.history.length) {
+      const more = loadMore(`加载更多（还有 ${state.history.length - shown} 条）`);
+      more.addEventListener('click', () => {
+        shown += 120;
+        paintCurrent();
+      });
+      content.appendChild(more);
+    }
   };
   paintCurrent();
 }
@@ -692,7 +682,7 @@ function paintAbout(content, ctx) {
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
     <h2>星幕直播</h2>
     <p>Starveil · 聚合直播桌面客户端 · Tauri 2 + WebView2</p>
-    <span class="about-version">0.3.1</span>
+    <span class="about-version">0.3.2</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
       <div class="setting-row"><div class="setting-info"><div class="setting-title">播放</div><div class="setting-desc">mpegts.js · FLV over MSE</div></div></div>
@@ -978,19 +968,5 @@ function runSettingAction(ctx, action) {
   if (action === 'github') {
     api.openUrl('https://github.com/xiaoyaocz/dart_simple_live');
     return;
-  }
-  if (action === 'update') {
-    toast('当前已是最新版本 0.3.1', 'success');
-    return;
-  }
-  if (action === 'sponsor') {
-    openModal({
-      title: '赞助作者',
-      subtitle: '谢谢你的支持',
-      body: `<p class="modal-text">这个项目是兴趣驱动的开源作品。如果它让你的看播体验更好，欢迎给原项目点一个 Star，或通过原项目主页的赞助方式支持作者。</p>`,
-      actions: [
-        { label: '打开原项目', kind: 'primary', onClick: () => api.openUrl('https://github.com/xiaoyaocz/dart_simple_live') },
-      ],
-    });
   }
 }

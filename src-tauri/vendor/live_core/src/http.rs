@@ -123,6 +123,24 @@ impl HttpSession {
         Self::decode(response, url)
     }
 
+    /// GET + 查询参数，同时保留响应头（B 站扫码登录需要读取 Set-Cookie）。
+    pub fn get_json_with_headers(
+        &self,
+        url: &str,
+        query: &[(&str, &str)],
+        headers: &[(&str, &str)],
+    ) -> Result<(Value, HeaderMap), LiveError> {
+        let request = self
+            .client
+            .get(url)
+            .query(query)
+            .headers(self.headers(headers)?);
+        let response = self.send(request)?;
+        let response_headers = response.headers().clone();
+        let value = Self::decode(response, url)?;
+        Ok((value, response_headers))
+    }
+
     /// GET，URL 已自带查询串（wbi 签名要求签名串与发送串完全一致）。
     pub fn get_json_raw(
         &self,
