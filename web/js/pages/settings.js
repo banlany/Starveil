@@ -458,8 +458,7 @@ function detailSections(key, ctx, repaint) {
         {
           label: '关注状态',
           rows: [
-            { type: 'switch', key: 'follow.autoUpdate', title: '自动更新关注直播状态', desc: '进入关注页时刷新主播的开播状态（当前为本地记录）' },
-            { type: 'number', key: 'follow.interval', title: '自动更新间隔', desc: '两次刷新之间的等待时间', min: 1, max: 240, unit: ' 分钟' },
+            { type: 'info', title: '刷新方式', desc: '进入页面不会自动刷新；点击右上角刷新按钮，一次刷新全部关注主播（4 并发）。', value: '手动' },
             { type: 'select', key: 'follow.threads', title: '更新线程数', numeric: true, valueMap: { 0: '自动', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8' } },
             { type: 'select', key: 'follow.pageSize', title: '关注每页数量', numeric: true, valueMap: { 50: '50', 100: '100', 150: '150', 200: '200', 300: '300', 400: '400' } },
           ],
@@ -688,7 +687,7 @@ function paintAbout(content, ctx) {
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
     <h2>星幕直播</h2>
     <p>Starveil · 聚合直播桌面客户端 · Tauri 2 + WebView2</p>
-    <span class="about-version">0.3.5</span>
+    <span class="about-version">0.3.6</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
       <div class="setting-row"><div class="setting-info"><div class="setting-title">播放</div><div class="setting-desc">mpegts.js · FLV over MSE</div></div></div>

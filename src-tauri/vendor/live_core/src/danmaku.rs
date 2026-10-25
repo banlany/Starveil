@@ -769,10 +769,17 @@ fn huya_parse_message(data: &[u8], tx: &Sender<DanmakuMessage>) {
     if text.is_empty() {
         return;
     }
+    // 虎牙默认弹幕色是纯蓝 0x0000FF，不能把整个直播间都染蓝；
+    // 白色/无颜色也交给主题文字色。
+    let color = if color == 0 || color == 0x00FF_FFFF || color == 0x0000_00FF {
+        None
+    } else {
+        Some(color & 0x00FF_FFFF)
+    };
     let _ = tx.send(DanmakuMessage {
         user,
         text,
-        color: (color > 0).then_some(color),
+        color,
         system: false,
         position: 0,
         sc: None,

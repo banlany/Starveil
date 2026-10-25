@@ -176,7 +176,7 @@
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.28) 66%, transparent);
+  background: transparent;
   transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
@@ -294,6 +294,16 @@
 .overlay-btn.follow-btn.active {
   background: rgba(0, 0, 0, 0.44);
   color: var(--accent);
+}
+
+#room-follow.active,
+#footer-follow.active,
+#chat-follow.active {
+  color: var(--accent);
+}
+
+#footer-follow.active {
+  background: var(--accent-soft);
 }
 
 /* ------------------------------------------------------------ 播放器控制条 */
@@ -646,7 +656,8 @@ input[type="range"]::-webkit-slider-thumb {
 
 .sc-card {
   margin: 8px 10px;
-  padding: 10px 11px;
+  padding: 0;
+  overflow: hidden;
   border-radius: 10px;
   color: #2a1c0d;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
@@ -657,6 +668,7 @@ input[type="range"]::-webkit-slider-thumb {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  padding: 9px 10px;
 }
 
 .sc-card-head .avatar {
@@ -681,10 +693,13 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .sc-card-text {
-  margin-top: 7px;
+  margin-top: 0;
+  padding: 8px 10px 9px;
+  color: #ffffff;
   font-size: 12px;
   line-height: 1.55;
   word-break: break-word;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
 }
 
 .sc-card-close {
@@ -722,7 +737,8 @@ input[type="range"]::-webkit-slider-thumb {
 
 .sc-float-card {
   pointer-events: auto;
-  padding: 8px 9px;
+  padding: 0;
+  overflow: hidden;
   border-radius: 9px;
   color: #2a1c0d;
   box-shadow: 0 5px 18px rgba(0, 0, 0, 0.28);
@@ -733,6 +749,7 @@ input[type="range"]::-webkit-slider-thumb {
   align-items: center;
   gap: 7px;
   min-width: 0;
+  padding: 7px 8px;
 }
 
 .sc-float-head .avatar {
@@ -773,13 +790,16 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .sc-float-text {
-  margin-top: 5px;
+  margin-top: 0;
+  padding: 6px 8px 7px;
+  color: #ffffff;
   font-size: 11px;
   line-height: 1.45;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
 }
 
 .chat-line.sc {
@@ -1138,6 +1158,47 @@ html[data-theme="light"] .room-page {
   color: #1b1b21;
 }
 
+html[data-theme="light"] .room-topbar {
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme="light"] .room-heading h1 {
+  color: #ffffff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.62);
+}
+
+html[data-theme="light"] .room-heading .room-sub {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+html[data-theme="light"] .room-heading .room-sub .area {
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+html[data-theme="light"] .room-heading .room-sub .online {
+  color: rgba(255, 255, 255, 0.84);
+}
+
+html[data-theme="light"] .room-topbar .back-btn,
+html[data-theme="light"] .overlay-btn {
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.3);
+  border: 0;
+}
+
+html[data-theme="light"] .room-topbar .back-btn:hover,
+html[data-theme="light"] .overlay-btn:hover {
+  background: rgba(0, 0, 0, 0.48);
+}
+
+html[data-theme="light"] .overlay-btn.active,
+html[data-theme="light"] .overlay-btn.follow-btn.active {
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.44);
+}
+
 html[data-theme="light"] .room-chat {
   background: #ffffff;
   border-left-color: rgba(0, 0, 0, 0.08);
@@ -1182,7 +1243,12 @@ html[data-theme="light"] .chat-line {
 }
 
 html[data-theme="light"] .chat-line .who {
-  color: var(--accent);
+  color: #a0a0aa;
+}
+
+html[data-theme="light"] .chat-line .text-plain {
+  color: #35353d;
+  text-shadow: none;
 }
 
 html[data-theme="light"] .chat-line.system,

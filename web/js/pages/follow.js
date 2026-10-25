@@ -308,12 +308,9 @@ export function renderFollow(ctx) {
 
   document.getElementById('view').appendChild(page);
   renderAll();
-  const interval = Math.max(1, Number(state.settings.follow.interval) || 10) * 60 * 1000;
-  const poller = state.settings.follow.autoUpdate ? setInterval(refreshFollowStatus, interval) : null;
-  if (state.settings.follow.autoUpdate) setTimeout(refreshFollowStatus, 600);
+  // 只在点击刷新按钮时刷新一次，进入页面不再自动轮询。
   return () => {
     alive = false;
-    if (poller) clearInterval(poller);
   };
 }
 

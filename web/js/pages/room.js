@@ -135,6 +135,8 @@ export function renderRoom(ctx, params = {}) {
     danmakuTimer: 0,
     laneItems: [],
     laneCursor: 0,
+    danmakuQueue: [],
+    queueTimer: 0,
     fixedTopFree: [],
     fixedBottomFree: [],
     fixedTopCursor: 0,
@@ -226,7 +228,12 @@ export function renderRoom(ctx, params = {}) {
     state.settings.danmaku.enabled = enabled;
     saveSettings();
     $('ctrl-danmaku').classList.toggle('active', enabled);
-    if (!enabled) layer.innerHTML = '';
+    if (!enabled) {
+      layer.innerHTML = '';
+      session.danmakuQueue = [];
+      clearTimeout(session.queueTimer);
+      session.queueTimer = 0;
+    }
     if (session.tab === 'chat' || session.tab === 'sc') renderChatTab();
   }
 
@@ -263,12 +270,35 @@ export function renderRoom(ctx, params = {}) {
     return now - last < windowMs;
   }
 
-  function spawnDanmaku(message) {
-    if (!session.danmakuEnabled || message.system || message.sc) return;
-    if (blocked(message)) return;
-    if (deduped(message)) return;
+  function scheduleDanmakuDrain() {
+    if (session.queueTimer || session.destroyed) return;
+    session.queueTimer = setTimeout(() => {
+      session.queueTimer = 0;
+      drainDanmakuQueue();
+    }, 120);
+  }
+
+  function drainDanmakuQueue() {
+    if (session.destroyed || !session.danmakuEnabled) return;
+    while (session.danmakuQueue.length) {
+      const message = session.danmakuQueue.shift();
+      if (!spawnDanmaku(message, true)) {
+        // 轨道忙时 spawnDanmaku 已把这条放回队列，不能再 unshift，否则会重复。
+        break;
+      }
+    }
+    if (session.danmakuQueue.length) scheduleDanmakuDrain();
+  }
+
+  function spawnDanmaku(message, fromQueue = false) {
+    if (!session.danmakuEnabled || message.system || message.sc) return false;
+    if (!fromQueue && (blocked(message) || deduped(message))) return false;
     const width = stage.clientWidth;
-    if (!width) return;
+    if (!width) {
+      if (session.danmakuQueue.length < 400) session.danmakuQueue.push(message);
+      scheduleDanmakuDrain();
+      return false;
+    }
     const config = state.settings.danmaku;
     const element = document.createElement('div');
     element.className = 'danmaku';
@@ -320,7 +350,7 @@ export function renderRoom(ctx, params = {}) {
       };
       active.timer = setTimeout(cleanup, 4000);
       if (layer.childElementCount > 140) layer.firstElementChild?.remove();
-      return;
+      return true;
     }
 
     element.style.opacity = '0';
@@ -365,10 +395,12 @@ export function renderRoom(ctx, params = {}) {
         }
       }
     }
-    // 所有轨道都还没让出安全距离时宁可丢掉这一条，也不叠字。
+    // 所有轨道都还没让出安全距离时先排队，等有轨道让出后再显示，避免丢弹幕。
     if (lane < 0) {
       element.remove();
-      return;
+      if (session.danmakuQueue.length < 400) session.danmakuQueue.push(message);
+      scheduleDanmakuDrain();
+      return false;
     }
     session.laneCursor = (lane + 1) % lanes;
     const top = Math.min(lane * laneHeight, Math.max(0, stage.clientHeight * (config.area / 100) - laneHeight));
@@ -398,10 +430,12 @@ export function renderRoom(ctx, params = {}) {
         const index = items.indexOf(laneEntry);
         if (index >= 0) items.splice(index, 1);
       }
+      scheduleDanmakuDrain();
     };
     animation.onfinish = cleanup;
     animation.oncancel = cleanup;
     if (layer.childElementCount > 120) layer.firstElementChild?.remove();
+    return true;
   }
 
   /// 调整滚动速度时让已经在屏幕上的弹幕也立刻变速，而不是只影响下一条。
@@ -426,13 +460,13 @@ export function renderRoom(ctx, params = {}) {
 
   function scTierColors(sc) {
     const fallback = [
-      [1000, '#e7bb6b', '#d39a32'],
-      [500, '#e86b6b', '#c84444'],
-      [100, '#f0a35e', '#d47a22'],
-      [50, '#7fd8e8', '#3f9fbe'],
-      [30, '#8bb7ff', '#4c78d8'],
+      [1000, '#f7e6b8', '#b8860b'],
+      [500, '#ffdede', '#c94f4f'],
+      [100, '#ffe6c7', '#d9762a'],
+      [50, '#d8f4fb', '#3f9fbe'],
+      [30, '#e2ebff', '#4c78d8'],
     ];
-    const tier = fallback.find(([price]) => Number(sc.price) >= price) || [0, '#fb7299', '#e05a87'];
+    const tier = fallback.find(([price]) => Number(sc.price) >= price) || [0, '#ffe3ed', '#d85a84'];
     return {
       top: sc.background_color || tier[1],
       bottom: sc.background_bottom_color || tier[2],
@@ -487,7 +521,7 @@ export function renderRoom(ctx, params = {}) {
       const card = document.createElement('div');
       card.className = 'sc-float-card';
       card.dataset.end = String(entry.sc.end_time ?? '');
-      card.style.background = `linear-gradient(140deg, ${top}, ${bottom})`;
+      card.style.backgroundColor = top;
       card.innerHTML = `
         <div class="sc-float-head">
           ${avatarHtml(entry.user, entry.sc.avatar, 28)}
@@ -496,6 +530,7 @@ export function renderRoom(ctx, params = {}) {
           <button class="sc-delete" title="关闭">${icon('close', 12)}</button>
         </div>
         <div class="sc-float-text">${escapeHtml(entry.text)}</div>`;
+      card.querySelector('.sc-float-text').style.backgroundColor = bottom;
       card.querySelector('.sc-delete').addEventListener('click', (event) => {
         event.stopPropagation();
         removeScMessage(entry);
@@ -554,7 +589,13 @@ export function renderRoom(ctx, params = {}) {
         const text = document.createElement('span');
         text.className = 'text';
         text.textContent = message.text;
-        if (message.color && message.color !== 0xffffff) text.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
+        if (message.color && message.color !== 0xffffff) {
+          text.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
+        } else {
+          // 白色弹幕在浅色聊天区按正文色显示，避免白字看不清；
+          // 带颜色的弹幕仍保留平台下发的颜色。
+          text.classList.add('text-plain');
+        }
         line.append(who, text);
       }
     } else {
@@ -626,7 +667,7 @@ export function renderRoom(ctx, params = {}) {
         card.className = 'sc-card';
         card.dataset.end = String(message.sc.end_time ?? '');
         const { top, bottom } = scTierColors(message.sc);
-        card.style.background = `linear-gradient(140deg, ${top}, ${bottom})`;
+        card.style.backgroundColor = top;
         card.innerHTML = `
           <div class="sc-card-head">
             ${avatarHtml(message.user, message.sc.avatar, 32)}
@@ -635,6 +676,7 @@ export function renderRoom(ctx, params = {}) {
             <button class="sc-card-close" title="删除这条 SC">${icon('close', 13)}</button>
           </div>
           <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
+        card.querySelector('.sc-card-text').style.backgroundColor = bottom;
         card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message));
         chatList.appendChild(card);
       }
@@ -1467,6 +1509,8 @@ export function renderRoom(ctx, params = {}) {
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
     clearInterval(session.scSweep);
+    clearTimeout(session.queueTimer);
+    session.danmakuQueue = [];
     video.removeEventListener('timeupdate', purgeExpiredSc);
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
