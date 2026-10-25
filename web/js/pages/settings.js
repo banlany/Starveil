@@ -29,6 +29,12 @@ import {
   loadMore,
 } from '../ui.js';
 
+// 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
+// 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
+const FALLBACK_VERSION = '0.3.9';
+// 参考项目（原版 dart_simple_live 的 fork）。
+const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
+
 const SETTINGS_ITEMS = [
   { key: 'history', icon: 'history', label: '观看记录' },
   { key: 'account', icon: 'account', label: '账号管理' },
@@ -695,7 +701,7 @@ function paintAbout(content, ctx) {
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
     <h2>星幕直播</h2>
     <p>Starveil · 聚合直播桌面客户端 · Tauri 2 + WebView2</p>
-    <span class="about-version">0.3.8</span>
+    <span class="about-version" id="about-version">${FALLBACK_VERSION}</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
       <div class="setting-row"><div class="setting-info"><div class="setting-title">播放</div><div class="setting-desc">mpegts.js · FLV over MSE</div></div></div>
@@ -703,13 +709,24 @@ function paintAbout(content, ctx) {
       <div class="setting-row"><div class="setting-info"><div class="setting-title">致敬</div><div class="setting-desc">界面与交互参考 dart_simple_live（xiaoyaocz）</div></div></div>
     </div>`;
   content.appendChild(card);
+  // 版本号以打包配置为准：能读到运行时就覆盖，读不到（浏览器演示）显示兜底值。
+  (async () => {
+    const label = card.querySelector('#about-version');
+    if (!label) return;
+    try {
+      const version = await window.__TAURI__?.app?.getVersion?.();
+      if (version) label.textContent = version;
+    } catch {
+      /* 保持兜底版本 */
+    }
+  })();
   const actions = document.createElement('div');
   actions.className = 'settings-action-card';
   actions.innerHTML = `
     <div class="action-icon">${icon('github', 20)}</div>
-    <div class="action-text"><h4>开源主页</h4><p>查看原项目源码与更新</p></div>
+    <div class="action-text"><h4>参考项目</h4><p>dart_simple_live 的 Windows 重制与原版源码</p></div>
     <button class="btn small">打开</button>`;
-  actions.querySelector('button').addEventListener('click', () => api.openUrl('https://github.com/xiaoyaocz/dart_simple_live'));
+  actions.querySelector('button').addEventListener('click', () => api.openUrl(REFERENCE_REPO));
   content.appendChild(actions);
 }
 

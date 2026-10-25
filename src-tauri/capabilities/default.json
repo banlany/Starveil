@@ -2,9 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Simple Live 默认权限：允许前端监听弹幕后端事件，并使用基础窗口能力。",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
+    "core:app:default",
     "core:event:default",
     "core:window:default",
     "core:window:allow-set-size",
