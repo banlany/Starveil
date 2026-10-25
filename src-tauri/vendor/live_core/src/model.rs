@@ -79,6 +79,12 @@ pub struct LiveRoomDetail {
     pub avatar: String,
     pub cover: String,
     pub online: u64,
+    /// 在线观看人数（B 站「看过」人数）；拿不到时为 0，界面回退显示人气。
+    #[serde(default)]
+    pub viewers: u64,
+    /// 本场开播时间（Unix 秒）；0 表示未知，界面回退到本地观看时长。
+    #[serde(default)]
+    pub live_start_time: u64,
     pub live: bool,
     pub area: Option<String>,
     pub intro: String,

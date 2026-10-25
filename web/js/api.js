@@ -210,10 +210,69 @@ export const api = {
     return call('bili_qr_poll', { key });
   },
   onDanmaku(handler) {
-    if (!hasTauri) return () => {};
+    // 浏览器里没有后端事件，用演示弹幕驱动布局/样式调试。
+    if (!hasTauri) return startDemoDanmaku(handler);
     return TAURI.event.listen('danmaku', (event) => handler(event.payload));
   },
 };
+
+// ---------------------------------------------------------------- 演示弹幕
+
+const DEMO_DM_USERS = ['夜航星', '看海的人', '阿岚', '小满', '不吃香菜', 'kim', '南风'];
+const DEMO_DM_TEXTS = [
+  '这波操作可以',
+  '前面的等等我',
+  '主播今天状态真好',
+  '666666',
+  '哈哈哈哈哈',
+  '这个 BGM 是什么',
+  '刚来，讲到哪了',
+  '别急，马上就好',
+  '打卡打卡',
+  '笑死我了',
+  '这画质也太清晰了',
+  '有没有人一起看',
+  '主播能再说一遍吗',
+  '这波稳了',
+  '我裂开了',
+  '好家伙',
+  '这操作太秀了',
+  '刚下班就来了',
+  '这局有点难啊',
+  '对面有点东西',
+  '弹幕护体',
+  '这歌好听',
+  '求个歌单',
+  '第一次看，已关注',
+  '这个点位记住了',
+  '手速真快',
+  '老粉报道',
+  '看了三年了',
+  '今天人好多',
+  '这波血赚',
+  '别浪别浪',
+  '稳住，能赢',
+  '这解说有意思',
+  '画面好丝滑',
+  '主播声音好听',
+  '明天还播吗',
+];
+
+function startDemoDanmaku(handler) {
+  let index = 0;
+  const timer = setInterval(() => {
+    const text = DEMO_DM_TEXTS[index % DEMO_DM_TEXTS.length];
+    handler({
+      user: DEMO_DM_USERS[index % DEMO_DM_USERS.length],
+      text,
+      color: index % 9 === 0 ? 0x66ccff : 0xffffff,
+      position: index % 27 === 0 ? 1 : 0,
+      system: false,
+    });
+    index += 1;
+  }, 300);
+  return () => clearInterval(timer);
+}
 
 // ---------------------------------------------------------------- 演示数据
 

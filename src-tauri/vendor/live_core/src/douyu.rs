@@ -132,6 +132,9 @@ pub fn parse_detail(value: &Value, fallback_room_id: &str) -> Result<LiveRoomDet
             .unwrap_or_default(),
         cover: text(room, "room_pic").unwrap_or_default(),
         online: u64_of(room, "room_biz_all.hot"),
+        // 斗鱼的热度不是人数，且没有稳定的开播时间字段，交给界面回退。
+        viewers: 0,
+        live_start_time: u64_of(room, "show_time"),
         live,
         area,
         intro: strip_tags(&text(room, "show_details").unwrap_or_default()),

@@ -71,6 +71,8 @@ pub fn parse_detail(
         avatar: absolute(&text(data, "anchor_info.base_info.face").unwrap_or_default()),
         cover: absolute(&text(data, "room_info.cover").unwrap_or_default()),
         online: u64_of(data, "room_info.online"),
+        viewers: u64_of(data, "room_info.watched_show.num"),
+        live_start_time: u64_of(data, "room_info.live_start_time"),
         live: u32_of(data, "room_info.live_status") == 1,
         area: text(data, "room_info.area_name").filter(|value| !value.is_empty()),
         intro: strip_tags(&text(data, "room_info.description").unwrap_or_default()),

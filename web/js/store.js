@@ -19,6 +19,31 @@ export function saveLogin(platform, data) {
   localStorage.setItem(LOGIN_PREFIX + platform, JSON.stringify(data));
 }
 
+/// 参与备份的登录平台（虎牙目前不支持登录）。
+export const ACCOUNT_PLATFORMS = ['bilibili', 'douyu'];
+
+/// 收集本机已登录的平台，供“导出备份”使用。
+export function collectAccounts() {
+  const accounts = {};
+  for (const platform of ACCOUNT_PLATFORMS) {
+    const login = loadLogin(platform);
+    if (login?.cookie) accounts[platform] = login;
+  }
+  return accounts;
+}
+
+/// 还原备份里的登录信息；返回需要重新注入后端的平台列表。
+export function restoreAccounts(accounts) {
+  const restored = [];
+  for (const platform of ACCOUNT_PLATFORMS) {
+    const login = accounts?.[platform];
+    if (!login?.cookie) continue;
+    saveLogin(platform, login);
+    restored.push(platform);
+  }
+  return restored;
+}
+
 export function clearLogin(platform) {
   localStorage.removeItem(LOGIN_PREFIX + platform);
 }
@@ -283,6 +308,16 @@ export function updateFollow(platform, roomId, patch) {
     saveFollow(list);
   }
   return list;
+}
+
+/// 记录一次进房：关注列表里的主播累加点击次数与最近访问时间，用于关注页排序。
+export function touchFollowVisit(platform, roomId) {
+  const list = loadFollow();
+  const index = list.findIndex((item) => followKey(item.platform, item.room_id) === followKey(platform, roomId));
+  if (index < 0) return;
+  list[index].clicks = (Number(list[index].clicks) || 0) + 1;
+  list[index].lastVisit = Date.now();
+  saveFollow(list);
 }
 
 export function removeFollow(platform, roomId) {

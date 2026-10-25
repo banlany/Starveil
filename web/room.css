@@ -60,56 +60,12 @@
   z-index: 3;
 }
 
-.danmaku {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-  font-size: var(--dm-font, 20px);
-  font-weight: var(--dm-weight, 700);
-  line-height: 1.25;
-  opacity: var(--dm-opacity, 0.95);
-  color: #fff;
-  text-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.9),
-    1px 1px 0 rgba(0, 0, 0, 0.9),
-    -1px 1px 0 rgba(0, 0, 0, 0.9),
-    0 -1px 0 rgba(0, 0, 0, 0.9),
-    0 0 var(--dm-stroke, 2px) rgba(0, 0, 0, 0.75);
-  -webkit-text-stroke: var(--dm-stroke, 2px) rgba(0, 0, 0, 0.55);
-  paint-order: stroke fill;
-  will-change: transform;
-  backface-visibility: hidden;
-}
-
-.danmaku.no-stroke {
-  text-shadow: none;
-  -webkit-text-stroke: 0;
-}
-
-/* B 站顶部/底部固定弹幕 */
-.danmaku.fixed {
-  max-width: 80%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 2px 10px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.28);
-}
-
-.danmaku.fixed-top,
-.danmaku.fixed-bottom {
-  z-index: 4;
-}
-
-.danmaku img.emoji {
-  width: 1.25em;
-  height: 1.25em;
-  vertical-align: -0.2em;
+/* fly-barrage 会把容器改成 position: relative，所以这里用显式宽高撑满弹幕层 */
+.danmaku-canvas-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 /* ------------------------------------------------------------ 加载/错误 */
@@ -661,6 +617,70 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 10px;
   color: #2a1c0d;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+/* SC 分「正在显示 / 历史」两组，这里是小分组标题与历史行 */
+.sc-section-title {
+  margin: 10px 12px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-subtle);
+}
+
+.sc-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 2px 10px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sc-history-time {
+  flex: none;
+  width: 38px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-history-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.sc-history-main b {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
+.sc-history-main em {
+  flex: none;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.sc-history-text {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-subtle);
 }
 
 .sc-card-head {

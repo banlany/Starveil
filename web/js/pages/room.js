@@ -1,5 +1,6 @@
 // 直播间：mpegts 播放、滚动弹幕、聊天面板、清晰度/线路、全屏。
-import { api, canonicalImage, currentClock, formatOnline, normalizePlatform, roomUrl } from '../api.js';
+import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
+import { createDanmakuLayer, flyBarrageAvailable } from '../danmaku.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import {
   DEFAULT_SETTINGS,
@@ -10,6 +11,7 @@ import {
   saveSettings,
   state,
   toggleFollow,
+  touchFollowVisit,
   updateFollow,
 } from '../store.js';
 import {
@@ -132,20 +134,11 @@ export function renderRoom(ctx, params = {}) {
     idleTimer: 0,
     clockTimer: 0,
     refreshTimer: 0,
-    danmakuTimer: 0,
-    laneItems: [],
-    laneCursor: 0,
-    danmakuQueue: [],
-    queueTimer: 0,
-    fixedTopFree: [],
-    fixedBottomFree: [],
-    fixedTopCursor: 0,
-    fixedBottomCursor: 0,
     scMessages: [],
+    scHistory: [],
     scTimers: new Map(),
     scSweep: 0,
     followRefreshing: false,
-    activeDanmaku: new Set(),
     dedupe: new Map(),
     recentBlocked: 0,
     wakeBound: false,
@@ -156,6 +149,7 @@ export function renderRoom(ctx, params = {}) {
     lastUiWake: 0,
     lastVolume: 0.8,
     reconnectAttempts: 0,
+    lineFailures: 0,
     playStartedAt: 0,
     stallTimer: 0,
     lastProgressTime: 0,
@@ -165,7 +159,8 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 基础 UI
 
-  $('room-back').addEventListener('click', () => ctx.back());
+  // 从直播间进入另一个直播间时，返回应该回到一级界面，而不是回到上一个直播间。
+  $('room-back').addEventListener('click', () => ctx.exitRoom());
   $('ctrl-volume').addEventListener('click', toggleMute);
   volumeRange.addEventListener('input', () => {
     video.volume = Number(volumeRange.value) / 100;
@@ -213,14 +208,25 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 弹幕渲染
 
+  // 弹幕交给 fly-barrage（canvas + 虚拟轨道避让），这里只负责开关、屏蔽和转交。
+  // 注意：渲染器要等页面插进 DOM、容器量到真实宽高后再建，否则 canvas 会是 0×0。
+  let danmaku = null;
+
+  function initDanmaku() {
+    if (danmaku || !flyBarrageAvailable()) return;
+    danmaku = createDanmakuLayer(layer, video);
+    danmaku.update(state.settings.danmaku);
+    danmaku.setEnabled(session.danmakuEnabled);
+  }
+
   function applyDanmakuStyle() {
     const config = state.settings.danmaku;
-    layer.style.setProperty('--dm-font', `${config.font}px`);
-    layer.style.setProperty('--dm-weight', String(config.weight));
-    layer.style.setProperty('--dm-opacity', String((config.opacity ?? 95) / 100));
-    layer.style.setProperty('--dm-stroke', `${config.stroke ? config.strokeWidth : 0}px`);
-    layer.style.top = `${config.safeTop || 0}px`;
-    layer.style.bottom = `${config.safeBottom || 0}px`;
+    // 顶部/底部安全边距交给容器留白，库只负责在剩余区域内排轨道。
+    // 顶部至少让开房间标题浮层（约 64px），否则弹幕会压在标题和主播信息上。
+    const HEADER_INSET = 64;
+    layer.style.top = `${Math.max(Number(config.safeTop) || 0, HEADER_INSET)}px`;
+    layer.style.bottom = `${Number(config.safeBottom) || 0}px`;
+    danmaku?.update(config);
   }
 
   function setDanmakuEnabled(enabled) {
@@ -228,20 +234,8 @@ export function renderRoom(ctx, params = {}) {
     state.settings.danmaku.enabled = enabled;
     saveSettings();
     $('ctrl-danmaku').classList.toggle('active', enabled);
-    if (!enabled) {
-      layer.innerHTML = '';
-      session.danmakuQueue = [];
-      clearTimeout(session.queueTimer);
-      session.queueTimer = 0;
-    }
+    danmaku?.setEnabled(enabled);
     if (session.tab === 'chat' || session.tab === 'sc') renderChatTab();
-  }
-
-  function laneCount() {
-    const config = state.settings.danmaku;
-    const area = Math.max(60, stage.clientHeight * (config.area / 100));
-    const lineHeight = config.font * 1.55;
-    return Math.max(1, Math.min(config.lines, Math.floor(area / lineHeight)));
   }
 
   function blocked(message) {
@@ -270,199 +264,14 @@ export function renderRoom(ctx, params = {}) {
     return now - last < windowMs;
   }
 
-  function scheduleDanmakuDrain() {
-    if (session.queueTimer || session.destroyed) return;
-    // 少量随机抖动，避免同一时刻多条弹幕同时挤进不同轨道。
-    session.queueTimer = setTimeout(() => {
-      session.queueTimer = 0;
-      drainDanmakuQueue();
-    }, 100 + Math.floor(Math.random() * 80));
-  }
-
-  function drainDanmakuQueue() {
-    if (session.destroyed || !session.danmakuEnabled) return;
-    while (session.danmakuQueue.length) {
-      const message = session.danmakuQueue.shift();
-      if (!spawnDanmaku(message, true)) {
-        // 轨道忙时 spawnDanmaku 已把这条放回队列，不能再 unshift，否则会重复。
-        break;
-      }
-    }
-    if (session.danmakuQueue.length) scheduleDanmakuDrain();
-  }
-
-  function spawnDanmaku(message, fromQueue = false) {
+  function spawnDanmaku(message) {
     if (!session.danmakuEnabled || message.system || message.sc) return false;
-    if (!fromQueue && (blocked(message) || deduped(message))) return false;
-    const width = stage.clientWidth;
-    if (!width) {
-      if (session.danmakuQueue.length < 400) session.danmakuQueue.push(message);
-      scheduleDanmakuDrain();
-      return false;
-    }
-    const config = state.settings.danmaku;
-    const element = document.createElement('div');
-    element.className = 'danmaku';
-    element.textContent = message.text;
-    if (message.color && message.color !== 0xffffff) {
-      element.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
-    }
-    if (!config.stroke) element.classList.add('no-stroke');
-    const laneHeight = Math.max(config.font * 1.35, 24);
-    const now = performance.now();
-    const position = Number(message.position) || 0;
-
-    // B 站顶部/底部固定弹幕：水平居中，不参与滚动轨道。
-    if (position === 1 || position === 2) {
-      const top = position === 1;
-      const key = top ? 'fixedTopFree' : 'fixedBottomFree';
-      const cursorKey = top ? 'fixedTopCursor' : 'fixedBottomCursor';
-      const laneCount = Math.max(
-        1,
-        Math.min(4, Math.floor((stage.clientHeight * Math.min(60, config.area)) / 100 / laneHeight))
-      );
-      if (session[key].length !== laneCount) session[key] = new Array(laneCount).fill(0);
-      let lane = -1;
-      for (let offset = 0; offset < laneCount; offset++) {
-        const index = (session[cursorKey] + offset) % laneCount;
-        if (session[key][index] <= now + 30) {
-          lane = index;
-          break;
-        }
-      }
-      if (lane < 0) lane = session[key].indexOf(Math.min(...session[key]));
-      session[cursorKey] = (lane + 1) % laneCount;
-      session[key][lane] = now + 3600;
-      element.classList.add('fixed', top ? 'fixed-top' : 'fixed-bottom');
-      const safeTop = Number(config.safeTop) || 0;
-      const safeBottom = Number(config.safeBottom) || 0;
-      element.style.top = top
-        ? `${safeTop + lane * laneHeight}px`
-        : `${Math.max(safeTop, stage.clientHeight - safeBottom - (lane + 1) * laneHeight)}px`;
-      element.style.left = '50%';
-      element.style.transform = 'translateX(-50%)';
-      element.style.opacity = '';
-      layer.appendChild(element);
-      const active = { fixed: true, duration: 3600 };
-      session.activeDanmaku.add(active);
-      const cleanup = () => {
-        element.remove();
-        session.activeDanmaku.delete(active);
-      };
-      active.timer = setTimeout(cleanup, 4000);
-      if (layer.childElementCount > 140) layer.firstElementChild?.remove();
-      return true;
-    }
-
-    element.style.opacity = '0';
-    layer.appendChild(element);
-    const textWidth = element.offsetWidth;
-    const lanes = laneCount();
-    if (session.laneItems.length !== lanes) {
-      session.laneItems = Array.from({ length: lanes }, () => []);
-      session.laneCursor = 0;
-    }
-    const layerRect = layer.getBoundingClientRect();
-    // 用上一帧实际位置判断轨道是否安全，而不是用估算的时间：
-    // 自定义字号/速度/变速后也能避免重叠。
-    const laneSafe = (index) => {
-      const items = session.laneItems[index];
-      if (!items?.length) return true;
-      const last = items[items.length - 1];
-      if (!last.element?.isConnected) {
-        items.length = 0;
-        return true;
-      }
-      const rect = last.element.getBoundingClientRect();
-      return rect.right <= layerRect.right - 28;
-    };
-    let lane = -1;
-    // 低密度优先最上层，观感更自然；高密度再均匀轮询各轨道。
-    const activeScroll = [...session.activeDanmaku].filter((item) => !item.fixed).length;
-    const dense = activeScroll >= Math.max(2, Math.floor(lanes * 0.55));
-    if (!dense) {
-      for (let index = 0; index < lanes; index++) {
-        if (laneSafe(index)) {
-          lane = index;
-          break;
-        }
-      }
-    } else {
-      // 高密度时选“最空闲”的轨道：上一尾弹幕离右侧越远，可插入空间越大。
-      let bestClearance = -Infinity;
-      for (let index = 0; index < lanes; index++) {
-        if (!laneSafe(index)) continue;
-        const items = session.laneItems[index];
-        const clearance = items.length
-          ? layerRect.right - items[items.length - 1].element.getBoundingClientRect().right
-          : Number.POSITIVE_INFINITY;
-        if (clearance > bestClearance) {
-          bestClearance = clearance;
-          lane = index;
-        }
-      }
-    }
-    // 所有轨道都还没让出安全距离时先排队，等有轨道让出后再显示，避免丢弹幕。
-    if (lane < 0) {
-      element.remove();
-      if (session.danmakuQueue.length < 400) session.danmakuQueue.push(message);
-      scheduleDanmakuDrain();
-      return false;
-    }
-    session.laneCursor = (lane + 1) % lanes;
-    const top = Math.min(lane * laneHeight, Math.max(0, stage.clientHeight * (config.area / 100) - laneHeight));
-    element.style.top = `${top}px`;
-    element.style.transform = `translateX(${width}px)`;
-    element.style.opacity = '';
-    // 恒定像素速度：speed 表示穿过整个播放器宽度所需秒数，
-    // 长文本只是多花时间，不会比短文本跑得更快。
-    const pxPerMs = width / (Math.max(2.5, config.speed) * 1000);
-    const duration = (width + Math.max(textWidth, 1)) / pxPerMs;
-    const animation = element.animate(
-      [
-        { transform: `translateX(${width}px)` },
-        { transform: `translateX(${-textWidth - 8}px)` },
-      ],
-      { duration, easing: 'linear' }
-    );
-    const laneEntry = { element };
-    session.laneItems[lane].push(laneEntry);
-    const active = { animation, duration, width, textWidth };
-    session.activeDanmaku.add(active);
-    const cleanup = () => {
-      element.remove();
-      session.activeDanmaku.delete(active);
-      const items = session.laneItems[lane];
-      if (items) {
-        const index = items.indexOf(laneEntry);
-        if (index >= 0) items.splice(index, 1);
-      }
-      scheduleDanmakuDrain();
-    };
-    animation.onfinish = cleanup;
-    animation.oncancel = cleanup;
-    if (layer.childElementCount > 120) layer.firstElementChild?.remove();
+    if (blocked(message) || deduped(message)) return false;
+    if (!danmaku) return false;
+    // 库内部不回收已下屏的弹幕实例，长时间观看要定期重建，避免内存一直涨。
+    if (danmaku.sent > danmaku.limit) danmaku.reset();
+    danmaku.send(message);
     return true;
-  }
-
-  /// 调整滚动速度时让已经在屏幕上的弹幕也立刻变速，而不是只影响下一条。
-  function retimeDanmaku(seconds) {
-    const width = stage.clientWidth;
-    const speed = Math.max(2.5, Number(seconds) || 8);
-    for (const item of session.activeDanmaku) {
-      if (item.fixed) continue;
-      try {
-        const newDuration = ((item.width || width) + (item.textWidth || 0)) * speed * 1000 / (item.width || width);
-        const rate = item.duration / newDuration;
-        if (typeof item.animation.updatePlaybackRate === 'function') {
-          item.animation.updatePlaybackRate(rate);
-        } else {
-          item.animation.playbackRate = rate;
-        }
-      } catch {
-        /* 动画已结束 */
-      }
-    }
   }
 
   function scTierColors(sc) {
@@ -486,9 +295,13 @@ export function renderRoom(ctx, params = {}) {
     session.scTimers.delete(entry);
   }
 
-  function removeScMessage(entry) {
+  /// 从“正在显示”的 SC 里移除，并归档到历史 SC（带结束时间与原因）。
+  function removeScMessage(entry, reason = 'expired') {
+    if (!session.scMessages.includes(entry)) return;
     clearScTimer(entry);
     session.scMessages = session.scMessages.filter((item) => item !== entry);
+    session.scHistory.unshift({ ...entry, endedAt: Date.now(), reason });
+    if (session.scHistory.length > 200) session.scHistory.pop();
     const counter = $('sc-count');
     if (counter) counter.textContent = String(session.scMessages.length);
     renderScOverlay();
@@ -540,7 +353,7 @@ export function renderRoom(ctx, params = {}) {
       card.querySelector('.sc-float-text').style.backgroundColor = bottom;
       card.querySelector('.sc-delete').addEventListener('click', (event) => {
         event.stopPropagation();
-        removeScMessage(entry);
+        removeScMessage(entry, 'manual');
       });
       layer.appendChild(card);
     }
@@ -614,6 +427,13 @@ export function renderRoom(ctx, params = {}) {
     if (pinned) chatList.scrollTop = chatList.scrollHeight;
   }
 
+  function scSectionTitle(text) {
+    const title = document.createElement('div');
+    title.className = 'sc-section-title';
+    title.textContent = text;
+    return title;
+  }
+
   function placeholder(text, iconName = 'danmaku') {
     const box = document.createElement('div');
     box.className = 'chat-placeholder';
@@ -665,42 +485,65 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     if (session.tab === 'sc') {
-      if (!session.scMessages.length) {
+      // 分两块：正在显示的 SC（可删除）与历史 SC（删除/过期后归档，带结束时间）。
+      if (!session.scMessages.length && !session.scHistory.length) {
         chatList.appendChild(placeholder('当前直播还没有醒目留言（SC）', 'spark'));
         return;
       }
-      for (const message of session.scMessages.slice().reverse()) {
-        const card = document.createElement('div');
-        card.className = 'sc-card';
-        card.dataset.end = String(message.sc.end_time ?? '');
-        const { top, bottom } = scTierColors(message.sc);
-        card.style.backgroundColor = top;
-        card.innerHTML = `
-          <div class="sc-card-head">
-            ${avatarHtml(message.user, message.sc.avatar, 32)}
-            <b>${escapeHtml(message.user || 'B 站用户')}</b>
-            <span class="sc-price">¥${Number(message.sc.price) || 0}</span>
-            <button class="sc-card-close" title="删除这条 SC">${icon('close', 13)}</button>
-          </div>
-          <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
-        card.querySelector('.sc-card-text').style.backgroundColor = bottom;
-        card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message));
-        chatList.appendChild(card);
+      if (session.scMessages.length) {
+        chatList.appendChild(scSectionTitle(`正在显示 · ${session.scMessages.length}`));
+        for (const message of session.scMessages.slice().reverse()) {
+          const card = document.createElement('div');
+          card.className = 'sc-card';
+          card.dataset.end = String(message.sc.end_time ?? '');
+          const { top, bottom } = scTierColors(message.sc);
+          card.style.backgroundColor = top;
+          card.innerHTML = `
+            <div class="sc-card-head">
+              ${avatarHtml(message.user, message.sc.avatar, 32)}
+              <b>${escapeHtml(message.user || 'B 站用户')}</b>
+              <span class="sc-price">¥${Number(message.sc.price) || 0}</span>
+              <button class="sc-card-close" title="结束这条 SC">${icon('close', 13)}</button>
+            </div>
+            <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
+          card.querySelector('.sc-card-text').style.backgroundColor = bottom;
+          card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message, 'manual'));
+          chatList.appendChild(card);
+        }
+      }
+      if (session.scHistory.length) {
+        chatList.appendChild(scSectionTitle(`历史 SC · ${session.scHistory.length}`));
+        for (const message of session.scHistory) {
+          const row = document.createElement('div');
+          row.className = 'sc-history-item';
+          const ended = new Date(message.endedAt);
+          const clock = `${String(ended.getHours()).padStart(2, '0')}:${String(ended.getMinutes()).padStart(2, '0')}`;
+          row.innerHTML = `
+            <span class="sc-history-time" title="${message.reason === 'manual' ? '手动结束' : '到期自动结束'}">${clock}</span>
+            <span class="sc-history-main">
+              <b>${escapeHtml(message.user || 'B 站用户')}</b>
+              <em>¥${Number(message.sc?.price) || 0}</em>
+              <span class="sc-history-text">${escapeHtml(message.text)}</span>
+            </span>`;
+          chatList.appendChild(row);
+        }
       }
       bindImageFallback(chatList);
       return;
     }
     if (session.tab === 'follow') {
-      const follows = loadFollow().slice(0, 30);
-      if (!follows.length) {
-        chatList.appendChild(placeholder('你还没有关注其他主播', 'heart'));
-        return;
-      }
+      // 只列正在直播的关注，副标题只保留平台名，直播状态用左侧圆点表达。
+      const all = loadFollow();
+      const follows = all.filter((item) => item.live).slice(0, 40);
       const toolbar = document.createElement('div');
       toolbar.className = 'chat-follow-toolbar';
-      toolbar.innerHTML = `<span>${follows.length} 位主播</span><button class="btn small" id="chat-follow-refresh">${icon('refresh', 13)} 刷新状态</button>`;
+      toolbar.innerHTML = `<span>${follows.length} 位正在直播</span><button class="btn small" id="chat-follow-refresh">${icon('refresh', 13)} 刷新状态</button>`;
       toolbar.querySelector('#chat-follow-refresh').addEventListener('click', refreshRoomFollowStatus);
       chatList.appendChild(toolbar);
+      if (!follows.length) {
+        chatList.appendChild(placeholder(all.length ? '关注的主播都还没开播' : '你还没有关注其他主播', 'heart'));
+        return;
+      }
       const grid = document.createElement('div');
       grid.className = 'chat-follow-grid';
       for (const item of follows) {
@@ -711,7 +554,7 @@ export function renderRoom(ctx, params = {}) {
           ${avatarHtml(item.user_name, item.avatar || item.cover, 38)}
           <span class="chat-follow-info">
             <b title="${escapeHtml(item.user_name || '未知主播')}">${escapeHtml(item.user_name || '未知主播')}</b>
-            <small><i class="chat-follow-dot${item.live ? ' live' : ''}"></i>${escapeHtml(PLATFORM_META[item.platform]?.short || item.platform)} · ${item.live ? '直播中' : '未开播'}</small>
+            <small><i class="chat-follow-dot live"></i>${escapeHtml(PLATFORM_META[item.platform]?.short || item.platform)}</small>
           </span>`;
         card.addEventListener('click', () => ctx.openRoom(item.platform, item.room_id));
         grid.appendChild(card);
@@ -845,11 +688,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function resetDanmakuSurface() {
-    layer.querySelectorAll('.danmaku').forEach((element) => element.remove());
-    session.activeDanmaku.clear();
-    session.laneItems = [];
-    session.fixedTopFree = [];
-    session.fixedBottomFree = [];
+    danmaku?.clear();
   }
 
   function setConfig(key, value) {
@@ -857,10 +696,10 @@ export function renderRoom(ctx, params = {}) {
     if (key === 'enabled') {
       session.danmakuEnabled = Boolean(value);
       $('ctrl-danmaku').classList.toggle('active', session.danmakuEnabled);
-      if (!session.danmakuEnabled) layer.innerHTML = '';
+      if (!session.danmakuEnabled) danmaku?.setEnabled(false);
     }
     saveSettings();
-    if (key === 'speed') retimeDanmaku(value);
+    if (key === 'speed') danmaku?.update(state.settings.danmaku, { relayout: false });
     // 字号/行数/区域变化后旧弹幕的 top 已经失效，清屏重新排轨，避免和新轨道叠字。
     if (['lines', 'font', 'area', 'safeTop', 'safeBottom'].includes(key)) {
       resetDanmakuSurface();
@@ -897,6 +736,30 @@ export function renderRoom(ctx, params = {}) {
     }
     hint.classList.remove('hidden');
     hint.innerHTML = `${options.spinner ? '<span class="big-spinner"></span>' : ''}<span>${escapeHtml(options.text || '')}</span>${options.actions ? `<div class="hint-actions">${options.actions}</div>` : ''}`;
+  }
+
+  /// 把毫秒格式化成 `H:MM:SS`。
+  function formatDuration(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  /// 左下角显示的是“这场直播已经播了多久”，拿不到开播时间时退回本次观看时长。
+  function updateClock() {
+    if (!clock) return;
+    const startedAt = Number(session.detail?.live_start_time) > 0
+      ? Number(session.detail.live_start_time) * 1000
+      : session.playStartedAt;
+    if (!startedAt) {
+      clock.textContent = '--:--:--';
+      clock.title = '直播时长';
+      return;
+    }
+    clock.textContent = formatDuration(Date.now() - startedAt);
+    clock.title = Number(session.detail?.live_start_time) > 0 ? '本场已直播时长' : '已观看时长';
   }
 
   function setQualityLabel() {
@@ -968,6 +831,7 @@ export function renderRoom(ctx, params = {}) {
     }
     session.lineIndex = index;
     setQualityLabel();
+    danmaku?.reset();
     setHint({ spinner: true, text: '正在连接视频流…' });
     destroyPlayer();
     if (!window.mpegts || !mpegts.isSupported()) {
@@ -1049,6 +913,7 @@ export function renderRoom(ctx, params = {}) {
       session.urls = payload.urls || [];
       session.headers = payload.headers || [];
       session.lineIndex = 0;
+      session.lineFailures = 0;
       setQualityLabel();
       if (!session.urls.length) {
         setHint({ text: '这个房间暂时没有可用的播放地址（可能未开播或限制地区）', actions: '<button class="btn" id="hint-retry">重试</button>' });
@@ -1171,7 +1036,10 @@ export function renderRoom(ctx, params = {}) {
     $('chat-avatar').innerHTML = avatarHtml(detail.user_name, avatar, 42);
     bindImageFallback(page);
     $('chat-name').textContent = detail.user_name || '聊天';
-    $('chat-meta').innerHTML = `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span><span>·</span><span class="online">${icon('flame', 11)}${formatOnline(detail.online)}</span>`;
+    // 聊天区不再显示人气（热度）；B 站有真实在线人数时单独显示人数。
+    const viewers = Number(detail.viewers) || 0;
+    const viewerText = viewers > 0 ? `<span>·</span><span class="online">${icon('users', 11)}${formatOnline(viewers)} 人在看</span>` : '';
+    $('chat-meta').innerHTML = `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>${viewerText}`;
     document.title = `${detail.title || '直播间'} · 星幕直播`;
     if (cover) {
       $('stage-bg').style.backgroundImage = `url("${cover}")`;
@@ -1337,6 +1205,9 @@ export function renderRoom(ctx, params = {}) {
   async function boot() {
     session.scSweep = setInterval(purgeExpiredSc, 1000);
     video.addEventListener('timeupdate', purgeExpiredSc);
+    // 拿不到开播时间时，用“本次进入房间的时间”算已观看时长，至少不是一片空白。
+    session.playStartedAt = Date.now();
+    initDanmaku();
     setHint({ spinner: true, text: '正在读取直播间…' });
     applyDanmakuStyle();
     setDanmakuEnabled(session.danmakuEnabled);
@@ -1372,6 +1243,7 @@ export function renderRoom(ctx, params = {}) {
       }
       renderFollowState();
       recordHistory({ ...payload.detail, platform: detailPlatform });
+      touchFollowVisit(detailPlatform, session.roomId);
       setChatTab('chat');
       setQualityLabel();
       if (!payload.detail.live || !session.qualities.length) {
@@ -1385,7 +1257,7 @@ export function renderRoom(ctx, params = {}) {
         hint.querySelector('#hint-reopen')?.addEventListener('click', () => {
           ctx.openRoom(session.platform, session.roomId);
         });
-        clock.textContent = currentClock();
+        updateClock();
         return;
       }
       await refreshStream();
@@ -1397,16 +1269,10 @@ export function renderRoom(ctx, params = {}) {
       if (state.settings.player.autoFullscreen) {
         setTimeout(toggleFullscreen, 300);
       }
-      session.clockTimer = setInterval(() => {
-        clock.textContent = currentClock();
-      }, 1000);
-      clock.textContent = currentClock();
-      if (state.settings.player.autoRefresh) {
-        const refreshMs = session.platform === 'huya' ? 3 * 60 * 1000 : 9 * 60 * 1000;
-        session.refreshTimer = setInterval(() => {
-          if (!session.destroyed && !video.paused) refreshStream();
-        }, refreshMs);
-      }
+      updateClock();
+      session.clockTimer = setInterval(updateClock, 1000);
+      // 不再按固定间隔重取流：那会在地址还没过期时主动销毁播放器，表现为“看一会儿断一下”。
+      // 地址真的过期时画面会停住，下面的卡顿检测会在 6 秒内换线或重取流。
       // 虎牙部分线路会静默卡住，画面 currentTime 不再推进；
       // 6 秒没有进展就换线/重取流，而不是等用户手动刷新。
       session.lastProgressTime = video.currentTime;
@@ -1421,10 +1287,18 @@ export function renderRoom(ctx, params = {}) {
         }
         if (now - session.lastProgressAt < 6000) return;
         session.lastProgressAt = now;
-        if (session.urls.length > 1) {
+        if (!state.settings.player.autoRefresh) {
+          setHint({ text: '直播流已停止，可以刷新继续观看', actions: '<button class="btn primary" id="hint-retry">刷新</button>' });
+          bindHintActions();
+          return;
+        }
+        // 优先换线；线路用尽后重取流。两种情况都不需要用户操作。
+        if (session.urls.length > 1 && session.lineFailures < session.urls.length) {
+          session.lineFailures += 1;
           toast('直播流卡顿，正在切换线路…');
           playLine((session.lineIndex + 1) % session.urls.length);
         } else {
+          session.lineFailures = 0;
           toast('直播流卡顿，正在重新连接…');
           refreshStream();
         }
@@ -1455,7 +1329,7 @@ export function renderRoom(ctx, params = {}) {
       if (document.fullscreenElement) return;
       if (page.querySelector('.stage-menu')) return;
       event.preventDefault();
-      ctx.back();
+      ctx.exitRoom();
       return;
     }
     if (event.key === 'f' || event.key === 'F') {
@@ -1510,14 +1384,11 @@ export function renderRoom(ctx, params = {}) {
     session.destroyed = true;
     clearTimeout(session.idleTimer);
     clearInterval(session.clockTimer);
-    clearInterval(session.refreshTimer);
-    clearInterval(session.danmakuTimer);
     clearInterval(session.stallTimer);
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
     clearInterval(session.scSweep);
-    clearTimeout(session.queueTimer);
-    session.danmakuQueue = [];
+    danmaku?.destroy();
     video.removeEventListener('timeupdate', purgeExpiredSc);
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange);

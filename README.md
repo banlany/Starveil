@@ -8,6 +8,23 @@
 品牌重做为 **星幕直播 / Starveil**：新名称、新图标，程序名、窗口标题、安装目录
 与数据目录都随之更新；原版仅作为界面与交互参考。
 
+## 0.3.9 更新
+
+- **弹幕内核换成 [fly-barrage](https://github.com/feiafei27/fly-barrage)**：canvas 渲染 + 虚拟轨道避让，
+  不再用项目里自研的 DOM 轨道调度；`web/js/danmaku.js` 负责把字号、行数、显示区域、速度、不透明度、
+  描边映射到库的配置，直播间只保留屏蔽、去重和转交。
+- 直播间左下角时间改为**本场直播时长**（B 站/斗鱼/虎牙取开播时间，拿不到时退回本次观看时长），
+  聊天区不再显示人气热度。
+- 右侧聊天头部显示 **B 站在看人数**（`watched_show.num`）。
+- 直播间 SC 分「**正在显示 / 历史 SC**」：删除或到期消失的 SC 带结束时间归档，角标只算正在显示的。
+- 直播间关注栏只列**正在直播**的主播，副标题只显示平台名，刷新按钮并发拉取全部关注状态。
+- 直播间返回按钮与 `Esc` 一律回到**进入直播间之前的一级页面**，不会在两个直播间之间来回跳。
+- 关注页：正在直播优先，其次按**进房次数**排序；右上角计数跟随当前筛选；
+  「按状态 / 按平台」补上选中态。
+- 数据备份**包含登录信息**（各平台 Cookie），导入后自动恢复登录态。
+- 修复「看一段时间断一次」：去掉按固定间隔无条件重取流的定时器，只保留卡顿/错误触发的换线与重取。
+- 工程：新增 `tools/serve.py`（禁缓存开发服务）、`tools/shot.py`（按进程截图/点击）。
+
 ## 0.3.8 更新
 
 - 浅色模式直播间设置滑杆增加浅色适配：滑杆轨道改为深色半透明，数值文字改为深灰色，滑块继续使用主题色。
@@ -15,8 +32,7 @@
 
 ## 0.3.7 更新
 
-- 按《JS 弹幕防重叠总结》继续优化：高密度时选择“最空闲轨道”，比较上一尾弹幕到右侧的剩余空间；
-  低密度仍优先最上层，避免弹幕稀疏时画面显得散乱。
+- 
 - 队列补发加入少量随机抖动，避免同一时刻多条弹幕同时进入不同轨道。
 - 保持“实际 DOM 边界避让 + 队列等待”，满轨不丢弹幕。
 
@@ -108,16 +124,16 @@
 
 ![首页](docs/screenshots/home.png)
 
-| 分类 | 直播间 |
-|------|--------|
+| 分类                                   | 直播间                               |
+| ------------------------------------ | --------------------------------- |
 | ![分类](docs/screenshots/category.png) | ![直播间](docs/screenshots/room.png) |
 
-| 关注 | 登录 |
-|------|------|
+| 关注                                 | 登录                                |
+| ---------------------------------- | --------------------------------- |
 | ![关注](docs/screenshots/follow.png) | ![登录](docs/screenshots/login.png) |
 
-| 搜索主播 | 设置 |
-|----------|------|
+| 搜索主播                                        | 设置                                   |
+| ------------------------------------------- | ------------------------------------ |
 | ![主播搜索](docs/screenshots/search-anchor.png) | ![设置](docs/screenshots/settings.png) |
 
 ## 已实现
@@ -149,21 +165,21 @@
 
 一级列表与二级详情完整还原，详情是「分组标题 + 圆角卡片行」：
 
-| 页面 | 主要选项 |
-|------|----------|
-| 外观设置 | 跟随系统 / 浅色 / 深色、动态取色、8 色主题色板、界面密度 |
-| 主页设置 | 默认平台、卡片尺寸、回到首页自动刷新、加载更多 |
-| 播放页设置 | 硬件解码、记住清晰度、自动换线、自动刷新直播流、强制 HTTPS、画面尺寸 |
-| 直播设置 | 自动全屏、关播换下一个、后台播放、手势、最小化隐藏弹幕 |
-| 弹幕设置 | 屏蔽开关、关键词/用户屏蔽、显示区域、行数、字体、粗细、速度、不透明度、描边、帧率、安全边距、重复过滤 |
-| 关注设置 | 自动更新、更新间隔、线程数、每页数量 |
-| 定时关闭 | 开关与倒计时分钟数，到点退出应用 |
-| 其他设置 | 记住窗口、日志、重置所有设置 |
-| 数据同步 | 导出 / 导入设置、关注、观看记录 JSON |
-| 链接解析 | 粘贴链接解析出平台与房间号，一键进入 |
-| 账号管理 | 哔哩哔哩扫码 / Cookie 登录、斗鱼 Cookie 登录、退出登录；每个平台独立 Cookie |
-| 免责声明 | 完整声明与同意状态 |
-| 关于 | 版本、协议层、播放器、开源主页 |
+| 页面    | 主要选项                                                |
+| ----- | --------------------------------------------------- |
+| 外观设置  | 跟随系统 / 浅色 / 深色、动态取色、8 色主题色板、界面密度                    |
+| 主页设置  | 默认平台、卡片尺寸、回到首页自动刷新、加载更多                             |
+| 播放页设置 | 硬件解码、记住清晰度、自动换线、自动刷新直播流、强制 HTTPS、画面尺寸               |
+| 直播设置  | 自动全屏、关播换下一个、后台播放、手势、最小化隐藏弹幕                         |
+| 弹幕设置  | 屏蔽开关、关键词/用户屏蔽、显示区域、行数、字体、粗细、速度、不透明度、描边、帧率、安全边距、重复过滤 |
+| 关注设置  | 自动更新、更新间隔、线程数、每页数量                                  |
+| 定时关闭  | 开关与倒计时分钟数，到点退出应用                                    |
+| 其他设置  | 记住窗口、日志、重置所有设置                                      |
+| 数据同步  | 导出 / 导入设置、关注、观看记录 JSON                              |
+| 链接解析  | 粘贴链接解析出平台与房间号，一键进入                                  |
+| 账号管理  | 哔哩哔哩扫码 / Cookie 登录、斗鱼 Cookie 登录、退出登录；每个平台独立 Cookie  |
+| 免责声明  | 完整声明与同意状态                                           |
+| 关于    | 版本、协议层、播放器、开源主页                                     |
 
 ### 直播间
 
@@ -200,11 +216,12 @@ Starveil/
 │  │  ├─ app.js              路由、导航、平台切换、首次启动
 │  │  ├─ api.js              Tauri 命令封装 + 浏览器演示数据
 │  │  ├─ store.js            设置/关注/历史/搜索历史持久化
+│  │  ├─ danmaku.js         弹幕层：封装 fly-barrage（canvas + 虚拟轨道）
 │  │  ├─ ui.js               卡片、弹窗、菜单、空态、加载态
 │  │  ├─ icons.js            SVG 图标与平台图标
 │  │  └─ pages/              home / category / category-rooms / follow / search / settings / room
 │  ├─ assets/                平台图标、应用 logo
-│  └─ vendor/mpegts.js       FLV over MSE
+│  └─ vendor/                mpegts.js（FLV over MSE）、fly-barrage.js（弹幕）、cryptojs、qrcode
 ├─ tools/cdp.mjs             WebView2 DevTools 调试脚本（截图/执行 JS/读 console）
 ├─ tools/make_icon.py        生成 1024 图标、ico 与 web logo
 ├─ docs/                     原版对照记录与截图
@@ -227,7 +244,7 @@ Starveil/
 
 ```powershell
 # 在仓库根目录执行
-python -m http.server 1420 --bind 127.0.0.1 --directory web
+python tools/serve.py 1420 web
 # 另开一个终端
 cargo tauri dev
 ```
@@ -264,29 +281,29 @@ cargo tauri build --debug --no-bundle
 
 ## 后端命令
 
-| 命令 | 说明 |
-|------|------|
-| `recommend(platform, page)` | 平台热度推荐 |
-| `search(platform, keyword)` | 搜索直播间 |
-| `search_anchors(platform, keyword, page)` | 搜索主播；B 站纯数字 UID 会反查直播间 |
-| `categories(platform)` | 分类树 |
-| `category_rooms(platform, parentId, subId, name, page)` | 分类下直播间（分页） |
-| `open_room(platform, roomId)` | 房间详情 + 清晰度，会话存在后端 |
-| `play(key, index)` | 按清晰度取直链与请求头 |
-| `start_danmaku(key)` / `stop_danmaku()` | 弹幕订阅，消息通过 `danmaku` 事件推送 |
-| `resolve_input(current, input)` | 链接/房间号解析，返回平台、房间号、短链标记 |
-| `copy_text(text)` / `open_url(url)` / `quit_app()` | 剪贴板、浏览器、退出 |
-| `set_cookie(platform, cookie)` / `clear_cookie(platform)` | 按平台注入 / 清除登录 Cookie 并重建 LiveCore |
-| `login_status(platform, cookie)` | 校验 B 站登录态；斗鱼返回 Cookie 配置状态 |
-| `bili_qr_generate()` / `bili_qr_poll(key)` | B 站扫码登录二维码与轮询 |
-| `douyu_qualities(key, signedArgs)` / `douyu_play(key, index, signedArgs)` | 斗鱼 WebView 签名后的清晰度 / 直链 |
+| 命令                                                                        | 说明                               |
+| ------------------------------------------------------------------------- | -------------------------------- |
+| `recommend(platform, page)`                                               | 平台热度推荐                           |
+| `search(platform, keyword)`                                               | 搜索直播间                            |
+| `search_anchors(platform, keyword, page)`                                 | 搜索主播；B 站纯数字 UID 会反查直播间           |
+| `categories(platform)`                                                    | 分类树                              |
+| `category_rooms(platform, parentId, subId, name, page)`                   | 分类下直播间（分页）                       |
+| `open_room(platform, roomId)`                                             | 房间详情 + 清晰度，会话存在后端                |
+| `play(key, index)`                                                        | 按清晰度取直链与请求头                      |
+| `start_danmaku(key)` / `stop_danmaku()`                                   | 弹幕订阅，消息通过 `danmaku` 事件推送         |
+| `resolve_input(current, input)`                                           | 链接/房间号解析，返回平台、房间号、短链标记           |
+| `copy_text(text)` / `open_url(url)` / `quit_app()`                        | 剪贴板、浏览器、退出                       |
+| `set_cookie(platform, cookie)` / `clear_cookie(platform)`                 | 按平台注入 / 清除登录 Cookie 并重建 LiveCore |
+| `login_status(platform, cookie)`                                          | 校验 B 站登录态；斗鱼返回 Cookie 配置状态       |
+| `bili_qr_generate()` / `bili_qr_poll(key)`                                | B 站扫码登录二维码与轮询                    |
+| `douyu_qualities(key, signedArgs)` / `douyu_play(key, index, signedArgs)` | 斗鱼 WebView 签名后的清晰度 / 直链          |
 
 ## 状态与已知限制
 
 - ✅ 哔哩哔哩：推荐、分类、搜索、详情、取流、弹幕、聊天。
-- ✅ 虎牙：推荐、分类、搜索、详情、取流；首页响应为 gzip 时已在 `live_core` 里兜底解压。
-  取流按 Dart 版移植了 Tars `getCdnTokenInfoEx`，每次播放换新 anti-code，并默认蓝光 4M；
-  弹幕协议（Tars）尚未接入，会给出系统提示。
+- ✅ 虎牙：推荐、分类、搜索、详情、取流、弹幕。首页响应为 gzip 时已在 `live_core` 里兜底解压；
+  取流按 Dart 版移植了 Tars `getCdnTokenInfoEx`，每次播放换新 anti-code，默认蓝光 4M；
+  弹幕走 Tars 编解码 + 心跳（0.3.5 接入）。
 - ✅ 斗鱼：推荐、分类、搜索、详情、清晰度与播放已打通。签名脚本交给 WebView 的
   JS 引擎执行（与 Dart 版 QuickJS 等价），CDN 的 Referer 由本机流代理补齐；
   登录后可携带 Cookie 获取更稳定的画质。
@@ -294,8 +311,9 @@ cargo tauri build --debug --no-bundle
 - ✅ 账号：哔哩哔哩扫码登录 / Cookie 登录，斗鱼 Cookie 登录；登录态按平台独立保存并注入取流。
   虎牙暂不支持登录。
 - ⏳ 后台常驻：界面入口已留，逻辑未接。
-- ⏳ SC / 贡献榜：聊天面板已有 Tab 与空态，数据源尚未接入。
-- 关注状态更新目前以进入直播间时写入的本地记录为准，不做后台批量轮询。
+- ✅ B 站 SC（醒目留言）：解析、价值配色、到期消失、手动删除、历史归档均已接入（0.3.5 起）。
+- ⏳ 贡献榜 / 亲密榜：数据源未接入，相关 Tab 已合并进关注页。
+- 关注状态更新以进房记录与关注页手动刷新为准；直播间的关注 Tab 可单独刷新全部状态。
 - 播放地址通常有时效（斗鱼约 10 分钟、虎牙部分线路更短），播放页会在 9 分钟自动重取，
   异常结束时也会自动重连。
 - 所有数据仅保存在本机 `localStorage`，不上传服务器。
@@ -315,6 +333,8 @@ cargo tauri build --debug --no-bundle
 - 协议层来自 GPUI 版的 `live_core`（哔哩哔哩 / 斗鱼 / 虎牙），已迁入 `src-tauri/vendor/live_core`；
   其中虎牙部分补了 Tars `getCdnTokenInfoEx` 取新 token 的实现。
 - 播放使用 [mpegts.js](https://github.com/xqq/mpegts.js)（Apache-2.0）。
+- 弹幕渲染使用 [fly-barrage](https://github.com/feiafei27/fly-barrage)（MIT）；
+  本地用 `vite build` 出 IIFE 后放进 `web/vendor/`，仓库里不再需要 Node 构建链。
 - 斗鱼签名脚本运行环境使用 CryptoJS（MIT）；登录二维码使用 qrcode-generator（MIT）。
 
 ## 免责声明

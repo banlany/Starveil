@@ -5,6 +5,8 @@ import {
   applyTheme,
   clearHistory,
   clearLogin,
+  collectAccounts,
+  restoreAccounts,
   getSetting,
   loadLogin,
   resetSettings,
@@ -576,7 +578,7 @@ function paintSync(content, ctx, repaint) {
   card.className = 'tool-card';
   card.innerHTML = `
     <h3>本机数据备份</h3>
-    <p>导出设置、关注列表和观看记录为一个 JSON 文件；换机器或重装时可以再导入回来。</p>
+    <p>导出设置、关注列表、观看记录和登录信息为一个 JSON 文件；换机器或重装时可以再导入回来。</p>
     <div class="tool-actions">
       <button class="btn primary" id="sync-export">${icon('download', 16)} 导出备份</button>
       <button class="btn" id="sync-import">${icon('upload', 16)} 导入备份</button>
@@ -600,6 +602,8 @@ function paintSync(content, ctx, repaint) {
       },
       follows: JSON.parse(localStorage.getItem('simple-live.follow.v2') || '[]'),
       history: state.history,
+      // 登录信息（Cookie）一并导出，换机后导入即可恢复登录态。
+      accounts: collectAccounts(),
     };
     const filename = `starveil-backup-${new Date().toISOString().slice(0, 10)}.json`;
     const saved = await saveJsonFile(filename, payload);
@@ -624,7 +628,11 @@ function paintSync(content, ctx, repaint) {
         if (data.settings) localStorage.setItem('simple-live.settings.v2', JSON.stringify(data.settings));
         if (Array.isArray(data.follows)) localStorage.setItem('simple-live.follow.v2', JSON.stringify(data.follows));
         if (Array.isArray(data.history)) localStorage.setItem('simple-live.history.v2', JSON.stringify(data.history));
-        toast('导入成功，正在重新载入…', 'success');
+        const restored = restoreAccounts(data.accounts);
+        toast(
+          restored.length ? `导入成功（含 ${restored.length} 个平台登录信息），正在重新载入…` : '导入成功，正在重新载入…',
+          'success',
+        );
         setTimeout(() => location.reload(), 700);
       } catch (error) {
         toast(`导入失败：${error}`, 'error');

@@ -1,7 +1,7 @@
 // 关注页：本地关注列表、标签与平台筛选。
 import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
-import { loadFollow, removeFollow, state, updateFollow } from '../store.js';
+import { collectAccounts, loadFollow, removeFollow, restoreAccounts, state, updateFollow } from '../store.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
 export function renderFollow(ctx) {
@@ -28,7 +28,7 @@ export function renderFollow(ctx) {
       <div class="follow-row">
         <span class="follow-label">标签</span>
         <div class="follow-row" id="follow-tags" style="gap:8px"></div>
-        <span class="follow-count">${follows.length} 位主播</span>
+        <span class="follow-count" id="follow-count">${follows.length} 位主播</span>
       </div>
       <div class="follow-row">
         <div class="follow-mode" id="follow-mode">
@@ -68,6 +68,13 @@ export function renderFollow(ctx) {
   }
 
   function renderFilters() {
+    // 「按状态 / 按平台」两个按钮要跟着 mode 变，否则点了看不出区别。
+    for (const button of page.querySelectorAll('#follow-mode button')) {
+      const active = button.dataset.mode === state.followFilter.mode;
+      const label = button.dataset.mode === 'status' ? '按状态' : '按平台';
+      button.classList.toggle('active', active);
+      button.innerHTML = `${active ? icon('check', 13) : ''}${label}`;
+    }
     filtersBox.replaceChildren();
     if (state.followFilter.mode === 'status') {
       for (const [key, label] of [['all', '全部'], ['live', '直播中'], ['offline', '未开播']]) {
@@ -96,8 +103,20 @@ export function renderFollow(ctx) {
     }
   }
 
+  /// 直播中的排前面，其次按“进房次数”排，最后用最近访问时间和昵称兜底。
+  function sortFollows(list) {
+    return list.slice().sort((a, b) => {
+      if (Boolean(a.live) !== Boolean(b.live)) return a.live ? -1 : 1;
+      const clicks = (Number(b.clicks) || 0) - (Number(a.clicks) || 0);
+      if (clicks) return clicks;
+      const visit = (Number(b.lastVisit) || 0) - (Number(a.lastVisit) || 0);
+      if (visit) return visit;
+      return String(a.user_name || '').localeCompare(String(b.user_name || ''), 'zh-CN');
+    });
+  }
+
   function filtered() {
-    return follows.filter((item) => {
+    return sortFollows(follows.filter((item) => {
       if (state.followFilter.tag !== 'all' && (item.tag || '默认') !== state.followFilter.tag) return false;
       if (state.followFilter.mode === 'status') {
         if (state.followFilter.status === 'live' && !item.live) return false;
@@ -106,11 +125,27 @@ export function renderFollow(ctx) {
         return false;
       }
       return true;
-    });
+    }));
+  }
+
+  /// 右上角计数跟随当前筛选：全部 / 直播中 / 未开播 / 某平台 各自显示自己的数量。
+  function updateCount(list) {
+    const box = page.querySelector('#follow-count');
+    if (!box) return;
+    const filter = state.followFilter;
+    let label = '位主播';
+    if (filter.mode === 'status') {
+      if (filter.status === 'live') label = '位直播中';
+      else if (filter.status === 'offline') label = '位未开播';
+    } else if (filter.platform !== 'all') {
+      label = `位 · ${PLATFORM_META[filter.platform]?.short || filter.platform}`;
+    }
+    box.textContent = `${list.length} ${label}`;
   }
 
   function renderCards() {
     const list = filtered();
+    updateCount(list);
     if (!follows.length) {
       body.replaceChildren(
         emptyState({
@@ -325,6 +360,7 @@ async function exportFollow() {
       users: state.settings.danmaku?.blockUsers || '',
     },
     history: state.history,
+    accounts: collectAccounts(),
   };
   const filename = `starveil-backup-${new Date().toISOString().slice(0, 10)}.json`;
   const saved = await saveJsonFile(filename, data);
@@ -355,7 +391,8 @@ function importFollow(after) {
       if (Array.isArray(data.history)) {
         localStorage.setItem('simple-live.history.v2', JSON.stringify(data.history));
       }
-      toast('导入成功，正在刷新…', 'success');
+      const restored = restoreAccounts(data.accounts);
+      toast(restored.length ? `导入成功（含 ${restored.length} 个平台登录信息）` : '导入成功，正在刷新…', 'success');
       after?.();
     } catch (error) {
       toast(`导入失败：${error}`, 'error');

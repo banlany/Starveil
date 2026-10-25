@@ -39,6 +39,9 @@ const PAGES = {
 };
 
 const backStack = [];
+// 进入直播间之前所在的一级页面，用于“从直播间返回一级界面”。
+let roomRoot = 'home';
+let roomRootParams = {};
 let cleanup = null;
 let currentKey = '';
 const scrollPositions = new Map();
@@ -47,6 +50,7 @@ let timerHandle = 0;
 const ctx = {
   go,
   back,
+  exitRoom,
   refresh: () => render({ keepScroll: false }),
   route: () => state.page,
   params: () => state.routeParams,
@@ -81,8 +85,8 @@ function go(route, params = {}, options = {}) {
 function back() {
   const previous = backStack.pop();
   if (!previous) {
-    state.page = 'home';
-    state.routeParams = {};
+    state.page = roomRoot && PAGES[roomRoot] ? roomRoot : 'home';
+    state.routeParams = roomRootParams || {};
     render();
     return;
   }
@@ -91,10 +95,24 @@ function back() {
   render({ keepScroll: true });
 }
 
+function exitRoom() {
+  // 直播间里的返回按钮、Esc 都走这里：直接回进入直播间之前的一级页面。
+  // 这样“关注栏进 A → 再进 B → 返回”不会退回到 A，而是回到列表页。
+  backStack.length = 0;
+  state.page = roomRoot && PAGES[roomRoot] ? roomRoot : 'home';
+  state.routeParams = roomRoot && PAGES[roomRoot] ? roomRootParams : {};
+  render({ keepScroll: true });
+}
+
 function openRoom(platform, roomId) {
   if (!isPlatformEnabled(platform)) {
     showPlatformLocked(platform);
     return;
+  }
+  // 只有从非直播间页面进来时才更新根页面；直播间之间跳转保持原来的根。
+  if (state.page && state.page !== 'room') {
+    roomRoot = state.page;
+    roomRootParams = state.routeParams;
   }
   state.platform = platform;
   state.settings.home.platform = platform;
