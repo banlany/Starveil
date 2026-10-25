@@ -1,0 +1,141 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "room_id": 1702267202,
+    "playurl_info": {
+      "playurl": {
+        "g_qn_desc": [
+          {
+            "qn": 30000,
+            "desc": "杜比",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": null,
+            "eotf": 0
+          },
+          {
+            "qn": 20000,
+            "desc": "4K",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": null,
+            "eotf": 0
+          },
+          {
+            "qn": 15000,
+            "desc": "2K",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": null,
+            "eotf": 0
+          },
+          {
+            "qn": 10000,
+            "desc": "原画",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": {
+              "detail_desc": {
+                "desc": "1080P 原画",
+                "tag": [
+                  "高帧率"
+                ]
+              },
+              "brief_desc": {
+                "desc": "1080P",
+                "badge": "原画"
+              }
+            },
+            "eotf": 0
+          },
+          {
+            "qn": 400,
+            "desc": "蓝光",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": {
+              "detail_desc": {
+                "desc": "1080P 蓝光"
+              },
+              "brief_desc": {
+                "desc": "1080P"
+              }
+            },
+            "eotf": 0
+          },
+          {
+            "qn": 250,
+            "desc": "超清",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": {
+              "detail_desc": {
+                "desc": "720P 超清"
+              },
+              "brief_desc": {
+                "desc": "720P"
+              }
+            },
+            "eotf": 0
+          },
+          {
+            "qn": 150,
+            "desc": "高清",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": null,
+            "eotf": 0
+          },
+          {
+            "qn": 80,
+            "desc": "流畅",
+            "hdr_desc": "",
+            "attr_desc": null,
+            "hdr_type": 0,
+            "media_base_desc": null,
+            "eotf": 0
+          }
+        ],
+        "stream": [
+          {
+            "protocol_name": "http_stream",
+            "format": [
+              {
+                "format_name": "flv",
+                "codec": [
+                  {
+                    "codec_name": "avc",
+                    "current_qn": 250,
+                    "accept_qn": [
+                      10000,
+                      250
+                    ],
+                    "base_url": "/live-bvc/492626/live_yxafn36zws_S3w31Ar_1a0we_2500.flv?",
+                    "url_info": [
+                      {
+                        "host": "https://ec-jssz-ct-01-12.bilivideo.com",
+                        "extra": "expires=1792859346&pt=web&deadline=1792859346&len=0&oi=1919499894&platform=web&qn=250&trid=10007fce270ec63898fc1dd0aaf3a36adcce&uipk=100&uipv=100&nbs=1&bmt=2&uparams=cdn,deadline,len,oi,platform,qn,trid,uipk,uipv,nbs,bmt&cdn=cn-gotcha01&upsig=085445278e2ee87155acc402aa513075&site=87a1855ec526693039a812f46fd80f39&free_type=0&mid=0&sche=ban&sid=ec-jssz-ct-01-12&chash=1&sg=lr&trace=8388633&isp=ct&rg=East&pv=Anhui&codec=0&media_type=0&source=puv3_onetier&suffix=2500&deploy_env=prod&p2p_type=1&origin_bitrate=1507&score=1&hot_cdn=0&strategy_id=25&strategy_type=0&info_source=origin&strategy_ids=25,122&strategy_types=0,1&hdr_type=0&expected_qn=250&sl=1&cid=1702267202&pp=rtmp&ld=jchz&sk=5a33cbc6da161f4493d1783b81a47c78&vd=dec&zoneid_l=151355393&sid_l=stream_name_cold&src=puv3&order=1"
+                      },
+                      {
+                        "host": "https://d1--cn-gotcha04b.bilivideo.com",
+                        "extra": "expires=1792859346&len=0&oi=1919499894&pt=web&qn=250&trid=10007fce270ec63898fc1dd0aaf3a36adcce&bmt=2&sigparams=cdn,expires,len,oi,pt,qn,trid,bmt&cdn=cn-gotcha04&sign=f104652a3bc7b0a1fc6527ab169a8cbd&site=87a1855ec526693039a812f46fd80f39&free_type=0&mid=0&sche=ban&trace=16&isp=ct&rg=East&pv=Anhui&suffix=2500&deploy_env=prod&p2p_type=1&origin_bitrate=1507&score=1&hot_cdn=0&strategy_id=25&strategy_type=0&info_source=origin&strategy_ids=25,122&strategy_types=0,1&hdr_type=0&expected_qn=250&sl=1&cid=1702267202&pp=rtmp&ld=jchz&sk=5a33cbc6da161f4493d1783b81a47c78&codec=0&media_type=0&source=puv3_onetier&vd=bc&src=puv3&order=2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "starveil"
+version = "0.3.1"
+description = "星幕直播 · Tauri 桌面客户端"
+edition = "2024"
+rust-version = "1.95"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls", "charset"] }
+url = "2"
+live_core = { path = "vendor/live_core" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

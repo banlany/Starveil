@@ -1,0 +1,568 @@
+//! 弹幕接收。
+//!
+//! 三站三套协议，这里把它们收敛成一个 `Receiver<DanmakuMessage>`：
+//! - 哔哩哔哩：WebSocket + 16 字节头，正文 JSON，ver=2 走 zlib、ver=3 走 brotli
+//! - 斗鱼：WebSocket + 12 字节头，正文是 STT 文本
+//! - 虎牙：WebSocket + Tars 编码
+//!
+//! 只读不写：本项目不实现发送弹幕。
+
+use crate::error::LiveError;
+use serde::Serialize;
+use crate::model::{Platform, RoomExtra};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+/// 一条弹幕（或系统提示）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DanmakuMessage {
+    pub user: String,
+    pub text: String,
+    /// RGB，`None` 表示默认白色。
+    pub color: Option<u32>,
+    /// 系统消息（进房提示、人气值等），UI 用弱化样式。
+    pub system: bool,
+}
+
+impl DanmakuMessage {
+    pub fn chat(user: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            user: user.into(),
+            text: text.into(),
+            color: None,
+            system: false,
+        }
+    }
+
+    pub fn system(text: impl Into<String>) -> Self {
+        Self {
+            user: String::new(),
+            text: text.into(),
+            color: None,
+            system: true,
+        }
+    }
+}
+
+/// 一次弹幕会话。丢到后台线程跑，UI 侧定时 `drain()`。
+pub struct DanmakuSession {
+    rx: Receiver<DanmakuMessage>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+    platform: Platform,
+}
+
+impl DanmakuSession {
+    pub fn start(platform: Platform, extra: &RoomExtra) -> Result<Self, LiveError> {
+        let (tx, rx) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let thread_stop = stop.clone();
+        let extra = extra.clone();
+        let thread = thread::Builder::new()
+            .name("danmaku".to_string())
+            .spawn(move || match platform {
+                Platform::Bilibili => run_bilibili(&extra, &tx, &thread_stop),
+                Platform::Douyu => run_douyu(&extra, &tx, &thread_stop),
+                Platform::Huya => run_huya(&extra, &tx, &thread_stop),
+            })
+            .map_err(|error| LiveError::network(format!("启动弹幕线程失败：{error}")))?;
+
+        Ok(Self {
+            rx,
+            stop,
+            thread: Some(thread),
+            platform,
+        })
+    }
+
+    pub fn run_danmaku_platform(&self) -> Platform {
+        self.platform
+    }
+
+    /// 取走已到达的弹幕（非阻塞）。
+    pub fn drain(&self) -> Vec<DanmakuMessage> {
+        self.rx.try_iter().collect()
+    }
+
+    pub fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            // 网络读可能阻塞，交给它自己超时退出，不在这里干等。
+            if thread.is_finished() {
+                let _ = thread.join();
+            }
+        }
+    }
+}
+
+impl Drop for DanmakuSession {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// tungstenite 的 rustls 没带默认 CryptoProvider，进程内装一次即可。
+fn ensure_crypto_provider() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
+fn sleep_while(stop: &AtomicBool, duration: Duration) -> bool {
+    let step = Duration::from_millis(100);
+    let mut left = duration;
+    while left > Duration::ZERO {
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        thread::sleep(step.min(left));
+        left = left.saturating_sub(step);
+    }
+    !stop.load(Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------- 哔哩哔哩
+
+fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
+    ensure_crypto_provider();
+    let RoomExtra::Bilibili { token, host, .. } = extra else {
+        let _ = tx.send(DanmakuMessage::system("B 站弹幕参数缺失，已跳过弹幕"));
+        return;
+    };
+    if token.is_empty() {
+        let _ = tx.send(DanmakuMessage::system("未取到 B 站弹幕 token，弹幕不可用"));
+        return;
+    }
+    let Some(room_id) = bilibili_room_id(extra) else {
+        return;
+    };
+
+    let url = format!("wss://{host}/sub");
+    let mut attempt = 0;
+    while !stop.load(Ordering::Relaxed) && attempt < 3 {
+        attempt += 1;
+        match tungstenite::connect(url.as_str()) {
+            Ok((mut socket, _)) => {
+                // 给底层 TCP 设个读超时：否则房间安静时 read() 会永久阻塞，
+                // 切房后线程退不出去，socket 与缓冲区都泄漏。
+                if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_ref() {
+                    let _ = stream
+                        .sock
+                        .set_read_timeout(Some(Duration::from_millis(600)));
+                }
+                let _ = socket.send(tungstenite::Message::Binary(
+                    bilibili_packet(7, bilibili_join_body(&room_id, token)).into(),
+                ));
+
+                let mut last_heartbeat = std::time::Instant::now();
+                loop {
+                    if stop.load(Ordering::Relaxed) {
+                        let _ = socket.close(None);
+                        return;
+                    }
+                    if last_heartbeat.elapsed() >= Duration::from_secs(25) {
+                        let _ = socket.send(tungstenite::Message::Binary(
+                            bilibili_packet(2, Vec::new()).into(),
+                        ));
+                        last_heartbeat = std::time::Instant::now();
+                    }
+
+                    match socket.read() {
+                        Ok(tungstenite::Message::Binary(data)) => {
+                            bilibili_handle(&data, tx);
+                        }
+                        Ok(tungstenite::Message::Close(_)) => break,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = tx.send(DanmakuMessage::system(format!(
+                    "B 站弹幕连接失败：{error}"
+                )));
+            }
+        }
+        if !sleep_while(stop, Duration::from_secs(3)) {
+            return;
+        }
+    }
+}
+
+/// 弹幕参数里没有单独存房间号，token 请求时用 detail.room_id；这里从 token 无法反推，
+/// 因此由调用方把 room_id 放在 `RoomExtra::Bilibili` 里（见 model 注释）。
+fn bilibili_room_id(extra: &RoomExtra) -> Option<String> {
+    match extra {
+        RoomExtra::Bilibili { room_id, .. } if !room_id.is_empty() => Some(room_id.clone()),
+        _ => None,
+    }
+}
+
+fn bilibili_join_body(room_id: &str, token: &str) -> Vec<u8> {
+    format!(
+        r#"{{"uid":0,"roomid":{room_id},"protover":3,"buvid":"","platform":"web","type":2,"key":"{token}"}}"#
+    )
+    .into_bytes()
+}
+
+fn bilibili_packet(action: u32, body: Vec<u8>) -> Vec<u8> {
+    let mut packet = Vec::with_capacity(16 + body.len());
+    packet.extend_from_slice(&((16 + body.len()) as u32).to_be_bytes());
+    packet.extend_from_slice(&16u16.to_be_bytes());
+    packet.extend_from_slice(&1u16.to_be_bytes()); // ver=1：心跳包正文不压缩
+    packet.extend_from_slice(&action.to_be_bytes());
+    packet.extend_from_slice(&1u32.to_be_bytes());
+    packet.extend_from_slice(&body);
+    packet
+}
+
+fn bilibili_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
+    if data.len() < 16 {
+        return;
+    }
+    let version = u16::from_be_bytes([data[6], data[7]]);
+    let operation = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+    let body = &data[16..];
+
+    match operation {
+        5 => {
+            let decoded = match version {
+                2 => inflate(body),
+                3 => {
+                    let mut out = Vec::new();
+                    let mut reader = brotli::Decompressor::new(body, 8192);
+                    match std::io::Read::read_to_end(&mut reader, &mut out) {
+                        Ok(_) => out,
+                        Err(_) => return,
+                    }
+                }
+                _ => body.to_vec(),
+            };
+            bilibili_parse_json(&String::from_utf8_lossy(&decoded), tx);
+        }
+        3 => {
+            if let Some(popularity) = body
+                .get(0..4)
+                .map(|slice| u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
+            {
+                let _ = tx.send(DanmakuMessage::system(format!("人气 {popularity}")));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn inflate(data: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut decoder = flate2::read::ZlibDecoder::new(data);
+    let mut out = Vec::new();
+    let _ = decoder.read_to_end(&mut out);
+    out
+}
+
+fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
+    for chunk in text.split(|ch: char| ch.is_control()) {
+        let chunk = chunk.trim();
+        if chunk.len() < 3 || !chunk.starts_with('{') {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(chunk) else {
+            continue;
+        };
+        let cmd = value.get("cmd").and_then(|cmd| cmd.as_str()).unwrap_or("");
+        if !cmd.starts_with("DANMU_MSG") {
+            continue;
+        }
+        let Some(info) = value.get("info").and_then(|info| info.as_array()) else {
+            continue;
+        };
+        let text = info.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let user = info
+            .get(2)
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.get(1))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let color = info
+            .first()
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.get(3))
+            .and_then(|v| v.as_u64())
+            .filter(|color| *color > 0)
+            .map(|color| color as u32);
+
+        let _ = tx.send(DanmakuMessage {
+            user,
+            text,
+            color,
+            system: false,
+        });
+    }
+}
+
+// ---------------------------------------------------------------- 斗鱼
+
+fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
+    ensure_crypto_provider();
+    let RoomExtra::Douyu { rid } = extra else {
+        return;
+    };
+    let host = "danmuproxy.douyu.com";
+    let mut attempt = 0;
+    while !stop.load(Ordering::Relaxed) && attempt < 3 {
+        attempt += 1;
+        let port = 8501 + (attempt - 1) % 6;
+        match douyu_connect(host, port) {
+            Ok(mut socket) => {
+                let _ = socket.send(tungstenite::Message::Binary(
+                    douyu_packet(&format!("type@=loginreq/roomid@={rid}/")).into(),
+                ));
+                let _ = socket.send(tungstenite::Message::Binary(
+                    douyu_packet(&format!("type@=joingroup/rid@={rid}/gid@=-9999/")).into(),
+                ));
+
+                let mut last_heartbeat = std::time::Instant::now();
+                loop {
+                    if stop.load(Ordering::Relaxed) {
+                        let _ = socket.close(None);
+                        return;
+                    }
+                    if last_heartbeat.elapsed() >= Duration::from_secs(40) {
+                        let _ = socket.send(tungstenite::Message::Binary(
+                            douyu_packet("type@=mrkl/").into(),
+                        ));
+                        last_heartbeat = std::time::Instant::now();
+                    }
+
+                    match socket.read() {
+                        Ok(tungstenite::Message::Binary(data)) => douyu_handle(&data, tx),
+                        Ok(tungstenite::Message::Close(_)) => break,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = tx.send(DanmakuMessage::system(format!(
+                    "斗鱼弹幕连接失败：{error}"
+                )));
+            }
+        }
+        if !sleep_while(stop, Duration::from_secs(3)) {
+            return;
+        }
+    }
+}
+
+/// 斗鱼的弹幕服务器只接受系统 TLS（rustls 的套件协商会被拒），
+/// 所以这里用 Schannel / Secure Transport 自己包一层，再做 WebSocket 升级。
+fn douyu_connect(
+    host: &str,
+    port: u16,
+) -> Result<
+    tungstenite::WebSocket<native_tls::TlsStream<std::net::TcpStream>>,
+    Box<dyn std::error::Error>,
+> {
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let address = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or("无法解析斗鱼弹幕域名")?;
+    let tcp = TcpStream::connect(address)?;
+    tcp.set_read_timeout(Some(Duration::from_millis(600)))?;
+    tcp.set_nodelay(true).ok();
+
+    let tls = native_tls::TlsConnector::new()?.connect(host, tcp)?;
+    let (socket, _response) =
+        tungstenite::client::client(format!("wss://{host}:{port}/"), tls)?;
+    Ok(socket)
+}
+
+fn douyu_packet(body: &str) -> Vec<u8> {
+    let bytes = body.as_bytes();
+    let declared = (bytes.len() + 9) as u32; // 斗鱼把长度声明成 9+body，比实际头短 4
+    let mut packet = Vec::with_capacity(bytes.len() + 13);
+    packet.extend_from_slice(&declared.to_le_bytes());
+    packet.extend_from_slice(&declared.to_le_bytes());
+    packet.extend_from_slice(&689u16.to_le_bytes()); // client send to server
+    packet.push(0); // encrypted
+    packet.push(0); // reserved
+    packet.extend_from_slice(bytes);
+    packet.push(0);
+    packet
+}
+
+fn douyu_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
+    if data.len() < 13 {
+        return;
+    }
+    let declared = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    if declared < 9 || data.len() < declared - 9 + 12 {
+        return;
+    }
+    let body_len = declared - 9;
+    let body = &data[12..12 + body_len];
+    let Ok(text) = std::str::from_utf8(body) else {
+        return;
+    };
+
+    for field in text.split('/') {
+        if field.is_empty() {
+            continue;
+        }
+        if let Some(value) = field.strip_prefix("type@=")
+            && value == "chatmsg"
+        {
+            let user = stt_value(text, "nn").unwrap_or_default();
+            let message = stt_value(text, "txt").unwrap_or_default();
+            let color = stt_value(text, "col")
+                .and_then(|col| col.parse::<u32>().ok())
+                .and_then(douyu_color);
+            if !message.is_empty() {
+                let _ = tx.send(DanmakuMessage {
+                    user,
+                    text: message,
+                    color,
+                    system: false,
+                });
+            }
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn b站封包头部符合协议() {
+        let packet = bilibili_packet(7, vec![b'{', b'}']);
+        assert_eq!(packet.len(), 18);
+        assert_eq!(u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]), 18);
+        assert_eq!(u16::from_be_bytes([packet[4], packet[5]]), 16);
+        assert_eq!(u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]), 7);
+    }
+
+    #[test]
+    fn b站弹幕json能解析出用户文本与颜色() {
+        let json = r#"{"cmd":"DANMU_MSG","info":[[0,1,25,16711680],"你好","[uid]"]}"#;
+        let (tx, rx) = channel();
+        bilibili_parse_json(json, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].user, "");
+        assert_eq!(messages[0].text, "你好");
+        assert_eq!(messages[0].color, Some(16711680));
+    }
+
+    #[test]
+    fn 斗鱼封包长度声明是9加正文() {
+        let packet = douyu_packet("type@=mrkl/");
+        let declared = u32::from_le_bytes([packet[0], packet[1], packet[2], packet[3]]);
+        assert_eq!(declared as usize, "type@=mrkl/".len() + 9);
+        assert_eq!(packet[12], b't');
+        assert_eq!(*packet.last().unwrap(), 0);
+    }
+
+    #[test]
+    fn 斗鱼chatmsg解析() {
+        // 手工拼一个 chatmsg 包
+        let body = "type@=chatmsg/nn@=测试用户/txt@=你好世界/col@=1/";
+        let mut data = vec![0u8; 12];
+        data[0..4].copy_from_slice(&(body.len() as u32 + 9).to_le_bytes());
+        data.extend_from_slice(body.as_bytes());
+        data.push(0);
+        let (tx, rx) = channel();
+        douyu_handle(&data, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].user, "测试用户");
+        assert_eq!(messages[0].text, "你好世界");
+        assert_eq!(messages[0].color, Some(0xFF0000));
+    }
+
+    #[test]
+    fn 未转发时直接丢弃() {
+        let (tx, rx) = channel::<DanmakuMessage>();
+        let data = {
+            let body = "type@=uenter/nn@=某人/";
+            let mut data = vec![0u8; 12];
+            data[0..4].copy_from_slice(&(body.len() as u32 + 9).to_le_bytes());
+            data.extend_from_slice(body.as_bytes());
+            data.push(0);
+            data
+        };
+        douyu_handle(&data, &tx);
+        assert!(rx.try_iter().next().is_none());
+    }
+}
+
+/// 斗鱼 STT：`key@=value` 用 `/` 分隔，`@S` 还原成 `/`、`@A` 还原成 `@`。
+fn stt_value(text: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}@=");
+    for field in text.split('/') {
+        if let Some(value) = field.strip_prefix(&prefix) {
+            return Some(value.replace("@S", "/").replace("@A", "@"));
+        }
+    }
+    None
+}
+
+/// 斗鱼用颜色编号而不是色值。
+fn douyu_color(code: u32) -> Option<u32> {
+    match code {
+        1 => Some(0xFF0000),
+        2 => Some(0x1E87F0),
+        3 => Some(0x7AC84B),
+        4 => Some(0xFF7F00),
+        5 => Some(0x9B39F4),
+        6 => Some(0xFF69B4),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------- 虎牙
+
+fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
+    ensure_crypto_provider();
+    let RoomExtra::Huya {
+        presenter_uid,
+        yyid,
+        ..
+    } = extra
+    else {
+        return;
+    };
+    if *presenter_uid == 0 {
+        let _ = tx.send(DanmakuMessage::system("虎牙弹幕参数缺失"));
+        return;
+    }
+    let _ = yyid;
+    // 虎牙用 Tars 编码，详见 docs/02-detailed-design.md 的「虎牙弹幕」一节。
+    let _ = stop;
+    let _ = tx.send(DanmakuMessage::system(
+        "虎牙弹幕协议（Tars）尚未接入，稍后在后续版本补齐",
+    ));
+}

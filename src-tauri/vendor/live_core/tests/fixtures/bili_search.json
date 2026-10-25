@@ -1,0 +1,31 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "result": {
+      "live_room": [
+        {
+          "roomid": 24530995,
+          "title": "今天晚上不熬夜了，累死了。",
+          "cover": "//i0.hdslb.com/bfs/live-key-frame/keyframe102423280000245309952ogvlg.jpg",
+          "uname": "齐枫永恩",
+          "online": 92283
+        },
+        {
+          "roomid": 24670319,
+          "title": "排胃赛",
+          "cover": "//i0.hdslb.com/bfs/live-key-frame/keyframe10242325000024670319a7z9bv.jpg",
+          "uname": "小食堂丶",
+          "online": 15753
+        },
+        {
+          "roomid": 14709735,
+          "title": "三路 爱吃汉堡巧克力",
+          "cover": "//i0.hdslb.com/bfs/live-key-frame/keyframe10242328000014709735ch77rd.jpg",
+          "uname": "炫神_",
+          "online": 391942
+        }
+      ]
+    }
+  }
+}

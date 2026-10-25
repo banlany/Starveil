@@ -1,0 +1,19 @@
+{
+  "room": {
+    "room_id": 9999,
+    "room_name": "陪伴每一天！",
+    "owner_name": "yyfyyf",
+    "owner_avatar": "https://apic.douyucdn.cn/upload/avanew/face/201803/23/17/faa711e232041d7525a1bd695bf8fa8e_big.jpg",
+    "room_pic": "https://rpic.douyucdn.cn/asrpic/261024/9999_src_2326.avif/dy4",
+    "show_status": 1,
+    "videoLoop": 0,
+    "show_details": "",
+    "cate1Id": null,
+    "cate1Name": null,
+    "cate2Id": null,
+    "cate2Name": null,
+    "room_biz_all": {
+      "hot": "3703714"
+    }
+  }
+}

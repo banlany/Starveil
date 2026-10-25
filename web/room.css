@@ -1,0 +1,1006 @@
+/* ============================================================
+   直播间：播放器 + 弹幕 + 聊天 + 控制条
+   ============================================================ */
+
+.room-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #050507;
+  color: #f4f4f6;
+  overflow: hidden;
+}
+
+.room-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+.stage-bg {
+  position: absolute;
+  inset: -30px;
+  background-position: center;
+  background-size: cover;
+  filter: blur(26px) brightness(0.38) saturate(1.15);
+  transform: scale(1.06);
+  z-index: 0;
+  transition: opacity 0.4s ease;
+}
+
+.stage-bg.hidden {
+  opacity: 0;
+}
+
+#player {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+  z-index: 1;
+}
+
+.danmaku-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.danmaku {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: var(--dm-font, 20px);
+  font-weight: var(--dm-weight, 700);
+  line-height: 1.25;
+  opacity: var(--dm-opacity, 0.95);
+  color: #fff;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.9),
+    1px 1px 0 rgba(0, 0, 0, 0.9),
+    -1px 1px 0 rgba(0, 0, 0, 0.9),
+    0 -1px 0 rgba(0, 0, 0, 0.9),
+    0 0 var(--dm-stroke, 2px) rgba(0, 0, 0, 0.75);
+  -webkit-text-stroke: var(--dm-stroke, 2px) rgba(0, 0, 0, 0.55);
+  paint-order: stroke fill;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.danmaku.no-stroke {
+  text-shadow: none;
+  -webkit-text-stroke: 0;
+}
+
+.danmaku img.emoji {
+  width: 1.25em;
+  height: 1.25em;
+  vertical-align: -0.2em;
+}
+
+/* ------------------------------------------------------------ 加载/错误 */
+
+.stage-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 26px;
+  border-radius: 14px;
+  background: rgba(14, 14, 19, 0.78);
+  backdrop-filter: blur(12px);
+  color: #d7d7df;
+  font-size: 13px;
+  text-align: center;
+  max-width: min(460px, 76%);
+  line-height: 1.7;
+}
+
+.stage-hint.hidden {
+  display: none;
+}
+
+.stage-hint .hint-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.stage-hint .btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.stage-hint .btn.primary {
+  background: var(--accent);
+}
+
+.big-spinner {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+/* ------------------------------------------------------------ 顶部浮层 */
+
+.room-topbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 8;
+  min-height: 78px;
+  padding: 12px 18px 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.28) 66%, transparent);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.room-topbar .back-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+  flex: none;
+}
+
+.room-topbar .back-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.room-heading {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.room-heading h1 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+}
+
+.room-heading .room-sub {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.room-heading .room-sub .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+.room-heading .room-sub .dot {
+  opacity: 0.45;
+}
+
+.room-heading .room-sub .area {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10.5px;
+  flex: none;
+}
+
+.room-heading .room-sub .online {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.room-heading .room-sub .online .ico {
+  color: var(--accent);
+}
+
+.room-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.overlay-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  font-size: 12.5px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.overlay-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.overlay-btn.icon-only {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+}
+
+.overlay-btn.active {
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.44);
+}
+
+.overlay-btn.follow-btn.active {
+  background: rgba(0, 0, 0, 0.44);
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------ 播放器控制条 */
+
+.player-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 62px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.24) 72%, transparent);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.player-controls .ctrl {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.9);
+  flex: none;
+}
+
+.player-controls .ctrl:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.player-controls .ctrl.active {
+  color: var(--accent);
+}
+
+.player-controls .ctrl-text {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.player-controls .ctrl-text:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.player-controls .clock {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.volume-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.volume-wrap input[type="range"] {
+  width: 0;
+  opacity: 0;
+  transition: width 0.18s ease, opacity 0.18s ease;
+}
+
+.volume-wrap:hover input[type="range"],
+.volume-wrap:focus-within input[type="range"] {
+  width: 74px;
+  opacity: 1;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.28);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.18);
+}
+
+.ctrl-spacer {
+  flex: 1;
+}
+
+.live-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), rgba(251, 114, 153, 0.2));
+}
+
+/* 悬浮菜单 */
+
+.stage-menu {
+  position: absolute;
+  right: 18px;
+  bottom: 68px;
+  z-index: 20;
+  width: 240px;
+  padding: 7px;
+  border-radius: 12px;
+  background: rgba(24, 24, 31, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(18px);
+  color: #f2f2f5;
+  animation: menu-in 0.14s ease;
+}
+
+.stage-menu.wide {
+  width: 286px;
+}
+
+.stage-menu h4 {
+  margin: 4px 8px 7px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.stage-menu-item {
+  width: 100%;
+  min-height: 36px;
+  border-radius: 8px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #f1f1f4;
+  font-size: 13px;
+  text-align: left;
+}
+
+.stage-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stage-menu-item.active {
+  color: var(--accent);
+}
+
+.stage-menu-item .ico {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.stage-menu-item.active .ico {
+  color: var(--accent);
+}
+
+.stage-menu-item .menu-value {
+  margin-left: auto;
+  color: rgba(255, 255, 255, 0.36);
+  font-size: 11.5px;
+}
+
+.stage-menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stage-menu .quick-row {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: 8px;
+}
+
+.stage-menu .quick-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.stage-menu .quick-row .quick-label {
+  flex: 1;
+  font-size: 12.5px;
+}
+
+.stage-menu .quick-row input[type="range"] {
+  width: 92px;
+}
+
+.stage-menu .quick-value {
+  width: 38px;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------ 全屏 */
+
+/* 全屏只看画面：聊天栏、底部动作栏、折叠按钮全部隐藏。
+   顶部返回/标题栏和播放控制条仍由 ui-idle 在 2.8 秒后自动隐藏。 */
+.room-page.is-fullscreen .room-chat,
+.room-page.is-fullscreen .room-footer,
+.room-page.is-fullscreen .chat-expand,
+.room-page:fullscreen .room-chat,
+.room-page:fullscreen .room-footer,
+.room-page:fullscreen .chat-expand {
+  display: none;
+}
+
+/* ------------------------------------------------------------ 空闲隐藏 */
+
+.room-page.ui-idle {
+  cursor: none;
+}
+
+.room-page.ui-idle .room-topbar,
+.room-page.ui-idle .player-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.room-page.ui-idle .room-topbar {
+  transform: translateY(-8px);
+}
+
+.room-page.ui-idle .player-controls {
+  transform: translateY(8px);
+}
+
+.room-page.is-paused .room-topbar,
+.room-page.is-paused .player-controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+/* ------------------------------------------------------------ 聊天面板 */
+
+.room-chat {
+  width: 316px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #101015;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  transition: width 0.2s ease, opacity 0.2s ease;
+}
+
+.room-chat.hidden {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-left: 0;
+}
+
+.chat-head {
+  flex: none;
+  padding: 14px 14px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.chat-head .avatar {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-head-text h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-head-meta {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 11px;
+}
+
+.chat-head-meta .platform-badge {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+}
+
+.chat-head-meta .platform-badge .platform-img {
+  width: 15px;
+  height: 15px;
+}
+
+.chat-head-meta .online {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+}
+
+.chat-head-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.chat-head-actions .icon-btn {
+  width: 30px;
+  height: 30px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.chat-head-actions .icon-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* 关注后只让爱心变成主题色实心，不铺主题色背景。 */
+.chat-head-actions .icon-btn.active {
+  color: var(--accent);
+  background: transparent;
+}
+
+.chat-follow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.chat-follow-card {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.chat-follow-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.chat-follow-card .avatar {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.chat-follow-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-follow-info b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #f1f1f4;
+}
+
+.chat-follow-info small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chat-follow-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.chat-follow-dot.live {
+  background: var(--success);
+}
+
+.chat-tabs {
+  flex: none;
+  height: 42px;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0 4px;
+}
+
+.chat-tab {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.chat-tab:hover {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.chat-tab.active {
+  color: #fff;
+  font-weight: 600;
+}
+
+.chat-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.chat-tab em {
+  font-style: normal;
+  color: rgba(255, 255, 255, 0.36);
+  font-size: 10px;
+}
+
+.chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scroll-behavior: smooth;
+}
+
+.chat-line {
+  font-size: 12.5px;
+  line-height: 1.55;
+  word-break: break-word;
+  padding: 2px 0;
+}
+
+.chat-line .who {
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.chat-line .text {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.chat-line.system {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 11.5px;
+}
+
+.chat-line.gift {
+  color: var(--warning);
+}
+
+.chat-line.sc {
+  padding: 8px 10px;
+  margin: 4px 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(251, 114, 153, 0.2), rgba(251, 114, 153, 0.06));
+  border: 1px solid rgba(251, 114, 153, 0.25);
+}
+
+.chat-line.sc .who {
+  color: var(--accent);
+}
+
+.chat-placeholder {
+  margin: auto;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.32);
+  font-size: 12px;
+  line-height: 1.8;
+  padding: 20px;
+}
+
+.chat-placeholder .ico {
+  margin: 0 auto 10px;
+  opacity: 0.5;
+}
+
+.chat-foot {
+  flex: none;
+  padding: 9px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-input {
+  flex: 1;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 0 10px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.chat-send {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.chat-send:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.11);
+}
+
+/* ------------------------------------------------------------ 聊天设置 */
+
+.chat-settings {
+  padding: 10px 2px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 4px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 12px;
+}
+
+.chat-setting-row > span {
+  width: 62px;
+  flex: none;
+}
+
+.chat-setting-row input[type="range"] {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.chat-setting-row input[type="range"]::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  background: #fff;
+}
+
+.chat-setting-row em {
+  width: 40px;
+  flex: none;
+  text-align: right;
+  font-style: normal;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 11px;
+}
+
+.chat-setting-row .switch {
+  margin-left: auto;
+}
+
+.chat-setting-tip {
+  padding: 0 4px 8px;
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------ 底部动作栏 */
+
+.room-footer {
+  flex: none;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 14px;
+  background: #0b0b0f;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.footer-action {
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.footer-action:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.footer-action.active {
+  color: var(--accent);
+}
+
+.room-footer .footer-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.room-footer .footer-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 0 4px;
+}
+
+/* 聊天折叠后的展开按钮 */
+
+.chat-expand {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9;
+  width: 36px;
+  height: 54px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+}
+
+.chat-expand:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ------------------------------------------------------------ 响应式 */
+
+@media (max-width: 1180px) {
+  .room-chat {
+    width: 280px;
+  }
+
+  .room-top-actions .label {
+    display: none;
+  }
+
+  .room-heading h1 {
+    font-size: 14.5px;
+  }
+
+  .player-controls {
+    gap: 6px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 940px) {
+  .room-chat {
+    width: 250px;
+  }
+
+  .chat-tab {
+    font-size: 11.5px;
+  }
+
+  .footer-action span:last-child {
+    display: none;
+  }
+}
