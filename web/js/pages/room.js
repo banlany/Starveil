@@ -131,7 +131,7 @@ export function renderRoom(ctx, params = {}) {
     clockTimer: 0,
     refreshTimer: 0,
     danmakuTimer: 0,
-    laneFree: [],
+    laneItems: [],
     laneCursor: 0,
     fixedTopFree: [],
     fixedBottomFree: [],
@@ -222,7 +222,7 @@ export function renderRoom(ctx, params = {}) {
     saveSettings();
     $('ctrl-danmaku').classList.toggle('active', enabled);
     if (!enabled) layer.innerHTML = '';
-    renderChatTab();
+    if (session.tab === 'chat' || session.tab === 'sc') renderChatTab();
   }
 
   function laneCount() {
@@ -322,29 +322,43 @@ export function renderRoom(ctx, params = {}) {
     layer.appendChild(element);
     const textWidth = element.offsetWidth;
     const lanes = laneCount();
-    if (session.laneFree.length !== lanes) {
-      session.laneFree = new Array(lanes).fill(0);
+    if (session.laneItems.length !== lanes) {
+      session.laneItems = Array.from({ length: lanes }, () => []);
       session.laneCursor = 0;
     }
-    // 轮询各轨道，避免短时间连续弹幕都挤在第一条轨道。
+    const layerRect = layer.getBoundingClientRect();
+    // 用上一帧实际位置判断轨道是否安全，而不是用估算的时间：
+    // 自定义字号/速度/变速后也能避免重叠。
+    const laneSafe = (index) => {
+      const items = session.laneItems[index];
+      if (!items?.length) return true;
+      const last = items[items.length - 1];
+      if (!last.element?.isConnected) {
+        items.length = 0;
+        return true;
+      }
+      const rect = last.element.getBoundingClientRect();
+      return rect.right <= layerRect.right - 28;
+    };
     let lane = -1;
     for (let offset = 0; offset < lanes; offset++) {
       const index = (session.laneCursor + offset) % lanes;
-      if (session.laneFree[index] <= now + 30) {
+      if (laneSafe(index)) {
         lane = index;
         break;
       }
     }
-    if (lane < 0) lane = session.laneFree.indexOf(Math.min(...session.laneFree));
+    // 所有轨道都还没让出安全距离时宁可丢掉这一条，也不叠字。
+    if (lane < 0) {
+      element.remove();
+      return;
+    }
     session.laneCursor = (lane + 1) % lanes;
     const top = Math.min(lane * laneHeight, Math.max(0, stage.clientHeight * (config.area / 100) - laneHeight));
     element.style.top = `${top}px`;
     element.style.transform = `translateX(${width}px)`;
     element.style.opacity = '';
     const duration = Math.max(2.5, config.speed) * 1000;
-    const speed = (width + Math.max(textWidth, 1)) / duration;
-    // 上一条弹幕尾部离开右侧后再放同轨，至少留 280ms 间距。
-    session.laneFree[lane] = now + Math.max(280, ((textWidth + 24) / speed) * 1000);
     const animation = element.animate(
       [
         { transform: `translateX(${width}px)` },
@@ -352,11 +366,18 @@ export function renderRoom(ctx, params = {}) {
       ],
       { duration, easing: 'linear' }
     );
+    const laneEntry = { element };
+    session.laneItems[lane].push(laneEntry);
     const active = { animation, duration };
     session.activeDanmaku.add(active);
     const cleanup = () => {
       element.remove();
       session.activeDanmaku.delete(active);
+      const items = session.laneItems[lane];
+      if (items) {
+        const index = items.indexOf(laneEntry);
+        if (index >= 0) items.splice(index, 1);
+      }
     };
     animation.onfinish = cleanup;
     animation.oncancel = cleanup;
@@ -516,15 +537,45 @@ export function renderRoom(ctx, params = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'chat-settings';
     wrap.innerHTML = `
-      <div class="chat-setting-row"><span>弹幕开关</span><button class="switch" id="cs-enabled" aria-checked="${session.danmakuEnabled}"></button></div>
-      <div class="chat-setting-row"><span>不透明度</span><input type="range" id="cs-opacity" min="20" max="100" step="5" value="${config.opacity}" /><em>${config.opacity}%</em></div>
-      <div class="chat-setting-row"><span>显示行数</span><input type="range" id="cs-lines" min="1" max="24" step="1" value="${config.lines}" /><em>${config.lines}</em></div>
-      <div class="chat-setting-row"><span>显示区域</span><input type="range" id="cs-area" min="15" max="100" step="5" value="${config.area}" /><em>${config.area}%</em></div>
-      <div class="chat-setting-row"><span>字体大小</span><input type="range" id="cs-font" min="12" max="36" step="1" value="${config.font}" /><em>${config.font}px</em></div>
-      <div class="chat-setting-row"><span>滚动速度</span><input type="range" id="cs-speed" min="3" max="20" step="1" value="${config.speed}" /><em>${config.speed}s</em></div>
-      <div class="chat-setting-tip">持续时间越小，弹幕越快；调整会立即作用于屏幕上的弹幕。</div>
-      <button class="btn small primary" id="cs-more" style="margin-top:10px">打开完整弹幕设置</button>`;
+      <div class="chat-settings-group">
+        <h4>弹幕设置</h4>
+        <div class="chat-setting-row"><span>弹幕开关</span><button class="switch" id="cs-enabled" aria-checked="${session.danmakuEnabled}"></button></div>
+        <div class="chat-setting-row"><span>不透明度</span><input type="range" id="cs-opacity" min="20" max="100" step="5" value="${config.opacity}" /><em>${config.opacity}%</em></div>
+        <div class="chat-setting-row"><span>显示区域</span><input type="range" id="cs-area" min="15" max="100" step="5" value="${config.area}" /><em>${config.area}%</em></div>
+        <div class="chat-setting-row"><span>显示行数</span><input type="number" class="chat-setting-input" id="cs-lines" min="1" max="30" step="1" value="${config.lines}" /><em></em></div>
+        <div class="chat-setting-row"><span>字体大小</span><input type="number" class="chat-setting-input" id="cs-font" min="12" max="40" step="1" value="${config.font}" /><em>px</em></div>
+        <div class="chat-setting-row"><span>字体粗细</span><select class="chat-setting-select" id="cs-weight">
+          ${[[300, '极细'], [400, '很细'], [500, '正常'], [600, '小粗'], [700, '偏粗'], [800, '很粗'], [900, '极粗']].map(([value, label]) => `<option value="${value}"${Number(config.weight) === value ? ' selected' : ''}>${label}</option>`).join('')}
+        </select></div>
+        <div class="chat-setting-row"><span>滚动速度</span><input type="range" id="cs-speed" min="3" max="20" step="1" value="${config.speed}" /><em>${config.speed}s</em></div>
+        <div class="chat-setting-row"><span>弹幕描边</span><button class="switch" id="cs-stroke" aria-checked="${config.stroke}"></button></div>
+        <div class="chat-setting-row"><span>描边宽度</span><input type="number" class="chat-setting-input" id="cs-stroke-width" min="0" max="5" step="0.5" value="${config.strokeWidth}" /><em>px</em></div>
+        <div class="chat-setting-row"><span>顶部边距</span><input type="number" class="chat-setting-input" id="cs-safe-top" min="0" max="60" step="1" value="${config.safeTop}" /><em>px</em></div>
+        <div class="chat-setting-row"><span>底部边距</span><input type="number" class="chat-setting-input" id="cs-safe-bottom" min="0" max="60" step="1" value="${config.safeBottom}" /><em>px</em></div>
+      </div>
+      <div class="chat-settings-group">
+        <h4>屏蔽设置</h4>
+        <div class="chat-setting-row"><span>启用屏蔽</span><button class="switch" id="cs-block" aria-checked="${config.block}"></button></div>
+        <label class="chat-setting-field"><span>关键词屏蔽</span><textarea class="chat-setting-textarea" id="cs-block-keywords" placeholder="每行一个关键词">${escapeHtml(config.blockKeywords || '')}</textarea></label>
+        <label class="chat-setting-field"><span>用户屏蔽</span><textarea class="chat-setting-textarea" id="cs-block-users" placeholder="每行一个用户名">${escapeHtml(config.blockUsers || '')}</textarea></label>
+        <div class="chat-setting-row"><span>重复过滤</span><button class="switch" id="cs-dedupe" aria-checked="${config.dedupe}"></button></div>
+        <div class="chat-setting-row"><span>过滤模式</span><select class="chat-setting-select" id="cs-dedupe-mode">
+          ${[['content', '按内容'], ['user', '按用户'], ['strict', '刷屏严格']].map(([value, label]) => `<option value="${value}"${config.dedupeMode === value ? ' selected' : ''}>${label}</option>`).join('')}
+        </select></div>
+        <div class="chat-setting-row"><span>过滤窗口</span><input type="number" class="chat-setting-input" id="cs-dedupe-window" min="1" max="60" step="1" value="${config.dedupeWindow}" /><em>秒</em></div>
+        <div class="chat-setting-row"><span>过滤步长</span><input type="number" class="chat-setting-input" id="cs-dedupe-step" min="1" max="10" step="1" value="${config.dedupeStep}" /><em></em></div>
+      </div>
+      <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。</div>`;
     chatList.appendChild(wrap);
+
+    const bindSwitch = (id, key) => {
+      const button = wrap.querySelector(`#${id}`);
+      button.addEventListener('click', () => {
+        const value = button.getAttribute('aria-checked') !== 'true';
+        button.setAttribute('aria-checked', String(value));
+        setConfig(key, value);
+      });
+    };
     const bindRange = (id, key, format) => {
       const input = wrap.querySelector(`#${id}`);
       const label = input.nextElementSibling;
@@ -532,32 +583,71 @@ export function renderRoom(ctx, params = {}) {
         const value = Number(input.value);
         setConfig(key, value);
         label.textContent = format(value);
-        applyDanmakuStyle();
       });
     };
-    wrap.querySelector('#cs-enabled').addEventListener('click', (event) => {
-      setDanmakuEnabled(!session.danmakuEnabled);
-      event.currentTarget.setAttribute('aria-checked', String(session.danmakuEnabled));
-    });
-    bindRange('cs-opacity', 'opacity', (value) => `${value}%`);
-    bindRange('cs-lines', 'lines', (value) => `${value}`);
-    bindRange('cs-area', 'area', (value) => `${value}%`);
-    bindRange('cs-font', 'font', (value) => `${value}px`);
-    bindRange('cs-speed', 'speed', (value) => `${value}s`);
-    wrap.querySelector('#cs-more').addEventListener('click', () => {
-      openModal({
-        title: '完整弹幕设置',
-        subtitle: '更多选项在设置 → 弹幕设置中',
-        body: '<p class="modal-text">为了不打断观看，直播间只放了常用选项。完整的屏蔽、字体、描边、重复过滤等选项可以在左侧设置页调整，修改后立即生效。</p>',
-        actions: [{ label: '知道了', kind: 'primary' }],
+    const bindNumber = (id, key, min, max) => {
+      const input = wrap.querySelector(`#${id}`);
+      input.addEventListener('change', () => {
+        let value = Number(input.value);
+        if (!Number.isFinite(value)) value = min;
+        value = Math.min(max, Math.max(min, value));
+        input.value = String(value);
+        setConfig(key, value);
       });
-    });
+    };
+    const bindSelect = (id, key, numeric = false) => {
+      const select = wrap.querySelector(`#${id}`);
+      select.addEventListener('change', () => setConfig(key, numeric ? Number(select.value) : select.value));
+    };
+    const bindTextarea = (id, key) => {
+      const area = wrap.querySelector(`#${id}`);
+      area.addEventListener('input', () => setConfig(key, area.value));
+    };
+
+    bindSwitch('cs-enabled', 'enabled');
+    bindRange('cs-opacity', 'opacity', (value) => `${value}%`);
+    bindRange('cs-area', 'area', (value) => `${value}%`);
+    bindNumber('cs-lines', 'lines', 1, 30);
+    bindNumber('cs-font', 'font', 12, 40);
+    bindSelect('cs-weight', 'weight', true);
+    bindRange('cs-speed', 'speed', (value) => `${value}s`);
+    bindSwitch('cs-stroke', 'stroke');
+    bindNumber('cs-stroke-width', 'strokeWidth', 0, 5);
+    bindNumber('cs-safe-top', 'safeTop', 0, 60);
+    bindNumber('cs-safe-bottom', 'safeBottom', 0, 60);
+    bindSwitch('cs-block', 'block');
+    bindTextarea('cs-block-keywords', 'blockKeywords');
+    bindTextarea('cs-block-users', 'blockUsers');
+    bindSwitch('cs-dedupe', 'dedupe');
+    bindSelect('cs-dedupe-mode', 'dedupeMode');
+    bindNumber('cs-dedupe-window', 'dedupeWindow', 1, 60);
+    bindNumber('cs-dedupe-step', 'dedupeStep', 1, 10);
+  }
+
+  function resetDanmakuSurface() {
+    layer.querySelectorAll('.danmaku').forEach((element) => element.remove());
+    session.activeDanmaku.clear();
+    session.laneItems = [];
+    session.fixedTopFree = [];
+    session.fixedBottomFree = [];
   }
 
   function setConfig(key, value) {
     state.settings.danmaku[key] = value;
+    if (key === 'enabled') {
+      session.danmakuEnabled = Boolean(value);
+      $('ctrl-danmaku').classList.toggle('active', session.danmakuEnabled);
+      if (!session.danmakuEnabled) layer.innerHTML = '';
+    }
     saveSettings();
     if (key === 'speed') retimeDanmaku(value);
+    // 字号/行数/区域变化后旧弹幕的 top 已经失效，清屏重新排轨，避免和新轨道叠字。
+    if (['lines', 'font', 'area', 'safeTop', 'safeBottom'].includes(key)) {
+      resetDanmakuSurface();
+    }
+    if (['opacity', 'lines', 'area', 'font', 'weight', 'stroke', 'strokeWidth', 'safeTop', 'safeBottom'].includes(key)) {
+      applyDanmakuStyle();
+    }
   }
 
   function setChatTab(tab) {

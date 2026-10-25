@@ -890,7 +890,73 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 10px 2px 20px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+}
+
+.chat-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 9px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.chat-settings-group h4 {
+  margin: 3px 4px 6px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.chat-setting-input {
+  width: 62px;
+  height: 26px;
+  flex: none;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  text-align: center;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.chat-setting-select {
+  flex: 1;
+  height: 28px;
+  min-width: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #1a1a22;
+  color: #eee;
+  font-size: 11.5px;
+  padding: 0 6px;
+  outline: none;
+}
+
+.chat-setting-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 12px;
+}
+
+.chat-setting-textarea {
+  width: 100%;
+  min-height: 62px;
+  resize: vertical;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.055);
+  color: #eee;
+  padding: 7px 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  outline: none;
 }
 
 .chat-setting-row {
