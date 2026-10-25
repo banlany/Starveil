@@ -272,10 +272,11 @@ export function renderRoom(ctx, params = {}) {
 
   function scheduleDanmakuDrain() {
     if (session.queueTimer || session.destroyed) return;
+    // 少量随机抖动，避免同一时刻多条弹幕同时挤进不同轨道。
     session.queueTimer = setTimeout(() => {
       session.queueTimer = 0;
       drainDanmakuQueue();
-    }, 120);
+    }, 100 + Math.floor(Math.random() * 80));
   }
 
   function drainDanmakuQueue() {
@@ -387,11 +388,17 @@ export function renderRoom(ctx, params = {}) {
         }
       }
     } else {
-      for (let offset = 0; offset < lanes; offset++) {
-        const index = (session.laneCursor + offset) % lanes;
-        if (laneSafe(index)) {
+      // 高密度时选“最空闲”的轨道：上一尾弹幕离右侧越远，可插入空间越大。
+      let bestClearance = -Infinity;
+      for (let index = 0; index < lanes; index++) {
+        if (!laneSafe(index)) continue;
+        const items = session.laneItems[index];
+        const clearance = items.length
+          ? layerRect.right - items[items.length - 1].element.getBoundingClientRect().right
+          : Number.POSITIVE_INFINITY;
+        if (clearance > bestClearance) {
+          bestClearance = clearance;
           lane = index;
-          break;
         }
       }
     }

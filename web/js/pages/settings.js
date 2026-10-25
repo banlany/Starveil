@@ -687,7 +687,7 @@ function paintAbout(content, ctx) {
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
     <h2>星幕直播</h2>
     <p>Starveil · 聚合直播桌面客户端 · Tauri 2 + WebView2</p>
-    <span class="about-version">0.3.6</span>
+    <span class="about-version">0.3.7</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
       <div class="setting-row"><div class="setting-info"><div class="setting-title">播放</div><div class="setting-desc">mpegts.js · FLV over MSE</div></div></div>
