@@ -311,12 +311,9 @@ fn bilibili_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
             bilibili_parse_json(&String::from_utf8_lossy(&decoded), tx);
         }
         3 => {
-            if let Some(popularity) = body
-                .get(0..4)
-                .map(|slice| u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
-            {
-                let _ = tx.send(DanmakuMessage::system(format!("人气 {popularity}")));
-            }
+            // operation=3 是心跳应答（body 前 4 字节是人气值）。
+            // 这里只用来确认连接还在，不再往聊天区塞「人气 N」系统消息：
+            // 直播间头部已经显示平台给的观众/大航海数据，重复推送只会刷屏。
         }
         _ => {}
     }

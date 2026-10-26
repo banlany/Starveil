@@ -134,6 +134,7 @@ pub fn parse_detail(value: &Value, fallback_room_id: &str) -> Result<LiveRoomDet
         online: u64_of(room, "room_biz_all.hot"),
         // 斗鱼的热度不是人数，且没有稳定的开播时间字段，交给界面回退。
         viewers: 0,
+        guard_count: 0,
         live_start_time: u64_of(room, "show_time"),
         live,
         area,

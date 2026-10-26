@@ -82,6 +82,9 @@ pub struct LiveRoomDetail {
     /// 在线观看人数（B 站「看过」人数）；拿不到时为 0，界面回退显示人气。
     #[serde(default)]
     pub viewers: u64,
+    /// 大航海（舰长）人数；目前只有 B 站提供，其它平台为 0。
+    #[serde(default)]
+    pub guard_count: u64,
     /// 本场开播时间（Unix 秒）；0 表示未知，界面回退到本地观看时长。
     #[serde(default)]
     pub live_start_time: u64,

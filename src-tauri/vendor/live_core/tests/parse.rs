@@ -47,6 +47,9 @@ fn b站房间信息字段完整() {
     assert!(detail.live, "fixture 抓的是开播中的房间");
     assert!(!detail.intro.contains('<'), "简介里的 HTML 要被剥掉");
     assert_eq!(detail.url, "https://live.bilibili.com/21452505");
+    assert_eq!(detail.viewers, 12745, "watched_show.num 是「看过」人数");
+    assert_eq!(detail.guard_count, 36, "guard_info.count 是大航海人数");
+    assert_eq!(detail.live_start_time, 1756156800, "live_start_time 是本场开播时间");
     match detail.extra {
         RoomExtra::Bilibili {
             buvid3, buvid4, ..

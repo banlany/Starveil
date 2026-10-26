@@ -71,7 +71,10 @@ pub fn parse_detail(
         avatar: absolute(&text(data, "anchor_info.base_info.face").unwrap_or_default()),
         cover: absolute(&text(data, "room_info.cover").unwrap_or_default()),
         online: u64_of(data, "room_info.online"),
-        viewers: u64_of(data, "room_info.watched_show.num"),
+        // 「看过人数」在 getInfoByRoom 里挂在 data 顶层，
+        // 老接口 room/v1/Room/get_info 则挂在 room_info 下，两处都认一下。
+        viewers: u64_of(data, "watched_show.num").max(u64_of(data, "room_info.watched_show.num")),
+        guard_count: u64_of(data, "guard_info.count"),
         live_start_time: u64_of(data, "room_info.live_start_time"),
         live: u32_of(data, "room_info.live_status") == 1,
         area: text(data, "room_info.area_name").filter(|value| !value.is_empty()),
