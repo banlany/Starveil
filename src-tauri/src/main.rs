@@ -1813,6 +1813,22 @@ fn main() {
                 Ok(()) => log_line("托盘创建成功"),
                 Err(error) => log_line(&format!("托盘创建失败：{error}")),
             }
+            // ---- 以下为调试代码，只在 dev 分支保留；main 分支不带这些探针 ----
+            // debug 构建：等窗口就绪后自动打开 DevTools（release 不带）。
+            #[cfg(debug_assertions)]
+            {
+                let dev = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    match dev.get_webview_window("main") {
+                        Some(window) => {
+                            window.open_devtools();
+                            log_line("已尝试打开 DevTools");
+                        }
+                        None => log_line("打开 DevTools 失败：找不到 main 窗口"),
+                    }
+                });
+            }
             // 启动后记录一次 webview 的真实状态，便于排查窗口空白之类的问题。
             let probe = handle.clone();
             std::thread::spawn(move || {
@@ -1824,10 +1840,21 @@ fn main() {
                             window.is_visible(),
                             window.url()
                         ));
+                        // 用最底层通道，绕开 __TAURI__ 是否存在的影响。
+                        let script = "window.__TAURI_INTERNALS__.invoke('frontend_log', { message: \
+                            'PROBE href=' + location.href + ' ready=' + document.readyState \
+                            + ' bodyLen=' + (document.body ? document.body.innerHTML.length : -1) \
+                            + ' scripts=' + document.scripts.length \
+                            + ' hasTauri=' + (window.__TAURI__ ? 1 : 0) })";
+                        match window.eval(script) {
+                            Ok(()) => log_line("已注入 DOM 探针（internals）"),
+                            Err(error) => log_line(&format!("DOM 探针注入失败：{error}")),
+                        }
                     }
                     None => log_line("找不到 main 窗口"),
                 }
             });
+            // ---- 调试代码结束 ----
             Ok(())
         })
         .on_window_event(|window, event| {
