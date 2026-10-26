@@ -6,13 +6,13 @@
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE），  
 协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.4.0** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
+> 当前版本 **0.4.1** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
 
 ## 为什么做这个项目
 
-- **原版在 Windows 上有不少显示问题**：窗口控件与缩放 问题，Flutter 桌面端这些问题不好调，想验证换成 rust+gpui 能不能解决后面换成WebView。
+- **原版在 Windows 上有不少显示问题**：窗口控件与缩放问题不好调，想验证换成 WebView 能不能解决。
 - **独立的功能需求**：我有不少附加的需求，而原版的许多功能我也不需要。
 - **顺带做一次 AI 辅助开发的完整实践**，趁手上工具额度还在，把想法一次落地。
 
@@ -140,8 +140,7 @@ Starveil/
 │  └─ img/                  界面截图（README 引用，其余图片不入库）
 ├─ .github/workflows/       CI：Windows 构建 + Release（NSIS 安装包 / 免安装 zip）
 ├─ dist/                    本机构建产物（Starveil.exe 不入库）
-├─ CHANGELOG.md             更新日志
-└─ ToDo.md                  当前待办与最近一轮记录（忽略）
+└─ CHANGELOG.md             更新日志
 ```
 
 ## 运行与构建
@@ -154,6 +153,8 @@ Starveil/
 ```bash
 cd src-tauri && cargo run        # 直接跑，不需要另外起静态服务
 ```
+
+debug 构建会在窗口就绪后自动打开 DevTools；release 构建不带 DevTools。
 
 调试界面可以用 DevTools 协议（用 Edge 打开同一套前端即可，WebView2 自身的调试端口在部分环境不可用）：
 
@@ -200,13 +201,28 @@ cargo tauri build --no-bundle
 - 抖音、快手接口未移植，Tab 已预留。
 - 贡献榜 / 亲密榜的数据源不接（需求已取消）。
 - 虎牙不支持登录；斗鱼未登录时最高画质约 10 分钟过期，过期后会触发自动重取流。
-- 窗口标题栏目前用 Windows 原生样式，暂未做自绘标题栏（见 `ToDo.md`）。
+- 自绘标题栏意味着窗口没有系统边框，**失去了 Windows 原生的「贴边吸附（Aero Snap）」**。
 - 所有数据只在本机，不上传服务器。
+
+## 已知问题与排查
+
+- **窗口全黑**：部分环境下 WebView2 的浏览器主进程会在启动后 1~3 秒崩溃
+  （GPU 进程起不来 → `GPU process isn't usable. Goodbye.`），表现为一片黑。
+  根因是 Chromium 的 GPU 沙箱要给子进程创建「受限令牌 + 嵌套 Job Object」，
+  而**父进程本身已经在某个 Job 里时**（Windows 桌面 Job、部分沙箱与容器环境）就建不出来。
+  0.4.1 起会在建窗前检测当前进程是否处于 Job 中，是则自动关闭 GPU 沙箱并记住结论
+  （`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`）；沙箱正常的机器不受影响。
+  需要手动控制时：`STARVEIL_FORCE_GPU_SANDBOX=1` 强制保留，
+  `STARVEIL_DISABLE_GPU_SANDBOX=1` 强制关闭。
+- **运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、托盘、窗口地址、
+  前端初始化与 GPU 沙箱的判定结果；反馈问题时请附上这个文件。
+- **拿 Chromium 自己的日志**（排查 WebView2 问题最有效的手段）：
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging --v=1 --log-file=<路径>`。
+  该变量里的参数是**追加**到配置 `additionalBrowserArgs` 之后的，不会覆盖它。
 
 ## 文档
 
 - [CHANGELOG.md](CHANGELOG.md)：版本更新日志
-- [ToDo.md](ToDo.md)：当前待办与最近一轮的实现记录
 - [docs/reference-spec.md](docs/reference-spec.md)：原版界面逐页对照
 - [docs/img/](docs/img)：界面截图（README 引用的配图都在这里；仓库不收录其它图片）
 

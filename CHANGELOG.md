@@ -3,6 +3,26 @@
 本项目的所有版本变更记录。版本号与 `src-tauri/tauri.conf.json` 保持一致；
 更早的逐条实现细节可以用 `git log` 查看。
 
+## 0.4.1
+
+- **修复部分环境下窗口全黑**：WebView2 浏览器主进程会在启动后 1~3 秒崩溃
+  （GPU 进程起不来，`exit_code=7` 连续 6 次后浏览器主进程 FATAL 退出），表现为窗口一片黑。
+  根因是 Chromium 的 GPU 沙箱要给子进程创建「受限令牌 + 嵌套 Job Object」，
+  而**父进程本身已经在某个 Job 里时**（Windows 桌面 Job、部分沙箱与容器环境）就建不出来。
+  现在建窗前会检测当前进程是否处于 Job 中，是则自动关闭 GPU 沙箱并记住结论
+  （`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`），
+  沙箱正常的机器不受影响；可用 `STARVEIL_FORCE_GPU_SANDBOX=1` 强制保留沙箱，
+  `STARVEIL_DISABLE_GPU_SANDBOX=1` 强制关闭。
+- **补回被覆盖的默认参数**：配置里一旦写了 `additionalBrowserArgs`，wry 自带的
+  `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection` 就不再生效，
+  现在配置里写全了（含 `CalculateNativeWinOcclusion`，避免无边框窗口被系统误判为遮挡而停播）。
+- **修复窗口尺寸被存成退化值**：Windows 允许窗口拖到最小（约 39×24），
+  「记住窗口大小和位置」会把这个尺寸存下来，下次启动窗口就几乎看不见。
+  现在保存时丢弃退化值、恢复时钳到不小于 800×600。
+- 文档配图统一收进 `docs/img/`，README 的截图表格补齐为真实截图；
+  `.gitignore` 忽略 `docs/img`、`web/assets`、`src-tauri/icons` 之外的图片，
+  调试截图不再入库。
+
 ## 0.4.0
 
 - **自绘标题栏**：弃用 Windows 原生标题栏（`decorations: false`），自己画一条 38px 的标题栏——
@@ -21,14 +41,6 @@
 - 「跟随系统」图标从齿轮换成**半明半暗的圆**（原来用 `settings` 图标，和左侧「设置」几乎一样）。
 - **新增运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、托盘、窗口地址与前端初始化；
   出问题（如窗口空白）可以直接把这个文件发出来定位。
-- **新增运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、托盘、窗口地址与前端初始化；
-  出问题（如窗口空白）可以直接把这个文件发出来定位。
-
-## 未发布
-
-- 文档配图统一收进 `docs/img/`，README 的截图表格补齐为真实截图；
-  `.gitignore` 忽略 `docs/img`、`web/assets`、`src-tauri/icons` 之外的图片，
-  调试截图不再入库。
 
 ## 0.3.9
 

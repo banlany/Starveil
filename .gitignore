@@ -22,8 +22,18 @@ __pycache__/
 .venv/
 node_modules/
 
-# 辅助文件
-Todo.md
+# 个人工作笔记（不入库）
+ToDo.md
+
+# 本机排查 WebView2 显示问题时写的诊断脚本（只在本机用，不入库）
+/tools/crash_probe.py
+/tools/diag_dwm.py
+/tools/gpu_matrix2.py
+/tools/inspect_win.py
+/tools/job_check.py
+/tools/minimize_others.py
+/tools/pixel_stat.py
+/tools/shot_any.py
 
 # 图片：只保留文档配图与运行/构建必需的资源，其余一律忽略
 *.png

@@ -1489,13 +1489,6 @@ async fn bili_qr_poll(key: String) -> Result<QrPollResult, String> {
 
 // ---------------------------------------------------------------- 窗口与托盘
 
-/// WebView2 的浏览器参数：关掉后台节流，否则最小化/被遮挡后 MSE 会停住。
-const BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required \
- --disable-background-timer-throttling \
- --disable-renderer-backgrounding \
- --disable-backgrounding-occluded-windows \
- --disable-features=CalculateNativeWinOcclusion";
-
 /// WebView2 用户数据目录：放到 `%LOCALAPPDATA%\Starveil\WebView2`，
 /// 不再跟着 identifier 落在 `top.june6699.starveil\EBWebView`。
 fn webview_data_dir() -> PathBuf {
@@ -1607,6 +1600,140 @@ fn prepare_webview_data() {
     }
 }
 
+/// WebView2 的 GPU 进程沙箱在部分环境下初始化会失败：
+/// GPU 进程连续 `exit_code=7` 崩溃后，浏览器主进程会 FATAL 退出
+/// （`GPU process isn't usable. Goodbye.`），窗口最终全黑。
+///
+/// 根因（已实测确认）：Chromium 的 GPU 沙箱要给自己的子进程创建
+/// 「受限令牌 + 嵌套 Job Object」。**当父进程本身已经被放进某个 Job 时**
+/// （Windows 桌面 Job、WorkBuddy 的 sandbox-cli、CI 容器等），
+/// 嵌套 Job 的创建会被拒绝 → GPU 进程起不来。
+///
+/// 实测对照（同一台机器、同一份二进制）：
+///   - 由 explorer.exe 启动（进程在 Windows 桌面 Job 里）→ GPU 崩溃 3/3
+///   - 由 WmiPrvSE 启动（进程不在任何 Job 里）→ GPU 正常 3/3
+///
+/// 所以这里直接检测「本进程是否在 Job 中」，据此决定是否关闭 GPU 沙箱。
+/// 结果缓存进标记文件，之后的启动直接复用。
+fn gpu_sandbox_broken_marker() -> PathBuf {
+    starveil_data_dir().join("gpu-sandbox-broken.flag")
+}
+
+fn starveil_data_dir() -> PathBuf {
+    match std::env::var("LOCALAPPDATA") {
+        Ok(local) => Path::new(&local).join("Starveil"),
+        Err(_) => PathBuf::from("."),
+    }
+}
+
+/// 当前进程是否被放进了一个 Job Object。
+///
+/// Windows 上 `IsProcessInJob(NULL, ...)` 表示「查询进程所属的任意 Job」。
+/// 返回 true 就说明父进程链上有 Job，Chromium 的 GPU 沙箱很可能起不来。
+///
+/// 直接调 kernel32，不引入 `windows` crate（避免多一个依赖和版本耦合）。
+#[cfg(windows)]
+fn current_process_in_job() -> Option<bool> {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct Bool {
+        value: i32,
+    }
+
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn IsProcessInJob(
+            process: *mut c_void,
+            job: *mut c_void,
+            result: *mut Bool,
+        ) -> i32;
+    }
+
+    unsafe {
+        let mut in_job = Bool { value: 0 };
+        // 第二个参数传 NULL 表示「进程所属的任意 Job」。
+        let ok = IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job);
+        if ok == 0 {
+            return None;
+        }
+        Some(in_job.value != 0)
+    }
+}
+
+#[cfg(not(windows))]
+fn current_process_in_job() -> Option<bool> {
+    None
+}
+
+/// 按需给 WebView2 追加 `--disable-gpu-sandbox`。
+///
+/// 环境变量里的参数是**追加**到 `additionalBrowserArgs` 之后的，
+/// 所以这里不会覆盖配置里的静态参数。
+fn apply_gpu_sandbox_workaround() {
+    // 用户显式要求保留沙箱时不动。
+    if std::env::var("STARVEIL_FORCE_GPU_SANDBOX").is_ok() {
+        log_line("GPU 沙箱：按环境变量要求保持开启");
+        return;
+    }
+    // 用户显式要求关闭时直接关。
+    if std::env::var("STARVEIL_DISABLE_GPU_SANDBOX").is_ok() {
+        append_browser_args("--disable-gpu-sandbox");
+        log_line("GPU 沙箱：按环境变量要求关闭");
+        return;
+    }
+
+    let marker = gpu_sandbox_broken_marker();
+    if marker.exists() {
+        // 之前已经判定为不可用，直接沿用结论。
+        append_browser_args("--disable-gpu-sandbox");
+        log_line("GPU 沙箱：沿用上次的结论（已禁用）");
+        return;
+    }
+
+    match current_process_in_job() {
+        Some(true) => {
+            // 在 Job 里 → GPU 沙箱起不来，直接关掉。
+            let _ = std::fs::create_dir_all(starveil_data_dir());
+            let _ = std::fs::write(&marker, b"1");
+            append_browser_args("--disable-gpu-sandbox");
+            log_line("GPU 沙箱：检测到本进程处于 Job Object 中，GPU 沙箱将无法启动，已关闭");
+        }
+        Some(false) => {
+            log_line("GPU 沙箱：未处于 Job Object 中，保持开启");
+        }
+        None => {
+            log_line("GPU 沙箱：无法判定 Job 状态，先按正常启动");
+        }
+    }
+}
+
+/// 往 WebView2 的浏览器参数末尾追加一段。
+///
+/// 环境变量 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 里的参数是**追加**到
+/// `tauri.conf.json` 的 `additionalBrowserArgs` **之后**的，不会覆盖它，
+/// 所以这里用来做「运行时才决定」的参数（目前只有 GPU 沙箱降级）。
+///
+/// 顺带记一条坑：wry 源码 `webview2/mod.rs` 里默认参数是
+/// `unwrap_or_else` 提供的（`--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`），
+/// 一旦配置里显式写了 `additionalBrowserArgs`，wry 的默认就**整份失效**——
+/// 所以配置里必须自己把这三个 feature 写全。
+/// 其中 `CalculateNativeWinOcclusion` 用来关掉 Windows 原生的遮挡检测：
+/// 无边框窗口经常被系统误判为「被遮挡」而停止渲染与计时器。
+fn append_browser_args(extra: &str) {
+    let key = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+    let current = std::env::var(key).unwrap_or_default();
+    if current.split_whitespace().any(|a| a == extra) {
+        return;
+    }
+    let merged = if current.trim().is_empty() {
+        extra.to_string()
+    } else {
+        format!("{current} {extra}")
+    };
+    unsafe { std::env::set_var(key, merged) };
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出星幕直播", true, None::<&str>)?;
@@ -1662,6 +1789,8 @@ fn main() {
     log_line("==== 启动 ====");
     // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
     prepare_webview_data();
+    // GPU 沙箱探测要在建窗之前做完，否则首启就会黑屏一次。
+    apply_gpu_sandbox_workaround();
     let (proxy_port, proxy_targets) = start_proxy();
     // 在进入 async 运行时之前创建 blocking HTTP client。
     let mut cores = HashMap::new();
@@ -1684,7 +1813,7 @@ fn main() {
                 Ok(()) => log_line("托盘创建成功"),
                 Err(error) => log_line(&format!("托盘创建失败：{error}")),
             }
-            // 3 秒后记录一次 webview 的真实状态。
+            // 启动后记录一次 webview 的真实状态，便于排查窗口空白之类的问题。
             let probe = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(3));
@@ -1695,16 +1824,6 @@ fn main() {
                             window.is_visible(),
                             window.url()
                         ));
-                        // 用最底层通道，绕开 __TAURI__ 是否存在的影响。
-                        let script = "window.__TAURI_INTERNALS__.invoke('frontend_log', { message: \
-                            'PROBE href=' + location.href + ' ready=' + document.readyState \
-                            + ' bodyLen=' + (document.body ? document.body.innerHTML.length : -1) \
-                            + ' scripts=' + document.scripts.length \
-                            + ' hasTauri=' + (window.__TAURI__ ? 1 : 0) })";
-                        match window.eval(script) {
-                            Ok(()) => log_line("已注入 DOM 探针（internals）"),
-                            Err(error) => log_line(&format!("DOM 探针注入失败：{error}")),
-                        }
                     }
                     None => log_line("找不到 main 窗口"),
                 }

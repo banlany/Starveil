@@ -341,6 +341,21 @@ const WINDOW_STATE_KEY = 'starveil.window.v1';
 let windowRestoring = false;
 let windowSaveTimer = 0;
 
+// 窗口尺寸的合理下限。Windows 允许窗口被拖到最小（约 39×24），
+// 一旦把这个退化值存下来，下次启动窗口就几乎看不见了，
+// 所以保存与恢复两侧都要钳制。
+const MIN_WINDOW_WIDTH = 800;
+const MIN_WINDOW_HEIGHT = 600;
+
+function isUsableWindowSize(width, height) {
+  return (
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width >= MIN_WINDOW_WIDTH &&
+    height >= MIN_WINDOW_HEIGHT
+  );
+}
+
 async function restoreWindowState() {
   if (!state.settings.other?.rememberWindow) return;
   const tauri = window.__TAURI__?.window;
@@ -359,7 +374,10 @@ async function restoreWindowState() {
       await win.maximize();
       return;
     }
-    await win.setSize(new tauri.PhysicalSize(saved.width, saved.height));
+    // 存下来的是退化尺寸（窗口被拖到最小）时，用配置里的默认尺寸兜底。
+    const width = Math.max(MIN_WINDOW_WIDTH, Math.round(saved.width));
+    const height = Math.max(MIN_WINDOW_HEIGHT, Math.round(saved.height));
+    await win.setSize(new tauri.PhysicalSize(width, height));
     if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
       let visible = true;
       try {
@@ -367,9 +385,9 @@ async function restoreWindowState() {
         visible = monitors.some(
           (monitor) =>
             saved.x < monitor.position.x + monitor.size.width &&
-            saved.x + saved.width > monitor.position.x &&
+            saved.x + width > monitor.position.x &&
             saved.y < monitor.position.y + monitor.size.height &&
-            saved.y + saved.height > monitor.position.y
+            saved.y + height > monitor.position.y
         );
       } catch {
         visible = true;
@@ -396,6 +414,8 @@ async function saveWindowState() {
       win.innerSize(),
       win.isMaximized(),
     ]);
+    // 退化尺寸直接丢弃，别覆盖掉之前存好的正常值。
+    if (!maximized && !isUsableWindowSize(size.width, size.height)) return;
     localStorage.setItem(
       WINDOW_STATE_KEY,
       JSON.stringify({
