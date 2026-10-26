@@ -15,6 +15,7 @@ import {
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
+import { setCloseToTray } from '../titlebar.js';
 import {
   avatarHtml,
   confirmDialog,
@@ -31,7 +32,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.3.9';
+const FALLBACK_VERSION = '0.4.0';
 // 参考项目（原版 dart_simple_live 的 fork）。
 const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
 
@@ -488,6 +489,13 @@ function detailSections(key, ctx, repaint) {
         {
           label: '桌面窗口',
           rows: [
+            {
+              type: 'switch',
+              key: 'other.closeToTray',
+              title: '关闭窗口时退到托盘',
+              desc: '点关闭只隐藏窗口，直播继续播放；从托盘图标或菜单可以恢复',
+              onChange: (value) => setCloseToTray(value),
+            },
             { type: 'switch', key: 'other.rememberWindow', title: '记住窗口大小和位置', desc: '下次启动时恢复上次的窗口尺寸' },
             { type: 'switch', key: 'other.log', title: '启用日志记录', desc: '记录调试日志，便于排查播放问题' },
           ],
@@ -509,7 +517,7 @@ function detailSections(key, ctx, repaint) {
                 toast('已恢复默认设置', 'success');
               },
             },
-            { type: 'action', icon: 'info', title: '打开日志目录', desc: '查看 Tauri 运行日志', onClick: () => toast('日志目录：%LOCALAPPDATA%\\top.june6699.starveil') },
+            { type: 'action', icon: 'info', title: '打开日志目录', desc: '查看 Tauri 运行日志', onClick: () => toast('日志目录：%LOCALAPPDATA%\\Starveil') },
           ],
         },
       ];

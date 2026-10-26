@@ -20,6 +20,7 @@ import { renderFollow } from './pages/follow.js';
 import { renderSearch } from './pages/search.js';
 import { renderSettings, renderSettingsDetail } from './pages/settings.js';
 import { renderRoom } from './pages/room.js';
+import { initTitlebar } from './titlebar.js';
 
 const view = document.getElementById('view');
 const rail = document.getElementById('rail');
@@ -247,21 +248,29 @@ function initRail() {
     });
   }
   const themeButton = rail.querySelector('[data-action="theme"]');
-  themeButton.innerHTML = icon('moon', 20);
+  themeButton.innerHTML = icon(themeIcon(state.settings.appearance?.theme || 'dark'), 20);
   themeButton.addEventListener('click', () => {
     const mode = toggleTheme();
-    themeButton.innerHTML = icon(mode === 'light' ? 'sun' : mode === 'system' ? 'settings' : 'moon', 20);
+    themeButton.innerHTML = icon(themeIcon(mode), 20);
     toast(mode === 'light' ? '已切换到浅色模式' : mode === 'system' ? '已跟随系统主题' : '已切换到深色模式');
     if (state.page === 'settingsDetail') render({ keepScroll: false });
   });
   refreshThemeButton();
 }
 
+/// 主题按钮图标：浅色=太阳、深色=月亮、跟随系统=半太阳半月亮。
+/// 以前跟随系统用的是齿轮，和左侧「设置」图标太像，容易看错。
+function themeIcon(mode) {
+  if (mode === 'light') return 'sun';
+  if (mode === 'system') return 'contrast';
+  return 'moon';
+}
+
 function refreshThemeButton() {
   const button = rail.querySelector('[data-action="theme"]');
   if (!button) return;
   const mode = state.settings.appearance?.theme || 'dark';
-  button.innerHTML = icon(mode === 'light' ? 'sun' : mode === 'system' ? 'settings' : 'moon', 20);
+  button.innerHTML = icon(themeIcon(mode), 20);
   button.title = mode === 'light' ? '当前浅色，点击跟随系统' : mode === 'system' ? '当前跟随系统，点击深色' : '当前深色，点击浅色';
 }
 
@@ -424,6 +433,7 @@ function init() {
   // 禁用 WebView 默认右键菜单，避免露出浏览器菜单/刷新等开发项。
   document.addEventListener('contextmenu', (event) => event.preventDefault());
   applyTheme();
+  initTitlebar();
   document.body.dataset.density = state.settings.appearance?.density || 'comfortable';
   document.body.dataset.cardSize = state.settings.home?.cardSize || 'medium';
   state.platform = state.settings.home?.platform && isPlatformEnabled(state.settings.home.platform) ? state.settings.home.platform : 'bilibili';

@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,7 +22,9 @@ use live_core::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const BILIBILI_REFERER: &str = "https://www.bilibili.com/";
@@ -51,6 +54,8 @@ struct AppState {
     danmaku: Mutex<Option<DanmakuRuntime>>,
     proxy_port: u16,
     proxy_targets: Arc<Mutex<HashMap<String, ProxyTarget>>>,
+    /// 关闭窗口时是否退到托盘继续播放（由前端设置同步过来）。
+    resident: AtomicBool,
 }
 
 impl AppState {
@@ -1482,7 +1487,149 @@ async fn bili_qr_poll(key: String) -> Result<QrPollResult, String> {
     .map_err(|error| format!("任务执行失败：{error}"))?
 }
 
+// ---------------------------------------------------------------- 窗口与托盘
+
+/// WebView2 的浏览器参数：关掉后台节流，否则最小化/被遮挡后 MSE 会停住。
+const BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required \
+ --disable-background-timer-throttling \
+ --disable-renderer-backgrounding \
+ --disable-backgrounding-occluded-windows \
+ --disable-features=CalculateNativeWinOcclusion";
+
+/// WebView2 用户数据目录：放到 `%LOCALAPPDATA%\Starveil\WebView2`，
+/// 不再跟着 identifier 落在 `top.june6699.starveil\EBWebView`。
+fn webview_data_dir() -> PathBuf {
+    match std::env::var("LOCALAPPDATA") {
+        Ok(local) => Path::new(&local).join("Starveil").join("WebView2"),
+        // 非 Windows 或读不到 LOCALAPPDATA 时退回当前目录，保证还能起来。
+        Err(_) => PathBuf::from("starveil-webview"),
+    }
+}
+
+/// 旧版本 WebView2 的默认目录（跟着 identifier 走）。
+fn legacy_webview_dir() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|local| Path::new(&local).join("top.june6699.starveil").join("EBWebView"))
+}
+
+/// 老版本的 localStorage 留在默认目录里，首次启动时搬一次，避免设置/关注丢失。
+///
+/// 注意 WebView2 会在我们指定的目录里再建一层 `EBWebView`（profile 根），
+/// 所以落点是 `<data_dir>/EBWebView/Default/Local Storage`，少写一层就会搬错地方。
+fn migrate_webview_profile(target: &Path) {
+    let marker = target
+        .join("EBWebView")
+        .join("Default")
+        .join("Local Storage");
+    if marker.exists() {
+        return;
+    }
+    let Some(legacy) = legacy_webview_dir() else {
+        return;
+    };
+    let source = legacy.join("Default").join("Local Storage");
+    if !source.exists() {
+        return;
+    }
+    if copy_dir(&source, &marker).is_ok() {
+        println!("[starveil] 已迁移旧的 WebView 本地存储：{}", source.display());
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = to.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn show_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// 准备 WebView2 的数据目录：迁移旧 localStorage，并把目录通过环境变量交给 WebView2。
+///
+/// 这里不用 `WebviewWindowBuilder::data_directory`——实践里由 Rust 手动建窗时
+/// WebView2 环境会创建失败（窗口在但没有 webview 进程、页面空白），
+/// 而配置建窗 + `WEBVIEW2_USER_DATA_FOLDER` 这条路上表现正常。
+fn prepare_webview_data() {
+    let data_dir = webview_data_dir();
+    migrate_webview_profile(&data_dir);
+    let _ = std::fs::create_dir_all(&data_dir);
+
+    if std::env::var("STARVEIL_NO_DATADIR").is_err() {
+        // WebView2 在没有显式 user data folder 时会读这个变量。
+        unsafe { std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &data_dir) };
+    }
+}
+
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出星幕直播", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+
+    let mut builder = TrayIconBuilder::with_id("starveil")
+        .tooltip("星幕直播")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main(tray.app_handle());
+            }
+        });
+
+    // 托盘图标直接复用应用图标（icons/icon.png 已随仓库提供）。
+    if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png")) {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    Ok(())
+}
+
+/// 前端把「关闭时退到托盘」的开关同步过来。
+#[tauri::command]
+fn set_resident(enabled: bool, state: State<'_, AppState>) {
+    state.resident.store(enabled, Ordering::Relaxed);
+}
+
+/// 自绘标题栏的关闭按钮：开启后台常驻时隐藏窗口，否则直接退出。
+#[tauri::command]
+fn window_close(app: AppHandle, state: State<'_, AppState>) {
+    if state.resident.load(Ordering::Relaxed) {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    } else {
+        app.exit(0);
+    }
+}
+
 fn main() {
+    // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
+    prepare_webview_data();
     let (proxy_port, proxy_targets) = start_proxy();
     // 在进入 async 运行时之前创建 blocking HTTP client。
     let mut cores = HashMap::new();
@@ -1497,6 +1644,26 @@ fn main() {
             danmaku: Mutex::new(None),
             proxy_port,
             proxy_targets,
+            resident: AtomicBool::new(true),
+        })
+        .setup(|app| {
+            let handle = app.handle().clone();
+            setup_tray(&handle)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Alt+F4 / 任务栏关闭也走这条路：常驻时只是隐藏，不退出进程。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let resident = window
+                    .app_handle()
+                    .state::<AppState>()
+                    .resident
+                    .load(Ordering::Relaxed);
+                if resident {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             recommend,
@@ -1518,7 +1685,9 @@ fn main() {
             clear_cookie,
             login_status,
             bili_qr_generate,
-            bili_qr_poll
+            bili_qr_poll,
+            set_resident,
+            window_close
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");

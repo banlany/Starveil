@@ -123,6 +123,7 @@ export const DEFAULT_SETTINGS = {
   other: {
     rememberWindow: true,
     log: false,
+    closeToTray: true,
   },
 };
 

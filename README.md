@@ -6,7 +6,7 @@
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE），  
 协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.3.9** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
+> 当前版本 **0.4.0** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
 
@@ -46,12 +46,19 @@
 | --- | --- |
 | ![搜索](docs/img/search.png) | ![设置](docs/img/setting.png) |
 
+| 自绘标题栏（深色） | 自绘标题栏（浅色） |
+| --- | --- |
+| ![标题栏深色](docs/img/titlebar-dark.png) | ![标题栏浅色](docs/img/titlebar-light.png) |
+
 > 其余界面截图（登录、外观、弹幕参数等）见 [docs/img/](docs/img)。
 
 ## 功能
 
 **外壳与导航**
 
+- **自绘标题栏**：无边框窗口 + 自绘 38px 标题栏（图标、名称、最小化 / 最大化 / 关闭），
+  拖动区交给系统，双击最大化，四边四角自带缩放热区；颜色跟主题走，关闭按钮悬停变红。
+- **后台常驻**：关闭窗口默认只隐藏到托盘，直播继续播；托盘左键恢复，菜单可退出。
 - 左侧竖向图标栏（首页 / 关注 / 分类 / 设置）+ 顶部平台 Tab（哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手，  
   未接入的平台标「即将支持」）。
 - 深浅色主题、8 色主题色板、界面密度、首次启动免责声明、全局提示、骨架屏与错误重试。
@@ -117,22 +124,24 @@ Starveil/
 │  │  ├─ api.js             Tauri 命令封装 + 浏览器演示数据
 │  │  ├─ store.js           设置 / 关注 / 历史 / 搜索历史持久化
 │  │  ├─ danmaku.js         弹幕层：封装 fly-barrage
+│  │  ├─ titlebar.js        自绘标题栏：窗口按钮、拖拽、缩放热区、托盘开关同步
 │  │  ├─ ui.js              卡片、弹窗、菜单、空态、加载态
 │  │  ├─ icons.js           SVG 图标与平台图标
 │  │  └─ pages/             home / category / category-rooms / follow / search / settings / room
 │  ├─ assets/               平台图标、应用 logo
 │  └─ vendor/               mpegts.js、fly-barrage.js、cryptojs、qrcode
 ├─ tools/
-│  ├─ serve.py              开发用静态服务（禁用缓存）
+│  ├─ serve.py              浏览器预览用的静态服务（禁用缓存）
 │  ├─ cdp.mjs               WebView2 / Edge DevTools 调试（截图、执行 JS、读 console）
 │  ├─ shot.py               按进程截图与点击（DPI 感知）
 │  └─ make_icon.py          生成 1024 图标、ico 与 web logo
 ├─ docs/
 │  ├─ reference-spec.md     原版界面逐页记录
 │  └─ img/                  界面截图（README 引用，其余图片不入库）
+├─ .github/workflows/       CI：Windows 构建 + Release（NSIS 安装包 / 免安装 zip）
 ├─ dist/                    本机构建产物（Starveil.exe 不入库）
 ├─ CHANGELOG.md             更新日志
-└─ ToDo.md                  当前待办与最近一轮记录
+└─ ToDo.md                  当前待办与最近一轮记录（忽略）
 ```
 
 ## 运行与构建
@@ -140,21 +149,19 @@ Starveil/
 **环境要求**：Windows 10/11 x64、WebView2 运行时、Rust 1.95（`rust-toolchain.toml` 已固定）、  
 `cargo-tauri` 2.6+。
 
-**开发**（前端无构建步骤，起静态服务让 Tauri 的 `devUrl` 指向它）：
+**开发**（前端无构建步骤，资源和正式包一样直接嵌进 exe）：
 
 ```bash
-python tools/serve.py 1420 web   # 必须禁缓存，否则 WebView2 拿到 304 会白屏
-cargo tauri dev                  # 另开一个终端
+cd src-tauri && cargo run        # 直接跑，不需要另外起静态服务
 ```
 
-调试界面可以用 DevTools 协议（浏览器里打开同一个地址即可）：
+调试界面可以用 DevTools 协议（用 Edge 打开同一套前端即可，WebView2 自身的调试端口在部分环境不可用）：
 
 ```bash
-# 用 Edge 打开 http://127.0.0.1:1420 并加 --remote-debugging-port=9225
-# bash：CDP_PORT=9225 node tools/cdp.mjs shot shot.png
-# PowerShell：$env:CDP_PORT = "9225"; node tools/cdp.mjs shot shot.png
-node tools/cdp.mjs shot shot.png
-node tools/cdp.mjs eval "document.title"
+python tools/serve.py 1420 web   # 浏览器预览用，禁缓存
+# 另开 Edge 指向 http://127.0.0.1:1420/index.html?titlebar=1，并加 --remote-debugging-port=9225
+CDP_PORT=9225 node tools/cdp.mjs shot shot.png
+CDP_PORT=9225 node tools/cdp.mjs eval "document.title"
 ```
 
 **打包**：
@@ -165,7 +172,8 @@ cargo tauri build --no-bundle
 ```
 
 **数据位置**：设置、关注、观看记录与登录 Cookie 存在  
-`%LOCALAPPDATA%\top.june6699.starveil\EBWebView`；删除该目录会同时清掉设置与登录态。
+`%LOCALAPPDATA%\Starveil\WebView2`（0.4.0 起；旧版本在 `top.june6699.starveil\EBWebView`，
+首次启动会自动把 localStorage 迁过来）；删除该目录会同时清掉设置与登录态。
 
 ## 后端命令
 

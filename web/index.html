@@ -12,6 +12,46 @@
   <link rel="stylesheet" href="room.css" />
 </head>
 <body>
+  <!-- 自绘标题栏：跟随主题色，关闭按钮悬停变红；拖动区交给系统处理移动与贴边吸附 -->
+  <header class="titlebar" id="titlebar" data-tauri-drag-region>
+    <div class="titlebar-brand" data-tauri-drag-region>
+      <img class="titlebar-logo" src="assets/logo.png" alt="" draggable="false" />
+      <span class="titlebar-name" data-tauri-drag-region>星幕直播</span>
+      <span class="titlebar-badge" data-tauri-drag-region>Starveil</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="tb-min" title="最小化" aria-label="最小化">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M0 5h10" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+      </button>
+      <button class="titlebar-btn" id="tb-max" title="最大化" aria-label="最大化">
+        <svg class="ico-max" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <rect x="0.6" y="0.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+        <svg class="ico-restore" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <rect x="0.6" y="2.8" width="6.6" height="6.6" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <path d="M2.8 2.8V0.6h6.6v6.6H7.2" fill="none" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+      </button>
+      <button class="titlebar-btn titlebar-close" id="tb-close" title="关闭" aria-label="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M0.7 0.7l8.6 8.6M9.3 0.7L0.7 9.3" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 无边框窗口的缩放热区：decorations:false 会去掉 WS_THICKFRAME，四边要自己补 -->
+  <div class="resize-handle" data-direction="North"></div>
+  <div class="resize-handle" data-direction="South"></div>
+  <div class="resize-handle" data-direction="West"></div>
+  <div class="resize-handle" data-direction="East"></div>
+  <div class="resize-handle" data-direction="NorthWest"></div>
+  <div class="resize-handle" data-direction="NorthEast"></div>
+  <div class="resize-handle" data-direction="SouthWest"></div>
+  <div class="resize-handle" data-direction="SouthEast"></div>
+
   <div id="app" class="app">
     <aside class="rail" id="rail">
       <div class="rail-top">

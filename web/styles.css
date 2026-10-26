@@ -25,6 +25,7 @@
   --radius: 12px;
   --rail-width: 88px;
   --topbar-height: 64px;
+  --titlebar-height: 38px;
   --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -57,6 +58,9 @@ body {
 }
 
 body {
+  /* 标题栏 + 主体纵向排布；无边框窗口下标题栏自己占一行。 */
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font);
@@ -119,7 +123,7 @@ img {
 
 .app {
   display: flex;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   background: var(--bg);
 }
@@ -1142,4 +1146,155 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
     padding: 0 10px;
     font-size: 14px;
   }
+}
+
+/* ============================================================
+   自绘标题栏（无边框窗口）
+   ============================================================ */
+
+.no-titlebar .titlebar {
+  display: none;
+}
+
+.titlebar {
+  flex: none;
+  height: var(--titlebar-height);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+.titlebar-brand {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+}
+
+.titlebar-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+.titlebar-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.titlebar-badge {
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.titlebar-controls {
+  flex: none;
+  display: flex;
+  align-self: stretch;
+}
+
+.titlebar-btn {
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.titlebar-btn:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.titlebar-btn:active {
+  background: var(--surface-3);
+}
+
+/* 关闭按钮：悬停变红，这是 Windows 上最容易被认出来的细节 */
+.titlebar-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+.titlebar-close:active {
+  background: #f1707a;
+  color: #ffffff;
+}
+
+.ico-restore {
+  display: none;
+}
+
+body.is-maximized .ico-max {
+  display: none;
+}
+
+body.is-maximized .ico-restore {
+  display: block;
+}
+
+/* ------------------------------------------------------------ 边缘缩放热区 */
+
+.resize-handle {
+  position: fixed;
+  z-index: 9999;
+}
+
+.resize-handle[data-direction="North"],
+.resize-handle[data-direction="South"] {
+  left: 10px;
+  right: 10px;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.resize-handle[data-direction="West"],
+.resize-handle[data-direction="East"] {
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+.resize-handle[data-direction="North"] { top: 0; }
+.resize-handle[data-direction="South"] { bottom: 0; }
+.resize-handle[data-direction="West"] { left: 0; }
+.resize-handle[data-direction="East"] { right: 0; }
+
+.resize-handle[data-direction="NorthWest"],
+.resize-handle[data-direction="SouthWest"],
+.resize-handle[data-direction="NorthEast"],
+.resize-handle[data-direction="SouthEast"] {
+  width: 10px;
+  height: 10px;
+}
+
+.resize-handle[data-direction="NorthWest"] { top: 0; left: 0; cursor: nwse-resize; }
+.resize-handle[data-direction="SouthEast"] { bottom: 0; right: 0; cursor: nwse-resize; }
+.resize-handle[data-direction="NorthEast"] { top: 0; right: 0; cursor: nesw-resize; }
+.resize-handle[data-direction="SouthWest"] { bottom: 0; left: 0; cursor: nesw-resize; }
+
+/* 最大化 / 全屏时不该还能拖边 */
+body.is-maximized .resize-handle,
+body.is-fullscreen .resize-handle,
+.no-titlebar .resize-handle {
+  display: none;
 }

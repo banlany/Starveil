@@ -37,6 +37,10 @@ const PATHS = {
   sync: '<rect x="3" y="5" width="13" height="10" rx="1.5"/><path d="M8 20h8M12 15v5"/><path d="M19 8.5a3 3 0 0 1 0 6"/>',
   parse: '<path d="M10 13.5a4.5 4.5 0 0 0 6.4 0l2.5-2.5a4.5 4.5 0 0 0-6.4-6.4l-1.4 1.4"/><path d="M14 10.5a4.5 4.5 0 0 0-6.4 0L5.1 13a4.5 4.5 0 0 0 6.4 6.4l1.4-1.4"/>',
   moon: '<path d="M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5a8.6 8.6 0 1 0 10.8 10.8Z"/>',
+  // 跟随系统：左半是太阳（带三道光线），右半实心是月亮的暗面
+  // 跟随系统：右半实心的圆，一半亮一半暗（不是齿轮，避免和「设置」混淆）
+  contrast:
+    '<circle cx="12" cy="12" r="7.6"/><path fill="currentColor" stroke="none" d="M12 4.4a7.6 7.6 0 0 1 0 15.2Z"/>',
   sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.3M12 19.7V22M2 12h2.3M19.7 12H22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M19.1 4.9l-1.6 1.6M6.5 17.5l-1.6 1.6"/>',
   player: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.2v5.6l4.8-2.8-4.8-2.8Z" fill="currentColor" stroke="none"/>',
   live: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6"/><path d="M5.4 5.4a9.3 9.3 0 0 0 0 13.2M18.6 5.4a9.3 9.3 0 0 1 0 13.2"/>',

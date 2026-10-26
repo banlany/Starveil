@@ -3,6 +3,23 @@
 本项目的所有版本变更记录。版本号与 `src-tauri/tauri.conf.json` 保持一致；
 更早的逐条实现细节可以用 `git log` 查看。
 
+## 0.4.0
+
+- **自绘标题栏**：弃用 Windows 原生标题栏（`decorations: false`），自己画一条 38px 的标题栏——
+  图标 + 名称 + 最小化 / 最大化 / 关闭，拖动区交给系统（`data-tauri-drag-region`），
+  双击拖动区最大化，四边四角补了缩放热区（无边框后系统不再给 `WS_THICKFRAME`）。
+  颜色全部走主题变量，深浅色自动跟随；关闭按钮悬停变红（`#e81123`）。
+- **后台常驻**：关窗口默认只隐藏到托盘，直播继续播；托盘图标左键恢复窗口，菜单里有「显示主界面 / 退出」。
+  设置 → 其他设置里新增「关闭窗口时退到托盘」开关，关掉后关闭按钮直接退出。
+- **WebView2 数据目录迁到自己的位置**：从 `%LOCALAPPDATA%\top.june6699.starveil\EBWebView`
+  改为 `%LOCALAPPDATA%\Starveil\WebView2`；首次启动会把旧的 localStorage 自动搬过来，设置与关注不丢。
+- **最小化/被遮挡不再停播**：给 WebView2 关了后台节流（`--disable-background-timer-throttling` 等）。
+- **开发构建不再依赖本地静态服务**：去掉 `devUrl`，debug 与 release 一样直接用内嵌资源，
+  `cargo run` 就能起来界面；`tools/serve.py` 只在浏览器预览时用。
+- **GitHub Actions**：`.github/workflows/build.yml` 在 Windows runner 上构建，
+  tag 推上来时自动出 NSIS 安装包与免安装 zip 并挂到 Release。
+- 「跟随系统」图标从齿轮换成**半明半暗的圆**（原来用 `settings` 图标，和左侧「设置」几乎一样）。
+
 ## 未发布
 
 - 文档配图统一收进 `docs/img/`，README 的截图表格补齐为真实截图；

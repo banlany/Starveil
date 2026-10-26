@@ -1,0 +1,76 @@
+name: build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 前端是纯静态的 HTML/CSS/ES Modules，没有 npm 构建步骤，
+      # 只需要 Rust（版本由仓库里的 rust-toolchain.toml 指定）和系统自带的 WebView2。
+      - name: 准备 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 读取版本号
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "当前版本：$VERSION"
+
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          releaseName: "星幕直播 v__VERSION__"
+          releaseBody: |
+            聚合直播桌面客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
+
+            - 安装包：`Starveil_*_x64-setup.exe`（NSIS）
+            - 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
+            - 变更详情见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          releaseDraft: false
+          prerelease: false
+          args: --bundles nsis
+
+      # 除了安装包，再单独提供免安装版，方便不想装东西的人。
+      - name: 打包免安装版
+        shell: bash
+        run: |
+          mkdir -p portable
+          cp src-tauri/target/release/starveil.exe portable/
+          cp dist/README.txt portable/ 2>/dev/null || true
+          7z a -tzip "starveil-portable.zip" ./portable/* > /dev/null
+
+      - name: 上传免安装版到 Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          files: starveil-portable.zip
+
+      - name: 保存构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: starveil-windows-${{ steps.version.outputs.version }}
+          path: |
+            src-tauri/target/release/starveil.exe
+            starveil-portable.zip
+          if-no-files-found: warn

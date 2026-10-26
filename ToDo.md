@@ -59,13 +59,34 @@
 
 ## 待办
 
-- [ ] **自绘标题栏**：弃用 Windows 提供的原生标题栏，自行实现一条标题栏，
-      跟随浅色 / 深色主题与主题色同步，包含图标、标题、最小化 / 最大化 / 关闭与拖拽区，
-      并保留双击最大化、贴边吸附等系统习惯。需要同时处理 `decorations: false`、
-      窗口拖拽区域（`data-tauri-drag-region`）与全屏 / 最大化状态下的圆角与按钮位置。（加一些视觉设计如有鼠标移动到关闭按钮，按钮变红的高亮）
-- [ ] 后台常驻（最小化继续播放）未实现。
-- [ ] 数据存放位置改变，无需使用`%LOCALAPPDATA%\top.june6699.starveil\EBWebView`；可以改成本项目自己的地址如\starveil\。
-- [ ] 构建workflow文件，上传GitHub action
+- [x] **自绘标题栏**（0.4.0）
+  - `decorations: false` + `web/js/titlebar.js`：图标、名称、Starveil 角标、最小化 / 最大化 / 关闭。
+  - 拖动走 `data-tauri-drag-region`（系统接管移动），双击拖动区最大化；
+    无边框后系统不再给 `WS_THICKFRAME`，四边四角自己放了 `.resize-handle` 调 `startResizeDragging`。
+  - 颜色全走主题变量，深浅色与主题色自动同步；关闭按钮悬停 `#e81123`、按下更亮的红。
+  - 最大化状态由 `onResized` + `isMaximized()` 同步，按钮图标在「最大化 / 还原」间自动切换，
+    最大化与全屏时隐藏缩放热区。
+  - 兜底：`STARVEIL_DECORATED=1` 可退回系统标题栏排查。
+  - 已知取舍：无边框窗口在 Windows 上会失去系统「贴边吸附（Aero Snap）」，需要的话后续自己实现。
+- [x] 后台常驻（0.4.0）
+  - 关闭按钮走 `window_close`：常驻开启时 `hide()`，否则 `exit(0)`；`CloseRequested`（Alt+F4 / 任务栏关闭）同样处理。
+  - 托盘图标（`TrayIconBuilder`）：左键恢复窗口，菜单「显示主界面 / 退出星幕直播」。
+  - WebView2 关掉后台节流（`--disable-background-timer-throttling` 等），最小化不再停画面。
+  - 设置 → 其他设置新增「关闭窗口时退到托盘」，前端用 `set_resident` 同步给后端。
+- [x] WebView2 数据目录（0.4.0）
+  - 改为 `%LOCALAPPDATA%\Starveil\WebView2`（`WebviewWindowBuilder::data_directory`）。
+  - 首次启动把旧的 `top.june6699.starveil\EBWebView\Default\Local Storage` 复制过来，设置/关注/登录不丢。
+  - 排查开关：`STARVEIL_NO_DATADIR=1` 退回 WebView2 默认目录。
+- [x] GitHub Actions（0.4.0）
+  - `.github/workflows/build.yml`：Windows runner + Rust 1.95 + `tauri-apps/tauri-action`，
+    tag 推上来出 NSIS 安装包，并额外上传免安装 zip。
+
+## 待验证（本机条件所限，留给下一次实机确认）
+
+- [ ] 自绘标题栏在应用内的**实际观感**：本机 WebView2 窗口截不到画面，
+      目前只在 Edge 里按 20px/40px 两档看过图标与布局。
+- [ ] 关闭 → 托盘 → 左键恢复这条链，需要人手点一次确认。
+- [ ] 无边框窗口的贴边吸附确实没了，若不能接受需要自己补吸附逻辑。
 
 ## 已取消
 
@@ -73,9 +94,12 @@
 
 ## 说明
 
-- 验证提示：本机 WebView2 窗口没有重定向表面，`PrintWindow` 与屏幕 BitBlt 都只能拿到黑图，
-  验证界面请用 `tools/cdp.mjs`（浏览器 DevTools 协议）。
+- 验证提示：本机 WebView2 窗口没有重定向表面，`PrintWindow` 与屏幕 BitBlt 都只能拿到黑图；
+  WebView2 自身的 `--remote-debugging-port` 在这台机器上不监听（试过环境变量与
+  `additionalBrowserArgs` 两种方式）。界面验证请用 **Edge + CDP**：
+  `python tools/serve.py 1420 web` → Edge 打开 `http://127.0.0.1:1420/index.html?titlebar=1`
+  并加 `--remote-debugging-port=9225` → `CDP_PORT=9225 node tools/cdp.mjs shot|eval`。
+  `?titlebar=1` 是标题栏预览开关（浏览器里默认隐藏自绘标题栏）。
 - 版本号以 `src-tauri/tauri.conf.json` 为准；「关于」页运行时读 `app.getVersion()`，
-  改版本时只需改配置与 `Cargo.toml`。
+  改版本时只需改配置与 `Cargo.toml`（前端兜底常量在 `settings.js` 顶部）。
 - 更早的迭代记录见 [CHANGELOG.md](CHANGELOG.md) 与 `git log`。
-- `dist/Starveil.exe` 目前还是修复「关于」页版本号之前的构建，下次打包会一起带上（本机没有重新编译）。

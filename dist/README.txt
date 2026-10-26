@@ -15,7 +15,7 @@
 数据位置
 --------
 设置、关注、观看记录与登录 Cookie 保存在 WebView2 的应用数据目录：
-  %LOCALAPPDATA%\top.june6699.starveil\EBWebView
+  %LOCALAPPDATA%\Starveil\WebView2
 删除该目录会同时清除本机设置、记录与登录态。
 「设置 → 数据同步」可以把这些数据（含登录信息）导出成 JSON 备份，换机后导入即可恢复。
 
