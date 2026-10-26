@@ -374,6 +374,8 @@ async function demo(command, args) {
           user_name: DEMO_USERS[0],
           cover: demoCover(0),
           online: 13800000,
+          viewers: 12745,
+          guard_count: 36,
           live: true,
           area: '英雄联盟',
           intro: '演示房间',

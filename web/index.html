@@ -68,7 +68,10 @@
     <main class="main" id="main">
       <header class="topbar" id="topbar">
         <div class="platform-tabs" id="platform-tabs" role="tablist"></div>
-        <button class="icon-btn topbar-search" id="topbar-search" title="搜索" aria-label="搜索"></button>
+        <div class="topbar-actions">
+          <button class="icon-btn topbar-refresh" id="topbar-refresh" title="刷新推荐" aria-label="刷新推荐" hidden></button>
+          <button class="icon-btn topbar-search" id="topbar-search" title="搜索" aria-label="搜索"></button>
+        </div>
       </header>
       <div class="view" id="view"></div>
     </main>

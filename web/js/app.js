@@ -27,6 +27,7 @@ const rail = document.getElementById('rail');
 const topbar = document.getElementById('topbar');
 const platformTabs = document.getElementById('platform-tabs');
 const searchButton = document.getElementById('topbar-search');
+const refreshButton = document.getElementById('topbar-refresh');
 
 const PAGES = {
   home: { render: renderHome, rail: true, topbar: true, search: true, className: '' },
@@ -43,10 +44,16 @@ const backStack = [];
 // 进入直播间之前所在的一级页面，用于“从直播间返回一级界面”。
 let roomRoot = 'home';
 let roomRootParams = {};
+// 进入直播间那一刻返回栈的深度。退出直播间时把栈恢复到这个深度，
+// 而不是整个清空——清空会把“观看记录 → 直播间”这条来路也一起丢掉，
+// 于是回到观看记录后再点返回就没有上一级可退了。
+let roomStackDepth = 0;
 let cleanup = null;
 let currentKey = '';
 const scrollPositions = new Map();
 let timerHandle = 0;
+// 首页把「刷新推荐」的动作注册到这里，顶栏那个按钮只负责触发。
+let homeRefreshHandler = null;
 
 const ctx = {
   go,
@@ -61,6 +68,12 @@ const ctx = {
   isFollowing: (platform, roomId) => isFollowing(platform, roomId),
   followFromCard,
   restartTimer,
+  setHomeRefresh(handler) {
+    homeRefreshHandler = typeof handler === 'function' ? handler : null;
+  },
+  setHomeRefreshing(loading) {
+    refreshButton?.classList.toggle('is-loading', Boolean(loading));
+  },
 };
 
 function routeKey(route, params) {
@@ -86,8 +99,13 @@ function go(route, params = {}, options = {}) {
 function back() {
   const previous = backStack.pop();
   if (!previous) {
-    state.page = roomRoot && PAGES[roomRoot] ? roomRoot : 'home';
-    state.routeParams = roomRootParams || {};
+    // 栈已经空了：直播间里退出一级页面，其余情况回首页。
+    if (state.page === 'room') {
+      exitRoom();
+      return;
+    }
+    state.page = 'home';
+    state.routeParams = {};
     render();
     return;
   }
@@ -99,7 +117,11 @@ function back() {
 function exitRoom() {
   // 直播间里的返回按钮、Esc 都走这里：直接回进入直播间之前的一级页面。
   // 这样“关注栏进 A → 再进 B → 返回”不会退回到 A，而是回到列表页。
-  backStack.length = 0;
+  // 返回栈只恢复到进房间时的深度，保留更早的来路（设置 → 观看记录 → 直播间），
+  // 这样回到观看记录后还能继续往上一层退。
+  if (roomStackDepth >= 0 && roomStackDepth < backStack.length) {
+    backStack.length = roomStackDepth;
+  }
   state.page = roomRoot && PAGES[roomRoot] ? roomRoot : 'home';
   state.routeParams = roomRoot && PAGES[roomRoot] ? roomRootParams : {};
   render({ keepScroll: true });
@@ -114,6 +136,7 @@ function openRoom(platform, roomId) {
   if (state.page && state.page !== 'room') {
     roomRoot = state.page;
     roomRootParams = state.routeParams;
+    roomStackDepth = backStack.length;
   }
   state.platform = platform;
   state.settings.home.platform = platform;
@@ -183,6 +206,8 @@ function renderChrome() {
   rail.classList.toggle('is-hidden', !config.rail);
   topbar.classList.toggle('is-hidden', !config.topbar);
   searchButton.classList.toggle('is-hidden', !config.search);
+  // 刷新按钮和搜索按钮同排，只在首页出现。
+  if (refreshButton) refreshButton.hidden = state.page !== 'home';
   view.className = `view ${config.className || ''}`.trim();
   const activeRail =
     state.page === 'home' || state.page === 'categoryRooms' || state.page === 'search'
@@ -233,6 +258,10 @@ function render({ keepScroll = false } = {}) {
 
 function initRail() {
   searchButton.innerHTML = icon('search', 20);
+  if (refreshButton) {
+    refreshButton.innerHTML = icon('refresh', 19);
+    refreshButton.addEventListener('click', () => homeRefreshHandler?.());
+  }
   const icons = { home: 'home', follow: 'heart', category: 'grid', settings: 'settings' };
   for (const button of rail.querySelectorAll('.rail-btn[data-nav]')) {
     button.innerHTML = icon(icons[button.dataset.nav], 25);

@@ -14,6 +14,9 @@
   --fg: #f2f2f4;
   --muted: #9d9da7;
   --dim: #6e6e79;
+  /* 比 --muted 更弱一档的正文色：次要说明、SC 正文等。 */
+  --fg-muted: #b6b6c0;
+  --fg-subtle: #878793;
   --accent: #fb7299;
   --accent-soft: rgba(251, 114, 153, 0.16);
   --success: #57d38c;
@@ -40,6 +43,8 @@ html[data-theme="light"] {
   --fg: #1b1b21;
   --muted: #66666f;
   --dim: #96969f;
+  --fg-muted: #4c4c56;
+  --fg-subtle: #77777f;
   --switch-on: var(--accent);
   --switch-knob: #ffffff;
   --shadow: 0 18px 48px rgba(15, 20, 30, 0.16);
@@ -270,9 +275,21 @@ img {
   background: #222;
 }
 
-.topbar-search {
+.topbar-actions {
   position: absolute;
   right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 顶栏刷新按钮只在首页出现，和搜索按钮同高同排。 */
+.topbar-refresh[hidden] {
+  display: none;
+}
+
+.topbar-search {
+  position: static;
 }
 
 .topbar-search.is-hidden {
