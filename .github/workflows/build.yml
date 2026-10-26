@@ -22,7 +22,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: 安装 cargo-tauri
-        uses: taiki-e/install-action@cargo-tauri
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tauri
 
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
