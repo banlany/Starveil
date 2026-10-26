@@ -70,14 +70,41 @@ jobs:
           cp dist/README.txt portable/ 2>/dev/null || true
           7z a -tzip "starveil-portable.zip" ./portable/* > /dev/null
 
-      - name: 清理旧命名的安装包
+      - name: 创建 Release 并上传
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 早期版本用中文 productName 直接打包，资产名会变成 `_0.4.0_x64-setup.exe`。
-          # 重跑时把这种旧名字的资产删掉，免得两个安装包同时挂在 Release 上。
+          set -euo pipefail
+          VERSION=${{ steps.version.outputs.version }}
           TAG=${{ steps.version.outputs.tag }}
+          TITLE="星幕直播 v${VERSION}"
+          NOTES="$(cat <<'EOF'
+          聚合直播桌面客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
+
+          - 安装包：`Starveil_<版本>_x64-setup.exe`（NSIS）
+          - 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
+          - 变更详情见仓库的 CHANGELOG.md
+          EOF
+          )"
+
+          # 用 gh CLI 而不是 softprops/action-gh-release：
+          # GITHUB_TOKEN 没有「更新已有 Release」的权限
+          # （同一 tag 第二次发布时会报 Resource not accessible by integration），
+          # 但资产级的增删是可以的。所以 Release 已存在就只补资产，不去改它的元信息。
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TITLE" --notes "$NOTES" --target "$GITHUB_SHA" || true
+          fi
+
+          # 先传新的，再删旧的：反过来做的话，一旦上传失败就会出现
+          # 「旧的已删、新的没传上」的空档，Release 里一个安装包都不剩。
+          gh release upload "$TAG" \
+            "src-tauri/target/release/bundle/nsis/Starveil_${VERSION}_x64-setup.exe" \
+            "starveil-portable.zip" \
+            --clobber
+
+          # 早期版本用中文 productName 直接打包，资产名会变成 `_0.4.0_x64-setup.exe`。
+          # 新的传上去了，再把这种旧名字的删掉，免得两个安装包同时挂在 Release 上。
           for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true); do
             if echo "$asset" | grep -qE '^_[0-9].*_x64-setup\.exe$'; then
               echo "删除旧资产：$asset"
@@ -85,21 +112,8 @@ jobs:
             fi
           done
 
-      - name: 创建 Release 并上传
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.tag }}
-          name: 星幕直播 v${{ steps.version.outputs.version }}
-          body: |
-            聚合直播桌面客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
-
-            - 安装包：`Starveil_<版本>_x64-setup.exe`（NSIS）
-            - 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
-            - 变更详情见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
-          files: |
-            src-tauri/target/release/bundle/nsis/Starveil_${{ steps.version.outputs.version }}_x64-setup.exe
-            starveil-portable.zip
-          fail_on_unmatched_files: true
+          echo "=== Release 资产 ==="
+          gh release view "$TAG" --json assets --jq '.assets[] | "  \(.name)  \(.size) bytes"'
 
       - name: 保存构建产物
         uses: actions/upload-artifact@v4
