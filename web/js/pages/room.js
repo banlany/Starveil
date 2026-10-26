@@ -70,6 +70,7 @@ export function renderRoom(ctx, params = {}) {
         </div>
       </div>
       <aside class="room-chat" id="room-chat">
+        <div class="chat-resizer" id="chat-resizer" title="拖动调整聊天区宽度"></div>
         <div class="chat-head">
           <span id="chat-avatar"></span>
           <div class="chat-head-text">
@@ -133,9 +134,13 @@ export function renderRoom(ctx, params = {}) {
     failed: false,
     idleTimer: 0,
     clockTimer: 0,
+    statsTimer: 0,
     refreshTimer: 0,
     scMessages: [],
     scHistory: [],
+    // SC 面板的二级视图：当前正在显示 / 历史归档。
+    // 历史条目可能上百条，和当前 SC 同屏会互相挤占，所以一次只渲染一个列表。
+    scView: 'active',
     scTimers: new Map(),
     scSweep: 0,
     followRefreshing: false,
@@ -214,8 +219,8 @@ export function renderRoom(ctx, params = {}) {
 
   function initDanmaku() {
     if (danmaku || !flyBarrageAvailable()) return;
-    danmaku = createDanmakuLayer(layer, video);
-    danmaku.update(state.settings.danmaku);
+    // 初始设置直接交给渲染器，避免建好再重建一次。
+    danmaku = createDanmakuLayer(layer, video, state.settings.danmaku);
     danmaku.setEnabled(session.danmakuEnabled);
   }
 
@@ -427,13 +432,6 @@ export function renderRoom(ctx, params = {}) {
     if (pinned) chatList.scrollTop = chatList.scrollHeight;
   }
 
-  function scSectionTitle(text) {
-    const title = document.createElement('div');
-    title.className = 'sc-section-title';
-    title.textContent = text;
-    return title;
-  }
-
   function placeholder(text, iconName = 'danmaku') {
     const box = document.createElement('div');
     box.className = 'chat-placeholder';
@@ -474,6 +472,9 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function renderChatTab() {
+    // 记下滚动位置：SC 面板在「历史」视图时收到新 SC 也会整体重渲染，
+    // 不还原的话列表会每次跳回顶部。
+    const keepScroll = chatList.scrollTop;
     chatList.innerHTML = '';
     if (session.tab === 'chat') {
       if (!session.messages.length) {
@@ -485,34 +486,26 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     if (session.tab === 'sc') {
-      // 分两块：正在显示的 SC（可删除）与历史 SC（删除/过期后归档，带结束时间）。
-      if (!session.scMessages.length && !session.scHistory.length) {
-        chatList.appendChild(placeholder('当前直播还没有醒目留言（SC）', 'spark'));
-        return;
-      }
-      if (session.scMessages.length) {
-        chatList.appendChild(scSectionTitle(`正在显示 · ${session.scMessages.length}`));
-        for (const message of session.scMessages.slice().reverse()) {
-          const card = document.createElement('div');
-          card.className = 'sc-card';
-          card.dataset.end = String(message.sc.end_time ?? '');
-          const { top, bottom } = scTierColors(message.sc);
-          card.style.backgroundColor = top;
-          card.innerHTML = `
-            <div class="sc-card-head">
-              ${avatarHtml(message.user, message.sc.avatar, 32)}
-              <b>${escapeHtml(message.user || 'B 站用户')}</b>
-              <span class="sc-price">¥${Number(message.sc.price) || 0}</span>
-              <button class="sc-card-close" title="结束这条 SC">${icon('close', 13)}</button>
-            </div>
-            <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
-          card.querySelector('.sc-card-text').style.backgroundColor = bottom;
-          card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message, 'manual'));
-          chatList.appendChild(card);
+      // SC 分「正在显示 / 历史」两个视图，一次只渲染一个列表。
+      // 历史最多 200 条，和当前 SC 同屏会把当前 SC 挤到渲染不出来。
+      const nav = document.createElement('div');
+      nav.className = 'sc-view-nav';
+      nav.innerHTML = `
+        <button data-view="active" class="${session.scView === 'active' ? 'active' : ''}">正在显示 ${session.scMessages.length}</button>
+        <button data-view="history" class="${session.scView === 'history' ? 'active' : ''}">历史 ${session.scHistory.length}</button>`;
+      nav.querySelectorAll('button').forEach((button) => {
+        button.addEventListener('click', () => {
+          session.scView = button.dataset.view;
+          renderChatTab();
+        });
+      });
+      chatList.appendChild(nav);
+
+      if (session.scView === 'history') {
+        if (!session.scHistory.length) {
+          chatList.appendChild(placeholder('还没有归档的 SC', 'history'));
+          return;
         }
-      }
-      if (session.scHistory.length) {
-        chatList.appendChild(scSectionTitle(`历史 SC · ${session.scHistory.length}`));
         for (const message of session.scHistory) {
           const row = document.createElement('div');
           row.className = 'sc-history-item';
@@ -527,8 +520,34 @@ export function renderRoom(ctx, params = {}) {
             </span>`;
           chatList.appendChild(row);
         }
+        chatList.scrollTop = keepScroll;
+        return;
+      }
+
+      if (!session.scMessages.length) {
+        chatList.appendChild(placeholder('当前没有正在显示的 SC', 'spark'));
+        return;
+      }
+      for (const message of session.scMessages.slice().reverse()) {
+        const card = document.createElement('div');
+        card.className = 'sc-card';
+        card.dataset.end = String(message.sc.end_time ?? '');
+        const { top, bottom } = scTierColors(message.sc);
+        card.style.backgroundColor = top;
+        card.innerHTML = `
+          <div class="sc-card-head">
+            ${avatarHtml(message.user, message.sc.avatar, 32)}
+            <b>${escapeHtml(message.user || 'B 站用户')}</b>
+            <span class="sc-price">¥${Number(message.sc.price) || 0}</span>
+            <button class="sc-card-close" title="结束这条 SC">${icon('close', 13)}</button>
+          </div>
+          <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
+        card.querySelector('.sc-card-text').style.backgroundColor = bottom;
+        card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message, 'manual'));
+        chatList.appendChild(card);
       }
       bindImageFallback(chatList);
+      chatList.scrollTop = keepScroll;
       return;
     }
     if (session.tab === 'follow') {
@@ -687,10 +706,6 @@ export function renderRoom(ctx, params = {}) {
     if (key === 'superChatOverlay') renderScOverlay();
   }
 
-  function resetDanmakuSurface() {
-    danmaku?.clear();
-  }
-
   function setConfig(key, value) {
     state.settings.danmaku[key] = value;
     if (key === 'enabled') {
@@ -699,12 +714,10 @@ export function renderRoom(ctx, params = {}) {
       if (!session.danmakuEnabled) danmaku?.setEnabled(false);
     }
     saveSettings();
-    // 速度属于布局参数：交给 danmaku.update 走重建分支，避免库的热重排把画面清空。
-    if (key === 'speed') danmaku?.update(state.settings.danmaku);
-    // 字号/行数/区域变化后旧弹幕的 top 已经失效，清屏重新排轨，避免和新轨道叠字。
-    if (['lines', 'font', 'area', 'safeTop', 'safeBottom'].includes(key)) {
-      resetDanmakuSurface();
-    }
+    // 字号/行数/区域/速度的改动交给弹幕层：库内部会重排轨道并保留现有弹幕，
+    // 只有字号变化才需要重建（弹幕实例的宽高是创建时固定的）。
+    danmaku?.update(state.settings.danmaku);
+    // 边距变化会改变容器尺寸，弹幕层自己会感知并重排。
     if (['opacity', 'lines', 'area', 'font', 'weight', 'stroke', 'strokeWidth', 'safeTop', 'safeBottom'].includes(key)) {
       applyDanmakuStyle();
     }
@@ -726,6 +739,69 @@ export function renderRoom(ctx, params = {}) {
       page.classList.remove('ui-idle');
       renderChatTab();
     }
+  }
+
+  // ------------------------------------------------------------ 聊天栏宽度
+
+  // 聊天栏宽度可以拖左边缘调整，记住上次的选择。
+  const CHAT_WIDTH_KEY = 'starveil.chatWidth.v1';
+  const MIN_CHAT_WIDTH = 240;
+  const MAX_CHAT_WIDTH = 560;
+
+  /// 窗口变窄时聊天栏不能把视频挤没，留至少 360px 给画面。
+  function maxChatWidth() {
+    return Math.max(MIN_CHAT_WIDTH, Math.min(MAX_CHAT_WIDTH, window.innerWidth - 360));
+  }
+
+  function applyChatWidth(width) {
+    const clamped = Math.round(Math.min(maxChatWidth(), Math.max(MIN_CHAT_WIDTH, width)));
+    page.style.setProperty('--chat-width', `${clamped}px`);
+    return clamped;
+  }
+
+  function restoreChatWidth() {
+    const saved = Number(localStorage.getItem(CHAT_WIDTH_KEY));
+    if (!Number.isFinite(saved) || saved <= 0) return;
+    applyChatWidth(saved);
+  }
+
+  function setupChatResizer() {
+    const resizer = $('chat-resizer');
+    if (!resizer) return;
+    let dragging = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    const onMove = (event) => {
+      if (!dragging) return;
+      event.preventDefault();
+      // 往左拖是加宽，往右拖是变窄。
+      applyChatWidth(startWidth - (event.clientX - startX));
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      resizer.classList.remove('is-dragging');
+      document.body.classList.remove('is-resizing-chat');
+      localStorage.setItem(CHAT_WIDTH_KEY, String(Math.round(chat.getBoundingClientRect().width)));
+    };
+
+    resizer.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      dragging = true;
+      startX = event.clientX;
+      startWidth = chat.getBoundingClientRect().width;
+      resizer.classList.add('is-dragging');
+      document.body.classList.add('is-resizing-chat');
+    });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    // 离开直播间后要摘掉全局监听，否则监听会一直挂着。
+    session.resizerCleanup = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
   }
 
   // ------------------------------------------------------------ 播放器
@@ -900,7 +976,7 @@ export function renderRoom(ctx, params = {}) {
       else toast('当前没有其他线路');
     });
     hint.querySelector('#hint-browser')?.addEventListener('click', () => {
-      api.openUrl(session.detail?.url || roomUrl(session.platform, session.roomId));
+      openExternal(session.detail?.url || roomUrl(session.platform, session.roomId));
     });
     hint.querySelector('#hint-back-home')?.addEventListener('click', () => ctx.go('home'));
   }
@@ -1037,10 +1113,16 @@ export function renderRoom(ctx, params = {}) {
     $('chat-avatar').innerHTML = avatarHtml(detail.user_name, avatar, 42);
     bindImageFallback(page);
     $('chat-name').textContent = detail.user_name || '聊天';
-    // 聊天区不再显示人气（热度）；B 站有真实在线人数时单独显示人数。
+    // 聊天区第二行：平台 + 开播状态 + 观众数据。
+    // 「看过人数」是 B 站的累计观看量，不是实时在线人数，所以口径写成「看过」。
     const viewers = Number(detail.viewers) || 0;
-    const viewerText = viewers > 0 ? `<span>·</span><span class="online">${icon('users', 11)}${formatOnline(viewers)} 人在看</span>` : '';
-    $('chat-meta').innerHTML = `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>${viewerText}`;
+    const guards = Number(detail.guard_count) || 0;
+    const dataBits = [];
+    if (viewers > 0) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(viewers)} 看过</span>`);
+    if (guards > 0) dataBits.push(`<span class="guard">${icon('spark', 11)}${guards} 大航海</span>`);
+    $('chat-meta').innerHTML =
+      `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
+      (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '');
     document.title = `${detail.title || '直播间'} · 星幕直播`;
     if (cover) {
       $('stage-bg').style.backgroundImage = `url("${cover}")`;
@@ -1096,12 +1178,31 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  /// 复制文本：后端已经不再弹终端，这里补上失败提示。
+  async function copyText(text, successMessage) {
+    try {
+      await api.copyText(text);
+      toast(successMessage, 'success');
+    } catch (error) {
+      toast(`复制失败：${error}`, 'error');
+    }
+  }
+
+  /// 用默认浏览器打开链接，失败时给出提示。
+  async function openExternal(url) {
+    try {
+      await api.openUrl(url);
+    } catch (error) {
+      toast(`打开失败：${error}`, 'error');
+    }
+  }
+
   function shareRoom() {
-    api.copyText(session.detail?.url || roomUrl(session.platform, session.roomId)).then(() => toast('直播间链接已复制', 'success'));
+    copyText(session.detail?.url || roomUrl(session.platform, session.roomId), '直播间链接已复制');
   }
 
   function copyRoomLink() {
-    api.copyText(session.detail?.url || roomUrl(session.platform, session.roomId)).then(() => toast('直播间链接已复制', 'success'));
+    copyText(session.detail?.url || roomUrl(session.platform, session.roomId), '直播间链接已复制');
   }
 
   function copyStream() {
@@ -1110,19 +1211,97 @@ export function renderRoom(ctx, params = {}) {
       toast('还没有取到直播流地址');
       return;
     }
-    api.copyText(url).then(() => toast('直播流地址已复制', 'success'));
+    copyText(url, '直播流地址已复制');
   }
 
   function showMoreMenu() {
     openMenu($('room-more'), [
       { label: '刷新直播流', icon: 'refresh', onClick: () => refreshStream() },
-      { label: '在浏览器打开', icon: 'link', onClick: () => api.openUrl(session.detail?.url || roomUrl(session.platform, session.roomId)) },
+      { label: '在浏览器打开', icon: 'link', onClick: () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)) },
       { label: '复制直播流', icon: 'copy', onClick: copyStream },
       { label: '复制直播间链接', icon: 'copy', onClick: copyRoomLink },
       { separator: true },
       { label: '房间信息', icon: 'info', onClick: showRoomInfo },
-      { label: '播放统计' },
+      { label: '播放统计', icon: 'signal', onClick: showPlaybackStats },
     ]);
+  }
+
+  /// 播放统计：清晰度 / 线路 / 分辨率、缓冲与播放状态、已解码与丢帧。
+  /// 每秒刷新一次，关闭弹窗或退出直播间都会清掉定时器。
+  function showPlaybackStats() {
+    const body = document.createElement('div');
+    body.className = 'stats-body';
+    const table = document.createElement('div');
+    table.className = 'info-table';
+    body.appendChild(table);
+
+    /// 当前已缓冲到的位置比播放点靠后多少秒。
+    function bufferedAhead() {
+      let end = 0;
+      for (let index = 0; index < video.buffered.length; index += 1) {
+        if (video.buffered.start(index) <= video.currentTime && video.currentTime <= video.buffered.end(index)) {
+          end = Math.max(end, video.buffered.end(index));
+        }
+      }
+      return Math.max(0, end - video.currentTime);
+    }
+
+    function paint() {
+      const quality = session.qualities[session.qualityIndex] || '未知';
+      const lines = session.urls.length ? `线路 ${session.lineIndex + 1} / 共 ${session.urls.length} 条` : '未取到直播流';
+      const resolution = video.videoWidth && video.videoHeight ? `${video.videoWidth} × ${video.videoHeight}` : '未知';
+      const playState = video.paused
+        ? '已暂停'
+        : video.readyState >= 3
+          ? '播放中'
+          : video.readyState >= 2
+            ? '缓冲中'
+            : '等待数据';
+      const ahead = bufferedAhead();
+      const qualityInfo = typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : null;
+      const decoded = Number(qualityInfo?.totalVideoFrames) || 0;
+      const dropped = Number(qualityInfo?.droppedVideoFrames) || 0;
+      const intact = decoded > 0 ? `${(((decoded - dropped) / decoded) * 100).toFixed(2)}%` : '—';
+      // mpegts 自己的统计：decodedFrames / droppedFrames 之外还有速度之类，
+      // 字段随版本变化，这里把剩余的标量字段原样列出来。
+      const stats = session.player?.statisticsInfo || {};
+      const extra = Object.entries(stats)
+        .filter(([key, value]) => !['playerType', 'decodedFrames', 'droppedFrames'].includes(key) && typeof value !== 'object')
+        .map(([key, value]) => `<div><span>${escapeHtml(key)}</span><b>${escapeHtml(String(value))}</b></div>`)
+        .join('');
+      table.innerHTML = `
+        <div><span>清晰度</span><b>${escapeHtml(quality)}</b></div>
+        <div><span>线路</span><b>${escapeHtml(lines)}</b></div>
+        <div><span>分辨率</span><b>${escapeHtml(resolution)}</b></div>
+        <div><span>播放状态</span><b>${escapeHtml(playState)}</b></div>
+        <div><span>缓冲</span><b>${ahead.toFixed(1)} 秒</b></div>
+        <div><span>已解码帧</span><b>${decoded}</b></div>
+        <div><span>丢帧</span><b>${dropped}（完好率 ${intact}）</b></div>
+        ${extra}`;
+    }
+
+    paint();
+    clearInterval(session.statsTimer);
+    session.statsTimer = setInterval(() => {
+      if (session.destroyed) {
+        clearInterval(session.statsTimer);
+        session.statsTimer = 0;
+        return;
+      }
+      paint();
+    }, 1000);
+
+    openModal({
+      title: '播放统计',
+      subtitle: '每秒刷新',
+      width: 460,
+      body,
+      actions: [{ label: '关闭', kind: 'primary' }],
+      onClose: () => {
+        clearInterval(session.statsTimer);
+        session.statsTimer = 0;
+      },
+    });
   }
 
   function showRoomInfo() {
@@ -1176,7 +1355,7 @@ export function renderRoom(ctx, params = {}) {
       { label: '刷新直播流', icon: 'refresh', onClick: () => refreshStream() },
       { separator: true },
       { label: '复制直播流', icon: 'copy', onClick: copyStream },
-      { label: '打开网页版', icon: 'link', onClick: () => api.openUrl(session.detail?.url || roomUrl(session.platform, session.roomId)) },
+      { label: '打开网页版', icon: 'link', onClick: () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)) },
     ], { align: 'end', placement: 'top' });
   }
 
@@ -1206,6 +1385,9 @@ export function renderRoom(ctx, params = {}) {
   async function boot() {
     session.scSweep = setInterval(purgeExpiredSc, 1000);
     video.addEventListener('timeupdate', purgeExpiredSc);
+    // 恢复上次记住的聊天栏宽度，并挂上拖拽手柄。
+    restoreChatWidth();
+    setupChatResizer();
     // 拿不到开播时间时，用“本次进入房间的时间”算已观看时长，至少不是一片空白。
     session.playStartedAt = Date.now();
     initDanmaku();
@@ -1385,11 +1567,14 @@ export function renderRoom(ctx, params = {}) {
     session.destroyed = true;
     clearTimeout(session.idleTimer);
     clearInterval(session.clockTimer);
+    clearInterval(session.statsTimer);
     clearInterval(session.stallTimer);
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
     clearInterval(session.scSweep);
     danmaku?.destroy();
+    session.resizerCleanup?.();
+    session.resizerCleanup = null;
     video.removeEventListener('timeupdate', purgeExpiredSc);
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange);

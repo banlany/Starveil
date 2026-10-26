@@ -19,16 +19,21 @@ export function renderFollow(ctx) {
       <h1>关注用户</h1>
       <div class="header-right">
         <button class="icon-btn" id="follow-search" title="搜索关注">${icon('search', 19)}</button>
-        <button class="icon-btn" id="follow-filter" title="筛选">${icon('filter', 18)}</button>
         <button class="icon-btn" id="follow-view" title="切换布局">${icon('gridView', 18)}</button>
         <button class="icon-btn" id="follow-more" title="更多">${icon('more', 19)}</button>
       </div>
     </header>
     <div class="follow-toolbar">
+      <div class="follow-row follow-search-row">
+        <div class="follow-search">
+          <input id="follow-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="按主播昵称搜索关注" />
+          <button class="follow-search-go" id="follow-search-go" title="搜索">${icon('search', 17)}</button>
+        </div>
+        <span class="follow-count" id="follow-count">${follows.length} 位主播</span>
+      </div>
       <div class="follow-row">
         <span class="follow-label">标签</span>
         <div class="follow-row" id="follow-tags" style="gap:8px"></div>
-        <span class="follow-count" id="follow-count">${follows.length} 位主播</span>
       </div>
       <div class="follow-row">
         <div class="follow-mode" id="follow-mode">
@@ -43,6 +48,7 @@ export function renderFollow(ctx) {
   const tagsBox = page.querySelector('#follow-tags');
   const filtersBox = page.querySelector('#follow-filters');
   const body = page.querySelector('#follow-body');
+  const searchInput = page.querySelector('#follow-search-input');
 
   function chip(label, active, onClick, count) {
     const button = document.createElement('button');
@@ -101,6 +107,19 @@ export function renderFollow(ctx) {
         );
       }
     }
+    // 搜索条件也显示在这一行，并带一个清除入口。
+    const keyword = String(state.followFilter.keyword || '').trim();
+    if (keyword) {
+      const clear = chip(`搜索：${keyword}`, true, () => {
+        state.followFilter.keyword = '';
+        renderAll();
+      });
+      clear.classList.add('follow-search-chip');
+      // icon() 返回的是 HTML 字符串，不是 DOM 节点，
+      // 直接 appendChild 会抛 TypeError，进而让整页渲染失败。
+      clear.insertAdjacentHTML('beforeend', icon('close', 12));
+      filtersBox.appendChild(clear);
+    }
   }
 
   /// 直播中的排前面，其次按“进房次数”排，最后用最近访问时间和昵称兜底。
@@ -116,6 +135,7 @@ export function renderFollow(ctx) {
   }
 
   function filtered() {
+    const keyword = String(state.followFilter.keyword || '').trim().toLowerCase();
     return sortFollows(follows.filter((item) => {
       if (state.followFilter.tag !== 'all' && (item.tag || '默认') !== state.followFilter.tag) return false;
       if (state.followFilter.mode === 'status') {
@@ -123,6 +143,12 @@ export function renderFollow(ctx) {
         if (state.followFilter.status === 'offline' && item.live) return false;
       } else if (state.followFilter.platform !== 'all' && item.platform !== state.followFilter.platform) {
         return false;
+      }
+      // 搜索也走同一条筛选链，这样右上角计数永远等于最终结果数。
+      // 主播名、房间标题、房间号都能搜到。
+      if (keyword) {
+        const haystack = `${item.user_name || ''} ${item.title || ''} ${item.room_id || ''}`.toLowerCase();
+        if (!haystack.includes(keyword)) return false;
       }
       return true;
     }));
@@ -140,7 +166,9 @@ export function renderFollow(ctx) {
     } else if (filter.platform !== 'all') {
       label = `位 · ${PLATFORM_META[filter.platform]?.short || filter.platform}`;
     }
-    box.textContent = `${list.length} ${label}`;
+    // 有搜索条件时额外说明这是搜出来的数量。
+    const keyword = String(filter.keyword || '').trim();
+    box.textContent = keyword ? `${list.length} 位 · 搜索「${keyword}」` : `${list.length} ${label}`;
   }
 
   function renderCards() {
@@ -159,8 +187,27 @@ export function renderFollow(ctx) {
       return;
     }
     if (!list.length) {
+      // 搜索没命中要说清楚是「没搜到」，而不是笼统的「没符合条件」。
+      const keyword = String(state.followFilter.keyword || '').trim();
       body.replaceChildren(
-        emptyState({ iconName: 'filter', title: '没有符合条件的主播', text: '换一个标签或筛选条件试试。', compact: true })
+        keyword
+          ? emptyState({
+              iconName: 'search',
+              title: '没有找到匹配的主播',
+              text: `关注列表里没有包含「${keyword}」的主播，换个关键词试试，或清除搜索条件查看全部。`,
+              actionLabel: '清除搜索条件',
+              onAction: () => {
+                state.followFilter.keyword = '';
+                renderAll();
+              },
+              compact: true,
+            })
+          : emptyState({
+              iconName: 'filter',
+              title: '没有符合条件的主播',
+              text: '换一个标签或筛选条件试试。',
+              compact: true,
+            })
       );
       return;
     }
@@ -250,34 +297,26 @@ export function renderFollow(ctx) {
   });
   page.querySelector('#follow-view').innerHTML = icon(state.followView === 'grid' ? 'gridView' : 'list', 18);
 
-  page.querySelector('#follow-search').addEventListener('click', async () => {
-    const keyword = await promptDialog({ title: '搜索关注', text: '按主播昵称筛选当前关注列表。', placeholder: '输入昵称' });
-    if (!keyword) return;
-    const list = follows.filter((item) => (item.user_name || '').toLowerCase().includes(keyword.toLowerCase()));
-    body.replaceChildren(
-      list.length
-        ? (() => {
-            const grid = document.createElement('div');
-            grid.className = 'follow-grid';
-            for (const item of list) {
-              const card = document.createElement('article');
-              card.className = 'follow-card';
-              card.innerHTML = `${avatarHtml(item.user_name, item.avatar || item.cover, 62)}<div class="follow-name">${escapeHtml(item.user_name)}</div><div class="follow-meta">${escapeHtml(item.tag || '默认')}</div>`;
-              card.addEventListener('click', () => ctx.openRoom(item.platform, item.room_id));
-              grid.appendChild(card);
-            }
-            return grid;
-          })()
-        : emptyState({ iconName: 'search', title: '没有找到', text: `关注列表里没有包含「${keyword}」的主播。`, compact: true })
-    );
-  });
+  /// 执行一次搜索：把输入框内容写进筛选条件，重新渲染列表，然后清空输入框。
+  /// 输入框是一次性入口，所以搜完就清空——下次直接输新词，不用先把上一次的删掉。
+  function submitSearch() {
+    const keyword = String(searchInput.value || '').trim();
+    state.followFilter.keyword = keyword;
+    searchInput.value = '';
+    renderAll();
+  }
 
-  page.querySelector('#follow-filter').addEventListener('click', (event) => {
-    openMenu(event.currentTarget, [
-      { label: '全部', active: state.followFilter.status === 'all', onClick: () => { state.followFilter.status = 'all'; renderAll(); } },
-      { label: '只看直播中', active: state.followFilter.status === 'live', onClick: () => { state.followFilter.status = 'live'; renderAll(); } },
-      { label: '只看未开播', active: state.followFilter.status === 'offline', onClick: () => { state.followFilter.status = 'offline'; renderAll(); } },
-    ]);
+  page.querySelector('#follow-search-go').addEventListener('click', submitSearch);
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitSearch();
+    }
+  });
+  // 右上角的搜索图标只是把焦点送到输入框，避免再弹一层对话框。
+  page.querySelector('#follow-search').addEventListener('click', () => {
+    searchInput.focus();
+    searchInput.select();
   });
 
   page.querySelector('#follow-more').addEventListener('click', (event) => {

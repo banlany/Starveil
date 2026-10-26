@@ -13,7 +13,16 @@
       "area_id": 236,
       "area_name": "主机游戏",
       "parent_area_id": 6,
-      "parent_area_name": "单机游戏"
+      "parent_area_name": "单机游戏",
+      "live_start_time": 1756156800
+    },
+    "watched_show": {
+      "num": 12745,
+      "text_small": "1.2万",
+      "text_large": "1.2万"
+    },
+    "guard_info": {
+      "count": 36
     },
     "anchor_info": {
       "base_info": {

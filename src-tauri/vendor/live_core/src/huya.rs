@@ -161,6 +161,7 @@ pub fn parse_detail(
         online: u64_of(live_info, "lTotalCount"),
         // 虎牙的 lTotalCount 是热度；开播时间用 lLiveTime（部分房间不下发）。
         viewers: 0,
+        guard_count: 0,
         live_start_time: u64_of(root, "roomInfo.tLiveInfo.lLiveTime"),
         live: u32_of(root, "roomInfo.eLiveStatus") == 2,
         area: text(live_info, "sGameFullName").filter(|value| !value.trim().is_empty()),

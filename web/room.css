@@ -516,7 +516,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* ------------------------------------------------------------ 聊天面板 */
 
 .room-chat {
-  width: 316px;
+  width: var(--chat-width, 316px);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -524,6 +524,43 @@ input[type="range"]::-webkit-slider-thumb {
   background: #101015;
   border-left: 1px solid rgba(255, 255, 255, 0.06);
   transition: width 0.2s ease, opacity 0.2s ease;
+  position: relative;
+}
+
+/* 聊天栏左边的拖拽把手：叠在边框上，不占布局宽度。 */
+.chat-resizer {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 7;
+}
+
+.chat-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.chat-resizer:hover::after,
+.chat-resizer.is-dragging::after {
+  background: var(--accent);
+}
+
+/* 拖动时不要选中文字，也不要触发 iframe 之外的默认行为。 */
+body.is-resizing-chat {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* 拖动过程中关掉宽度过渡，否则会跟手粘滞。 */
+body.is-resizing-chat .room-chat {
+  transition: none;
 }
 
 .room-chat.hidden {
@@ -560,6 +597,35 @@ input[type="range"]::-webkit-slider-thumb {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 聊天区第二行右边的观众数据：看过人数、大航海数量。 */
+.chat-head-data {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+
+.chat-head-data .online {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+}
+
+.chat-head-data .guard {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--warning);
+}
+
+.chat-head-data .sep {
+  opacity: 0.6;
 }
 
 .chat-head-meta {
@@ -628,6 +694,38 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--fg-subtle);
 }
 
+/* SC 面板的二级视图：一次只渲染「正在显示」或「历史」其中一个列表。 */
+.sc-view-nav {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  background: var(--bg-elev);
+}
+
+.sc-view-nav button {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface);
+  transition: all 0.15s ease;
+}
+
+.sc-view-nav button:hover {
+  color: var(--fg);
+}
+
+.sc-view-nav button.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .sc-history-item {
   display: flex;
   align-items: flex-start;
@@ -656,14 +754,13 @@ input[type="range"]::-webkit-slider-thumb {
   flex-wrap: wrap;
 }
 
+/* 历史 SC 的用户名不再截断：B 站 SC 本身有字数上限，完整显示更实用。 */
 .sc-history-main b {
   flex: none;
-  max-width: 40%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
   color: var(--fg-muted);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .sc-history-main em {
@@ -674,12 +771,12 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 11px;
 }
 
+/* 历史 SC 正文完整换行，不再单行省略。 */
 .sc-history-text {
   flex: 1 1 100%;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--fg-subtle);
 }
 
@@ -1435,7 +1532,7 @@ html[data-theme="light"] .sc-delete {
 
 @media (max-width: 1180px) {
   .room-chat {
-    width: 280px;
+    width: var(--chat-width, 280px);
   }
 
   .room-top-actions .label {
@@ -1454,7 +1551,7 @@ html[data-theme="light"] .sc-delete {
 
 @media (max-width: 940px) {
   .room-chat {
-    width: 250px;
+    width: var(--chat-width, 250px);
   }
 
   .chat-tab {

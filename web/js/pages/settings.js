@@ -32,7 +32,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.4.0';
+const FALLBACK_VERSION = '0.4.2';
 // 参考项目（原版 dart_simple_live 的 fork）。
 const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
 

@@ -2,6 +2,9 @@
 /src-tauri/target/
 /src-tauri/gen/
 /src-tauri/vendor/live_core/target/
+# live_core 是被 src-tauri 依赖的子 crate，依赖版本由上层 Cargo.lock 锁定，
+# 子 crate 自己的 lock 文件不入库。
+/src-tauri/vendor/live_core/Cargo.lock
 **/*.rs.bk
 *.pdb
 *.log
@@ -34,6 +37,7 @@ ToDo.md
 /tools/minimize_others.py
 /tools/pixel_stat.py
 /tools/shot_any.py
+/tools/type_text.py
 
 # 图片：只保留文档配图与运行/构建必需的资源，其余一律忽略
 *.png

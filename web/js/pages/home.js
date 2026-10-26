@@ -15,13 +15,11 @@ export function renderHome(ctx) {
       <span class="dot-live">${PLATFORM_META[state.platform]?.name || ''} 热门直播</span>
       <span class="home-status-actions">
         <span class="sort">${icon('flame', 13)}<span>按人气排序</span></span>
-        <button class="home-refresh" id="home-refresh" title="刷新推荐">${icon('refresh', 14)}<span>刷新</span></button>
       </span>
     </div>
     <div class="page-pad" id="home-body"></div>`;
   const body = page.querySelector('#home-body');
   const view = document.getElementById('view');
-  const refreshButton = page.querySelector('#home-refresh');
 
   let grid = null;
   let skeleton = null;
@@ -139,16 +137,20 @@ export function renderHome(ctx) {
     }
   }
 
-  refreshButton.addEventListener('click', () => {
+  // 「刷新推荐」按钮放在顶栏，和搜索按钮同一排。
+  // 页面本身只提供动作，按钮本身由 app.js 统一管理。
+  ctx.setHomeRefresh(() => {
     if (state.home.loading) return;
-    refreshButton.classList.add('is-loading');
+    ctx.setHomeRefreshing(true);
     view.scrollTop = 0;
-    load(true).finally(() => refreshButton.classList.remove('is-loading'));
+    load(true).finally(() => ctx.setHomeRefreshing(false));
   });
 
   view.appendChild(page);
 
   // 不在滚动过程中自动追加：B 站封面解码 + DOM 插入会让滚动明显掉帧。
   // 需要更多内容时点底部的「加载更多」，把网络和渲染放到用户主动操作之后。
-  return () => {};
+  return () => {
+    ctx.setHomeRefresh(null);
+  };
 }

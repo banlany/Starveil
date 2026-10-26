@@ -138,7 +138,9 @@ export const state = {
   categoryRooms: { items: [], page: 0, loading: false, done: false, title: '', parentId: '', subId: '', error: '' },
   search: { keyword: '', mode: 'room', results: [], anchors: [], loading: false, error: '', recent: loadSearch() },
   room: null,
-  followFilter: { mode: 'status', status: 'all', platform: 'all', tag: 'all' },
+  // followFilter 统一描述关注页的全部筛选条件：
+  // 标签 + 状态/平台 + 搜索关键词。右上角计数永远等于这三条同时生效后的结果数。
+  followFilter: { mode: 'status', status: 'all', platform: 'all', tag: 'all', keyword: '' },
   followView: 'grid',
   history: loadHistory(),
   settings: loadSettings(),

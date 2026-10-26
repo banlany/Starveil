@@ -7,6 +7,9 @@
 //    超过阈值时同样走 `reset()`，代价只是清空当前屏上的弹幕。
 // 3. 库没有“满轨排队”，这里保留一个轻量发送队列做限速，
 //    避免瞬时爆发的一批弹幕被轨道算法整批丢弃。
+// 4. **尺寸变化不重建渲染器**：进出全屏、窗口缩放、聊天栏收起都只走库自己的
+//    `resize()` + `setRenderConfig()`，弹幕实例、待发队列和计数全部保留。
+//    早期版本这里直接 `rebuild()`，结果每切一次全屏弹幕就「重新加载」一次。
 
 const RENDERER_KEY = 'FlyBarrage';
 const MAX_STORED = 1500;
@@ -24,8 +27,9 @@ export function flyBarrageAvailable() {
  * 创建一个弹幕层。
  * @param {HTMLElement} container 弹幕容器（.danmaku-layer）
  * @param {HTMLVideoElement} video 播放器元素，仅用于读取播放进度
+ * @param {object} config 初始弹幕设置，避免建好再重建一次
  */
-export function createDanmakuLayer(container, video) {
+export function createDanmakuLayer(container, video, config = null) {
   const host = document.createElement('div');
   host.className = 'danmaku-canvas-host';
   container.appendChild(host);
@@ -45,13 +49,15 @@ export function createDanmakuLayer(container, video) {
   };
   const session = {
     renderer: null,
-    config: null,
+    config: config ? { ...config } : null,
     queue: [],
     queueTimer: 0,
     sent: 0,
     lastSendAt: 0,
     destroyed: false,
     observer: null,
+    resizeHandle: 0,
+    enabled: true,
     width: 0,
     height: 0,
   };
@@ -69,8 +75,6 @@ export function createDanmakuLayer(container, video) {
 
   function build() {
     if (!Renderer) return;
-    // fly-barrage 内部的热重排（resize / 改布局参数）会把“可渲染集合”清空导致黑屏，
-    // 所以尺寸或布局参数变化时直接重建渲染器，而不是调用它的 resize()/setRenderConfig()。
     session.renderer = new Renderer({
       container: host,
       video: clockSource,
@@ -78,7 +82,9 @@ export function createDanmakuLayer(container, video) {
     });
     session.sent = 0;
     primeTracks();
-    session.renderer.play();
+    // 弹幕关闭状态下建渲染器不要自己开播，否则会出现「关掉了还在刷」。
+    if (session.enabled) session.renderer.play();
+    else session.renderer.switch(false);
   }
 
   /// 库的 send() 依赖虚拟轨道已经建好（要读 virtualTrack.top），
@@ -97,6 +103,8 @@ export function createDanmakuLayer(container, video) {
     }
   }
 
+  /// 整体重建渲染器。只在两种情况下用：
+  /// 直播流重连（时间轴归零）、字号变化（每条弹幕实例的宽高是创建时固定的）。
   function rebuild() {
     if (session.destroyed || !Renderer) return;
     session.queue.length = 0;
@@ -146,8 +154,81 @@ export function createDanmakuLayer(container, video) {
     session.height = host.clientHeight;
   }
 
-  function applyConfig() {
-    session.renderer?.setRenderConfig(buildRenderConfig());
+  /// 把当前设置同步给渲染器。
+  /// 只在真正影响渲染的字段变化时才调用，否则库会做一次没必要的重排。
+  function syncRenderConfig() {
+    const renderer = session.renderer;
+    if (!renderer) return;
+    const next = buildRenderConfig();
+    const current = renderer.renderConfig || {};
+    const keys = [
+      'speed',
+      'renderRegion',
+      'opacity',
+      'fontFamily',
+      'fontWeight',
+      'strokeStyle',
+      'lineWidth',
+      'shadowColor',
+      'shadowBlur',
+      'avoidOverlap',
+      'minSpace',
+    ];
+    if (!keys.some((key) => next[key] !== current[key])) return;
+    try {
+      // 库内部会按变化的字段决定要不要重排轨道，弹幕实例始终保留。
+      renderer.setRenderConfig(next);
+    } catch (error) {
+      console.warn('弹幕渲染配置同步失败', error);
+    }
+  }
+
+  /// 重排之后确认「可渲染集合」没有异常清空。
+  /// 集合空了的表现是画面突然一片空白；这里发现为空就再排一次轨道。
+  function ensureLayout() {
+    const calculate = session.renderer?.barrageLayoutCalculate;
+    if (!calculate) return;
+    const instances = calculate.scrollBarrageInstances || [];
+    if (!instances.length) return;
+    if ((calculate.canShowScrollBarrageInstances || []).length) return;
+    try {
+      const algorithm = calculate.virtualTrackAlgorithm;
+      algorithm.resetTracks();
+      algorithm.layoutScrollBarrages(instances);
+    } catch (error) {
+      console.warn('弹幕轨道重排失败', error);
+    }
+  }
+
+  /// 尺寸变了：交给库自己重排，弹幕实例与队列都留着。
+  function applyResize() {
+    if (session.destroyed || !session.renderer) return;
+    const width = host.clientWidth;
+    const height = host.clientHeight;
+    if (!width || !height) return;
+    if (width === session.width && height === session.height) return;
+    session.width = width;
+    session.height = height;
+    try {
+      // 库自带的尺寸重排：重算画布、轨道和弹幕落点，实例保留。
+      session.renderer.resize();
+    } catch (error) {
+      console.warn('弹幕尺寸重排失败', error);
+    }
+    // 区域比例和滚动速度都跟尺寸有关，重排后同步一次渲染配置。
+    syncRenderConfig();
+    ensureLayout();
+    // 尺寸变化不应该停掉动画，但保险起见确认渲染循环还在跑。
+    if (session.enabled && !session.renderer.animationHandle) session.renderer.play();
+  }
+
+  /// 全屏动画期间尺寸事件是连续触发的，用 rAF 合并成一次重排。
+  function scheduleResize() {
+    if (session.resizeHandle || session.destroyed) return;
+    session.resizeHandle = requestAnimationFrame(() => {
+      session.resizeHandle = 0;
+      applyResize();
+    });
   }
 
   function scheduleDrain() {
@@ -207,18 +288,12 @@ export function createDanmakuLayer(container, video) {
   }
 
   // 尺寸变化（进出全屏、窗口缩放、聊天栏收起）后要让库重新计算画布与轨道。
-  session.observer = new ResizeObserver(() => {
-    const width = host.clientWidth;
-    const height = host.clientHeight;
-    if (!width || !height) return;
-    if (width === session.width && height === session.height) return;
-    rebuild();
-  });
+  session.observer = new ResizeObserver(scheduleResize);
   session.observer.observe(host);
 
-  build();
   measure();
-  applyConfig();
+  build();
+  syncRenderConfig();
 
   video.addEventListener('play', () => session.renderer?.play());
   video.addEventListener('pause', () => session.renderer?.pause());
@@ -241,29 +316,19 @@ export function createDanmakuLayer(container, video) {
 
   return {
     /** 应用新的弹幕设置（字号/速度/区域/行数/不透明度/描边等） */
-    update(config, options = {}) {
+    update(config) {
       const previous = session.config;
       session.config = config;
       if (!session.renderer) return;
-      if (options.relayout === false) {
-        // 只改了不透明度/描边这类不影响排版的参数。
-        if (!(previous && previous.font === config.font && previous.lines === config.lines && previous.area === config.area)) {
-          rebuild();
-          return;
-        }
-        applyConfig();
+      // 字号变了只能重建：每条弹幕实例的宽高在创建时就固定了，
+      // 不重建的话新旧弹幕会按不同字号排轨道。
+      if (!previous || previous.font !== config.font) {
+        rebuild();
         return;
       }
-      const layoutChanged =
-        !previous ||
-        previous.font !== config.font ||
-        previous.lines !== config.lines ||
-        previous.area !== config.area ||
-        previous.speed !== config.speed ||
-        previous.safeTop !== config.safeTop ||
-        previous.safeBottom !== config.safeBottom;
-      if (layoutChanged) rebuild();
-      else applyConfig();
+      // 行数/区域/速度只影响渲染配置，库内部重排轨道并保留现有弹幕实例。
+      syncRenderConfig();
+      ensureLayout();
     },
     /** 立刻显示一条弹幕；超出发送速率时先入队 */
     send(message) {
@@ -278,8 +343,9 @@ export function createDanmakuLayer(container, video) {
     },
     /** 开关弹幕（保留已排队的消息，重新打开后继续） */
     setEnabled(enabled) {
-      session.renderer?.switch(Boolean(enabled));
-      if (!enabled) {
+      session.enabled = Boolean(enabled);
+      session.renderer?.switch(session.enabled);
+      if (!session.enabled) {
         session.queue.length = 0;
         clearTimeout(session.queueTimer);
         session.queueTimer = 0;
@@ -313,6 +379,8 @@ export function createDanmakuLayer(container, video) {
       session.destroyed = true;
       session.queue.length = 0;
       clearTimeout(session.queueTimer);
+      if (session.resizeHandle) cancelAnimationFrame(session.resizeHandle);
+      session.resizeHandle = 0;
       session.observer?.disconnect();
       dispose();
       host.remove();
