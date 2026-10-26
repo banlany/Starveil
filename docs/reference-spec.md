@@ -1,7 +1,7 @@
 # 原版界面与逻辑记录（dart_simple_live）
 
 来源：实际运行 `F:\SimpleLive\simple_live_app.exe`（Windows，1600×900 / 1938×1038 两种窗口尺寸）
-逐页点击截图 + 源码 `simple_live_app/lib/modules/**` 对照。对照截图见 `docs/screenshots/`。
+逐页点击截图 + 源码 `simple_live_app/lib/modules/**` 对照。对照截图见 `docs/img/`。
 
 ## 1. 外壳
 
@@ -71,7 +71,7 @@
 
 ## 5. 当前 Tauri 实现对照
 
-已按本记录完成全部一级/二级页面，截图见 `docs/screenshots/`：
+已按本记录完成全部一级/二级页面，截图见 `docs/img/`：
 
 - 左侧图标栏、五平台 Tab（带图标、未接入平台标记）、首页封面网格与分页。
 - 分类：一级分区纵向堆叠 + 二级图标网格 + 「显示全部」；分类房间页 6 列封面卡、返回、刷新。

@@ -3,6 +3,12 @@
 本项目的所有版本变更记录。版本号与 `src-tauri/tauri.conf.json` 保持一致；
 更早的逐条实现细节可以用 `git log` 查看。
 
+## 未发布
+
+- 文档配图统一收进 `docs/img/`，README 的截图表格补齐为真实截图；
+  `.gitignore` 忽略 `docs/img`、`web/assets`、`src-tauri/icons` 之外的图片，
+  调试截图不再入库。
+
 ## 0.3.9
 
 - 弹幕内核换成 [fly-barrage](https://github.com/feiafei27/fly-barrage)：canvas 渲染 + 虚拟轨道避让，

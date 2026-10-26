@@ -8,14 +8,12 @@
 
 > 当前版本 **0.3.9** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
-![首页](docs/screenshots/home.png)
+![首页](docs/img/home.png)
 
 ## 为什么做这个项目
 
-- **原版在 Windows 上有不少显示问题**：窗口控件与缩放、字体渲染、卡片网格滚动、  
-  深浅色切换后局部配色不对……Flutter 桌面端这些问题不好调，想验证换成 WebView 渲染能不能一次解决。
-- **想把复刻流程完整走一遍**：读原版的 Dart 协议层 → 用 Rust 重写取流与弹幕 → 用 Web 画界面，  
-  三块都能独立替换、独立调试。
+- **原版在 Windows 上有不少显示问题**：窗口控件与缩放 问题，Flutter 桌面端这些问题不好调，想验证换成 rust+gpui 能不能解决后面换成WebView。
+- **独立的功能需求**：我有不少附加的需求，而原版的许多功能我也不需要。
 - **顺带做一次 AI 辅助开发的完整实践**，趁手上工具额度还在，把想法一次落地。
 
 参考项目：<https://github.com/June6699/dart_simple_live>  
@@ -36,17 +34,19 @@
 
 ## 截图
 
-| 分类 | 直播间 |
-| -- | --- |
-| 分类 | 直播间 |
+| 分类 | 分类下的房间列表 |
+| --- | --- |
+| ![分类](docs/img/category.png) | ![分类房间列表](docs/img/category-rooms.png) |
 
-| 关注 | 登录 |
-| -- | -- |
-| 关注 | 登录 |
+| 直播间（视频 + 滚动弹幕 + 聊天） | 关注 |
+| --- | --- |
+| ![直播间](docs/img/room.png) | ![关注](docs/img/following.png) |
 
-| 搜索主播 | 设置 |
-| ---- | -- |
-| 主播搜索 | 设置 |
+| 搜索 | 设置 |
+| --- | --- |
+| ![搜索](docs/img/search.png) | ![设置](docs/img/setting.png) |
+
+> 其余界面截图（登录、外观、弹幕参数等）见 [docs/img/](docs/img)。
 
 ## 功能
 
@@ -129,7 +129,7 @@ Starveil/
 │  └─ make_icon.py          生成 1024 图标、ico 与 web logo
 ├─ docs/
 │  ├─ reference-spec.md     原版界面逐页记录
-│  └─ screenshots/          截图
+│  └─ img/                  界面截图（README 引用，其余图片不入库）
 ├─ dist/                    本机构建产物（Starveil.exe 不入库）
 ├─ CHANGELOG.md             更新日志
 └─ ToDo.md                  当前待办与最近一轮记录
@@ -200,7 +200,7 @@ cargo tauri build --no-bundle
 - [CHANGELOG.md](CHANGELOG.md)：版本更新日志
 - [ToDo.md](ToDo.md)：当前待办与最近一轮的实现记录
 - [docs/reference-spec.md](docs/reference-spec.md)：原版界面逐页对照
-- [docs/screenshots/](docs/screenshots)：界面截图
+- [docs/img/](docs/img)：界面截图（README 引用的配图都在这里；仓库不收录其它图片）
 
 ## 许可与致谢
 

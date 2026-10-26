@@ -21,3 +21,18 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
+
+# 辅助文件
+Todo.md
+
+# 图片：只保留文档配图与运行/构建必需的资源，其余一律忽略
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+!docs/img/
+!docs/img/**
+!web/assets/**
+!src-tauri/icons/**

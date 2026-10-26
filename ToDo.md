@@ -52,15 +52,20 @@
   - 新增 `tools/serve.py`（禁缓存开发静态服务）、`tools/shot.py`（按进程截图/点击，含 DPI 感知与置顶）。
   - `tools/cdp.mjs` 继续作为浏览器验证入口（`CDP_PORT=9225 node tools/cdp.mjs shot x.png`）。
   - 浏览器演示模式补了假弹幕（`api.js` 的 `startDemoDanmaku`），没有后端也能调弹幕样式。
+- [x] 文档配图整理
+  - 截图统一收进 `docs/img/`，README 的截图表格补成真实图片；`docs/screenshots/` 与 `docs/verify-*.png` 移除。
+  - `.gitignore` 忽略 `docs/img/`、`web/assets/`、`src-tauri/icons/` 之外的图片，
+    以后随手截的调试图不会混进仓库。
 
 ## 待办
 
 - [ ] **自绘标题栏**：弃用 Windows 提供的原生标题栏，自行实现一条标题栏，
       跟随浅色 / 深色主题与主题色同步，包含图标、标题、最小化 / 最大化 / 关闭与拖拽区，
       并保留双击最大化、贴边吸附等系统习惯。需要同时处理 `decorations: false`、
-      窗口拖拽区域（`data-tauri-drag-region`）与全屏 / 最大化状态下的圆角与按钮位置。
-- [ ] 抖音、快手接口未移植。
+      窗口拖拽区域（`data-tauri-drag-region`）与全屏 / 最大化状态下的圆角与按钮位置。（加一些视觉设计如有鼠标移动到关闭按钮，按钮变红的高亮）
 - [ ] 后台常驻（最小化继续播放）未实现。
+- [ ] 数据存放位置改变，无需使用`%LOCALAPPDATA%\top.june6699.starveil\EBWebView`；可以改成本项目自己的地址如\starveil\。
+- [ ] 构建workflow文件，上传GitHub action
 
 ## 已取消
 
