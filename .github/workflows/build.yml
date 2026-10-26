@@ -21,10 +21,11 @@ jobs:
       - name: 准备 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
+      # 直接从 crates.io 装 tauri-cli（它提供的命令就是 `cargo tauri`）。
+      # 不用 taiki-e/install-action：它的 cargo-binstall 回退常被 GitHub API 限流而失败。
       - name: 安装 cargo-tauri
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-tauri
+        shell: bash
+        run: cargo install tauri-cli --version "^2" --locked
 
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
