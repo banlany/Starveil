@@ -1552,6 +1552,37 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 运行时日志：写到 `%LOCALAPPDATA%\Starveil\starveil.log`，
+/// 出问题（比如窗口空白）时用户可以直接把这个文件发过来。
+fn log_line(message: &str) {
+    let dir = match std::env::var("LOCALAPPDATA") {
+        Ok(local) => Path::new(&local).join("Starveil"),
+        Err(_) => return,
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let line = format!(
+        "[{}] {message}\n",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default()
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("starveil.log"))
+    {
+        use std::io::Write as _;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// 前端初始化完成后调用，便于确认页面真的跑起来了。
+#[tauri::command]
+fn frontend_log(message: String) {
+    log_line(&format!("[web] {message}"));
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -1628,6 +1659,7 @@ fn window_close(app: AppHandle, state: State<'_, AppState>) {
 }
 
 fn main() {
+    log_line("==== 启动 ====");
     // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
     prepare_webview_data();
     let (proxy_port, proxy_targets) = start_proxy();
@@ -1648,7 +1680,35 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            setup_tray(&handle)?;
+            match setup_tray(&handle) {
+                Ok(()) => log_line("托盘创建成功"),
+                Err(error) => log_line(&format!("托盘创建失败：{error}")),
+            }
+            // 3 秒后记录一次 webview 的真实状态。
+            let probe = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(3));
+                match probe.get_webview_window("main") {
+                    Some(window) => {
+                        log_line(&format!(
+                            "窗口可见={:?} 地址={:?}",
+                            window.is_visible(),
+                            window.url()
+                        ));
+                        // 用最底层通道，绕开 __TAURI__ 是否存在的影响。
+                        let script = "window.__TAURI_INTERNALS__.invoke('frontend_log', { message: \
+                            'PROBE href=' + location.href + ' ready=' + document.readyState \
+                            + ' bodyLen=' + (document.body ? document.body.innerHTML.length : -1) \
+                            + ' scripts=' + document.scripts.length \
+                            + ' hasTauri=' + (window.__TAURI__ ? 1 : 0) })";
+                        match window.eval(script) {
+                            Ok(()) => log_line("已注入 DOM 探针（internals）"),
+                            Err(error) => log_line(&format!("DOM 探针注入失败：{error}")),
+                        }
+                    }
+                    None => log_line("找不到 main 窗口"),
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1687,7 +1747,8 @@ fn main() {
             bili_qr_generate,
             bili_qr_poll,
             set_resident,
-            window_close
+            window_close,
+            frontend_log
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");

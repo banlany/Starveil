@@ -434,6 +434,10 @@ function init() {
   document.addEventListener('contextmenu', (event) => event.preventDefault());
   applyTheme();
   initTitlebar();
+  // 写一行运行日志，便于确认页面真的执行了（出问题时看 starveil.log）。
+  window.__TAURI__?.core
+    ?.invoke('frontend_log', { message: '页面已初始化，rail=' + document.querySelectorAll('.rail-btn').length })
+    ?.catch(() => {});
   document.body.dataset.density = state.settings.appearance?.density || 'comfortable';
   document.body.dataset.cardSize = state.settings.home?.cardSize || 'medium';
   state.platform = state.settings.home?.platform && isPlatformEnabled(state.settings.home.platform) ? state.settings.home.platform : 'bilibili';

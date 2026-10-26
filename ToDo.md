@@ -81,6 +81,15 @@
   - `.github/workflows/build.yml`：Windows runner + Rust 1.95 + `tauri-apps/tauri-action`，
     tag 推上来出 NSIS 安装包，并额外上传免安装 zip。
 
+## 已知问题（0.4.0，待排查）
+
+- **本机 release 窗口有壳无内容**：窗口、`WRY_WEBVIEW` 宿主、托盘都正常，
+  但 webview 里没有渲染子窗口，注入的 JS 也执行不到后端 —— 说明 WebView2 环境没初始化成功。
+  已排除：`decorations: false` / `shadow` / `additionalBrowserArgs` / 自定义数据目录（换回默认同样复现）。
+  运行时日志在 `%LOCALAPPDATA%\Starveil\starveil.log`，正常应有
+  `[web] 页面已初始化，rail=4` 这一行；没有这行就是页面没跑起来。
+  下一步方向：换 WebView2 运行时（Evergreen 修复安装 / 固定版本运行时）、换一台机器对照。
+
 ## 待验证（本机条件所限，留给下一次实机确认）
 
 - [ ] 自绘标题栏在应用内的**实际观感**：本机 WebView2 窗口截不到画面，

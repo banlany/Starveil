@@ -19,6 +19,8 @@
 - **GitHub Actions**：`.github/workflows/build.yml` 在 Windows runner 上构建，
   tag 推上来时自动出 NSIS 安装包与免安装 zip 并挂到 Release。
 - 「跟随系统」图标从齿轮换成**半明半暗的圆**（原来用 `settings` 图标，和左侧「设置」几乎一样）。
+- **新增运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、托盘、窗口地址与前端初始化；
+  出问题（如窗口空白）可以直接把这个文件发出来定位。
 
 ## 未发布
 
