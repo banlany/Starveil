@@ -26,6 +26,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod win32;
+
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const BILIBILI_REFERER: &str = "https://www.bilibili.com/";
 
@@ -1129,32 +1131,25 @@ fn stop_danmaku_inner(state: &State<'_, AppState>) {
 
 // ---------------------------------------------------------------- 剪贴板 / 浏览器
 
+/// 复制文本到系统剪贴板。
+///
+/// 走 Win32 剪贴板 API（见 `win32` 模块），不再 fork `cmd /C clip`，
+/// 所以不会闪终端窗口，也不会因为等待子进程退出而卡住界面。
 #[tauri::command]
 fn copy_text(text: String) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    let mut child = Command::new("cmd")
-        .args(["/C", "clip"])
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("调用剪贴板失败：{error}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(text.as_bytes())
-            .map_err(|error| format!("写入剪贴板失败：{error}"))?;
-    }
-    let _ = child.wait();
-    Ok(())
+    win32::copy_to_clipboard(&text)
 }
 
+/// 用系统默认浏览器打开链接。
+///
+/// 同样不再走 `cmd /C start`：它会弹终端，而且对带引号的 URL 处理并不可靠。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", &url])
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("打开链接失败：{error}"))
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("链接为空".to_string());
+    }
+    win32::open_in_browser(&url)
 }
 
 // ---------------------------------------------------------------- 账号登录
