@@ -21,6 +21,9 @@ jobs:
       - name: 准备 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
+      - name: 安装 cargo-tauri
+        uses: taiki-e/install-action@cargo-tauri
+
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
         with:
@@ -32,39 +35,68 @@ jobs:
         run: |
           VERSION=$(python -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "当前版本：$VERSION"
 
-      - name: 构建并发布
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
-          releaseName: "星幕直播 v__VERSION__"
-          releaseBody: |
-            聚合直播桌面客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
+      # 自己打包而不用 tauri-action，是因为 productName 是中文「星幕直播」：
+      # NSIS bundler 生成的文件名会过滤掉非 ASCII 字符，
+      # 装出来是 `_0.4.1_x64-setup.exe`（没有产品名前缀）。
+      # 这里先打包，再把文件改成 ASCII 名，最后统一上传。
+      - name: 打包 NSIS 安装包
+        run: cargo tauri build --bundles nsis
 
-            - 安装包：`Starveil_*_x64-setup.exe`（NSIS）
-            - 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
-            - 变更详情见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
-          releaseDraft: false
-          prerelease: false
-          args: --bundles nsis
+      - name: 重命名安装包
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=${{ steps.version.outputs.version }}
+          cd src-tauri/target/release/bundle/nsis
+          for f in *.exe; do
+            [ -e "$f" ] || continue
+            mv "$f" "Starveil_${VERSION}_x64-setup.exe"
+            echo "重命名：$f -> Starveil_${VERSION}_x64-setup.exe"
+          done
 
       # 除了安装包，再单独提供免安装版，方便不想装东西的人。
       - name: 打包免安装版
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p portable
           cp src-tauri/target/release/starveil.exe portable/
           cp dist/README.txt portable/ 2>/dev/null || true
           7z a -tzip "starveil-portable.zip" ./portable/* > /dev/null
 
-      - name: 上传免安装版到 Release
+      - name: 清理旧命名的安装包
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 早期版本用中文 productName 直接打包，资产名会变成 `_0.4.0_x64-setup.exe`。
+          # 重跑时把这种旧名字的资产删掉，免得两个安装包同时挂在 Release 上。
+          TAG=${{ steps.version.outputs.tag }}
+          for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true); do
+            if echo "$asset" | grep -qE '^_[0-9].*_x64-setup\.exe$'; then
+              echo "删除旧资产：$asset"
+              gh release delete-asset "$TAG" "$asset" || true
+            fi
+          done
+
+      - name: 创建 Release 并上传
         uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
         with:
-          files: starveil-portable.zip
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.tag }}
+          name: 星幕直播 v${{ steps.version.outputs.version }}
+          body: |
+            聚合直播桌面客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
+
+            - 安装包：`Starveil_<版本>_x64-setup.exe`（NSIS）
+            - 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
+            - 变更详情见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          files: |
+            src-tauri/target/release/bundle/nsis/Starveil_${{ steps.version.outputs.version }}_x64-setup.exe
+            starveil-portable.zip
+          fail_on_unmatched_files: true
 
       - name: 保存构建产物
         uses: actions/upload-artifact@v4
