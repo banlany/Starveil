@@ -1075,6 +1075,48 @@ body.is-resizing-chat .room-chat {
   scroll-behavior: smooth;
 }
 
+/* 聊天栏「回到底部」：往上翻历史时浮在列表底部，点一下回到最新一条。
+   只在拉开 160px 以上才出现，轻微滚动不会一直闪。 */
+.chat-to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-pill);
+  background: rgba(30, 32, 40, 0.92);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(10px);
+  transform: translateX(-50%) translateY(8px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.chat-to-bottom.is-shown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.chat-to-bottom:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.chat-to-bottom svg {
+  width: 15px;
+  height: 15px;
+}
+
 .chat-line {
   font-size: 12.5px;
   line-height: 1.55;
@@ -1327,6 +1369,18 @@ html[data-theme="light"] .overlay-btn.follow-btn.active {
 html[data-theme="light"] .room-chat {
   background: #ffffff;
   border-left-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .chat-to-bottom {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #35353d;
+  box-shadow: 0 8px 20px rgba(35, 39, 54, 0.16);
+}
+
+html[data-theme="light"] .chat-to-bottom:hover {
+  color: #1b1b21;
+  border-color: rgba(0, 0, 0, 0.18);
 }
 
 html[data-theme="light"] .chat-head {

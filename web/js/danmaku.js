@@ -491,22 +491,18 @@ export function createDanmakuLayer(container, video, config = null) {
   /// - 大表情：正文是表情名（`冲鸭`，收藏集那类自带中括号），必须整段替换成占位符，
   ///   否则库只会把它当普通文字画出来。
   ///
-  /// 关掉「显示弹幕表情」时不登记图片：小表情的占位符直接抹掉（留着 `[热]` 更怪），
-  /// 大表情正文本身就是可读的词，原样保留。
+  /// 关掉「显示弹幕表情」时原样返回文字：`[大哭]`、`[热]`、`[下次一定]` 这些占位符照旧画出来，
+  /// 大表情的正文本来就是可读的词，也不动。图片一张都不登记。
   function applyEmoticons(message, fontSize) {
     // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
     let text = message.text == null ? '' : String(message.text);
     const list = Array.isArray(message.emoticons) ? message.emoticons : null;
     if (!list || !list.length) return text;
-    const showImages = (session.config || FALLBACK_CONFIG).emoji !== false;
+    if ((session.config || FALLBACK_CONFIG).emoji === false) return text;
     for (const emoticon of list) {
       const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
       const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
       if (!key || !url || !text.includes(key)) continue;
-      if (!showImages) {
-        if (key.startsWith('[')) text = text.split(key).join('');
-        continue;
-      }
       const bracketed = key.startsWith('[') && key.endsWith(']');
       const size = fitEmoticon(emoticon.width, emoticon.height, fontSize);
       const id = registerImage(url, size, bracketed ? key.slice(1, -1) : key);

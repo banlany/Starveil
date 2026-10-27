@@ -90,6 +90,7 @@ export function renderRoom(ctx, params = {}) {
           <button class="chat-tab" data-tab="settings">设置</button>
         </div>
         <div class="chat-list" id="chat-list"></div>
+        <button class="chat-to-bottom" id="chat-to-bottom" title="回到底部">${icon('chevronDown', 15)}<span>回到底部</span></button>
       </aside>
     </div>
     <footer class="room-footer">
@@ -116,6 +117,7 @@ export function renderRoom(ctx, params = {}) {
   const roomTopbar = $('room-topbar');
   const chatList = $('chat-list');
   const chat = $('room-chat');
+  const chatToBottom = $('chat-to-bottom');
 
   const session = {
     platform,
@@ -203,6 +205,8 @@ export function renderRoom(ctx, params = {}) {
     if (!tab) return;
     setChatTab(tab);
   });
+  chatList.addEventListener('scroll', updateChatToBottom, { passive: true });
+  chatToBottom.addEventListener('click', () => scrollChatToBottom(true));
   const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
   const wake = () => {
     page.classList.remove('ui-idle');
@@ -242,13 +246,25 @@ export function renderRoom(ctx, params = {}) {
     danmaku?.update(config);
   }
 
+  /// 弹幕开关只有这一条逻辑：底部控件、右侧设置面板、全屏设置弹窗都走这里。
   function setDanmakuEnabled(enabled) {
-    session.danmakuEnabled = enabled;
-    state.settings.danmaku.enabled = enabled;
+    session.danmakuEnabled = Boolean(enabled);
+    state.settings.danmaku.enabled = session.danmakuEnabled;
     saveSettings();
-    $('ctrl-danmaku').classList.toggle('active', enabled);
-    danmaku?.setEnabled(enabled);
+    $('ctrl-danmaku').classList.toggle('active', session.danmakuEnabled);
+    // 开回来时必须显式 setEnabled(true)：库的 switch(false) 会停掉渲染循环，
+    // 只改配置不调它，弹幕就再也回不来了（设置面板开关「关得掉、开不回来」就是这个原因）。
+    danmaku?.setEnabled(session.danmakuEnabled);
+    syncEnabledSwitches();
     if (session.tab === 'chat' || session.tab === 'sc') renderChatTab();
+  }
+
+  /// 设置面板里的开关是另一份 DOM（侧栏一份、全屏弹窗又能再开一份），
+  /// 状态要跟着底部控件的真实开关走，两边不能各说各话。
+  function syncEnabledSwitches() {
+    for (const button of document.querySelectorAll('.chat-settings #cs-enabled')) {
+      button.setAttribute('aria-checked', String(session.danmakuEnabled));
+    }
   }
 
   function blocked(message) {
@@ -420,7 +436,8 @@ export function renderRoom(ctx, params = {}) {
   /// 聊天行正文：把表情占位符换成小图标。
   ///
   /// 用的是和弹幕层同一份 `message.emoticons`，区别只是这里按聊天区字号缩放（CSS 的 `em`）。
-  /// 关掉「显示弹幕表情」时和弹幕一样处理：小表情的 `[占位符]` 抹掉，大表情保留正文词。
+  /// 关掉「显示弹幕表情」时原样显示文字：`[大哭]`、`[热]`、`[下次一定]` 这些占位符照旧看得见，
+  /// 大表情的正文本来就是词，也不动。
   function fillChatText(node, message) {
     const text = message.text == null ? '' : String(message.text);
     const list = Array.isArray(message.emoticons) ? message.emoticons : null;
@@ -436,11 +453,7 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     if (state.settings.danmaku.emoji === false) {
-      let plain = text;
-      for (const key of urlByKey.keys()) {
-        if (key.startsWith('[')) plain = plain.split(key).join('');
-      }
-      node.textContent = plain;
+      node.textContent = text;
       return;
     }
     // 整条扫一遍再切片，而不是按 emoticons 逐个 replace 一次：
@@ -494,10 +507,11 @@ export function renderRoom(ctx, params = {}) {
     } else {
       line.textContent = message.text;
     }
-    const pinned = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 80;
+    const pinned = chatGapToBottom() < CHAT_PIN_GAP;
     chatList.appendChild(line);
     while (chatList.childElementCount > 320) chatList.firstElementChild?.remove();
     if (pinned) chatList.scrollTop = chatList.scrollHeight;
+    updateChatToBottom();
   }
 
   function placeholder(text, iconName = 'danmaku') {
@@ -544,6 +558,8 @@ export function renderRoom(ctx, params = {}) {
     // 不还原的话列表会每次跳回顶部。
     const keepScroll = chatList.scrollTop;
     chatList.innerHTML = '';
+    // 换标签页或重画时先收起悬浮按钮，聊天分支画完再按实际位置决定要不要露出。
+    chatToBottom.classList.remove('is-shown');
     if (session.tab === 'chat') {
       if (!session.messages.length) {
         chatList.appendChild(placeholder('正在连接弹幕服务器…', 'danmaku'));
@@ -551,6 +567,7 @@ export function renderRoom(ctx, params = {}) {
       }
       for (const message of session.messages) appendChatLine(message);
       chatList.scrollTop = chatList.scrollHeight;
+      updateChatToBottom();
       return;
     }
     if (session.tab === 'sc') {
@@ -789,9 +806,10 @@ export function renderRoom(ctx, params = {}) {
   function setConfig(key, value) {
     state.settings.danmaku[key] = value;
     if (key === 'enabled') {
-      session.danmakuEnabled = Boolean(value);
-      $('ctrl-danmaku').classList.toggle('active', session.danmakuEnabled);
-      if (!session.danmakuEnabled) danmaku?.setEnabled(false);
+      // 不要再自己写一套开关逻辑：统一交给 setDanmakuEnabled()，
+      // 否则面板里的开关只关得掉、开不回来，也跟不上底部控件的状态。
+      setDanmakuEnabled(value);
+      return;
     }
     saveSettings();
     // 表情开关只影响「后续渲染」，聊天栏里已经画好的行要重画一遍才能立刻看到效果。
@@ -805,6 +823,28 @@ export function renderRoom(ctx, params = {}) {
     if (['opacity', 'lines', 'area', 'font', 'weight', 'stroke', 'strokeWidth', 'safeTop', 'safeBottom'].includes(key)) {
       applyDanmakuStyle();
     }
+  }
+
+  // ------------------------------------------------------------ 回到底部
+
+  // 往上翻历史时新弹幕还在往下堆，底部会越来越远，给一个悬浮按钮直接跳回去。
+  const CHAT_PIN_GAP = 80; // 距底这么近就算「贴着底部」，新消息自动跟着滚
+  const CHAT_BUTTON_GAP = 160; // 拉开这么远才浮出按钮，免得轻微滚动就一直闪
+
+  function chatGapToBottom() {
+    return chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight;
+  }
+
+  function updateChatToBottom() {
+    // 只有「聊天」标签页有底部可言，SC / 关注 / 设置页不显示这个按钮。
+    const show = session.tab === 'chat' && chatGapToBottom() > CHAT_BUTTON_GAP;
+    chatToBottom.classList.toggle('is-shown', show);
+  }
+
+  function scrollChatToBottom(smooth = true) {
+    if (smooth) chatList.scrollTo({ top: chatList.scrollHeight, behavior: 'smooth' });
+    else chatList.scrollTop = chatList.scrollHeight;
+    updateChatToBottom();
   }
 
   function setChatTab(tab) {
