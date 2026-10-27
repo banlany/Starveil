@@ -25,6 +25,7 @@ node_modules/
 
 # 个人工作笔记（不入库）
 ToDo.md
+需求.md
 
 # 本机排查 WebView2 显示问题时写的诊断脚本（只在本机用，不入库）
 /tools/crash_probe.py
