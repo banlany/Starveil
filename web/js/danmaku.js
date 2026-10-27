@@ -201,6 +201,15 @@ export function createDanmakuLayer(container, video, config = null) {
     }
   }
 
+  /// 清空已登记的表情图（连同 url ↔ id 去重表）。
+  /// 库是按 `[图片id]` 匹配正文的：只把正文写回文字而留着旧图，
+  /// 弹幕层会继续把 `[热]` 画成表情（聊天栏是纯 DOM，所以才出现「聊天生效、弹幕不生效」）。
+  function clearImages() {
+    session.images.length = 0;
+    session.imageIdByUrl.clear();
+    session.imageUrlById.clear();
+  }
+
   /// 整体重建渲染器。只在两种情况下用：
   /// 直播流重连（时间轴归零）、字号变化（每条弹幕实例的宽高是创建时固定的）。
   function rebuild() {
@@ -210,9 +219,7 @@ export function createDanmakuLayer(container, video, config = null) {
     session.queueTimer = 0;
     // 表情尺寸是按字号算的，重建后（字号/档位变了）必须重新量一遍；
     // 已经上屏的实例随 dispose 一起没了，不存在「旧图新尺寸」的问题。
-    session.images.length = 0;
-    session.imageIdByUrl.clear();
-    session.imageUrlById.clear();
+    clearImages();
     dispose();
     measure();
     build();
@@ -592,6 +599,9 @@ export function createDanmakuLayer(container, video, config = null) {
     update(config) {
       const previous = session.config;
       session.config = { ...FALLBACK_CONFIG, ...(config || {}) };
+      // 关掉表情要把已登记的图片撤干净：库里只认 `[图片id]`，
+      // 旧图留着就会继续命中正文里的 `[赞]`／`[热]`，表现是「聊天栏关掉了、弹幕层还画表情」。
+      if (session.config.emoji === false) clearImages();
       if (!session.renderer) return;
       // 字号或性能档位变了只能重建：字号决定每条实例的宽高，
       // 性能档位可能改 DPR（画布尺寸），两者都无法在现有实例上热改。
