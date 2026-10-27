@@ -419,11 +419,7 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             4 => 2,
             _ => 0,
         };
-        let color = meta
-            .and_then(|arr| arr.get(3))
-            .and_then(|v| v.as_u64())
-            .filter(|color| *color > 0)
-            .map(|color| color as u32);
+        let color = bilibili_extract_color(info);
 
         let _ = tx.send(DanmakuMessage {
             user,
@@ -434,6 +430,67 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             sc: None,
         });
     }
+}
+
+/// 把 B 站各种形态的颜色值归一化成 RGB888（丢掉 alpha）。
+///
+/// 平台的下发格式并不统一：`"#FF7204"`、`"16777215"`、纯数字 `16777215`、
+/// 甚至 32 位带 alpha 的值都可能出现。统一截到低 24 位，避免前端拿到
+/// 8 位十六进制字符串拼出非法 `#xxxxxxxx`（canvas 会直接不画）。
+fn normalize_color(value: &serde_json::Value) -> Option<u32> {
+    let raw: u64 = if let Some(text) = value.as_str() {
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        match text.strip_prefix('#') {
+            Some(hex) => u64::from_str_radix(hex, 16).ok()?,
+            None if text.chars().all(|ch| ch.is_ascii_digit()) => text.parse().ok()?,
+            None => u64::from_str_radix(text, 16).ok()?,
+        }
+    } else {
+        value.as_u64()?
+    };
+    let rgb = (raw & 0x00FF_FFFF) as u32;
+    // 0 在弹幕里等于「没给颜色」，交给下一层回退。
+    (rgb > 0).then_some(rgb)
+}
+
+/// 从 `info[15]` 里挖颜色。
+///
+/// 这一格可能是对象，也可能是「对象序列化成的 JSON 字符串」，
+/// 颜色还可能再套一层 `extra` 里，所以按「取 color → 否则递归进 extra」处理。
+fn bilibili_color_from_extra(extra: &serde_json::Value) -> Option<u32> {
+    let owned;
+    let object = match extra {
+        serde_json::Value::String(text) => {
+            owned = serde_json::from_str::<serde_json::Value>(text).ok()?;
+            owned.as_object()?
+        }
+        serde_json::Value::Object(map) => map,
+        _ => return None,
+    };
+    if let Some(color) = object.get("color").and_then(normalize_color) {
+        return Some(color);
+    }
+    object.get("extra").and_then(bilibili_color_from_extra)
+}
+
+/// B 站彩色弹幕 / UP 主自定义色：颜色可能藏在三个地方，按可靠性依次取。
+///
+/// 1. `info[0][15].extra` —— 平台下发的扩展 JSON（`{"color":"#FF7204",...}`），
+///    彩色弹幕与舰长高亮色基本都在这里；
+/// 2. `info[0][7]` —— 数值形式的颜色；
+/// 3. `info[0][3]` —— 传统字段（普通弹幕是 16777215 白色）。
+fn bilibili_extract_color(info: &[serde_json::Value]) -> Option<u32> {
+    let meta = info.first()?.as_array()?;
+    if let Some(color) = meta.get(15).and_then(bilibili_color_from_extra) {
+        return Some(color);
+    }
+    if let Some(color) = meta.get(7).and_then(normalize_color) {
+        return Some(color);
+    }
+    meta.get(3).and_then(normalize_color)
 }
 
 // ---------------------------------------------------------------- 斗鱼
@@ -599,6 +656,47 @@ mod tests {
         assert_eq!(messages[0].text, "你好");
         assert_eq!(messages[0].color, Some(16711680));
         assert_eq!(messages[0].position, 0);
+    }
+
+    #[test]
+    fn 颜色归一化支持十六进制十进制与alpha截断() {
+        use serde_json::json;
+        assert_eq!(normalize_color(&json!("#FF7204")), Some(0xFF7204));
+        assert_eq!(normalize_color(&json!("16711680")), Some(0xFF0000));
+        assert_eq!(normalize_color(&json!(16711680u64)), Some(0xFF0000));
+        // 32 位带 alpha 的值截断到低 24 位，否则前端会拼出非法 hex
+        assert_eq!(normalize_color(&json!(0xFF11_2233u64)), Some(0x11_2233));
+        // 0 视为「没给颜色」，交给下一层回退
+        assert_eq!(normalize_color(&json!(0)), None);
+        assert_eq!(normalize_color(&json!("")), None);
+    }
+
+    #[test]
+    fn 颜色优先取扩展字段再回落() {
+        use serde_json::json;
+        // info[15] 常见形态：JSON 字符串里再套一层 extra
+        let extra = json!(r##"{"extra":"{\"color\":\"#FF7204\"}"}"##);
+        assert_eq!(bilibili_color_from_extra(&extra), Some(0xFF7204));
+        // 直接是对象也认
+        assert_eq!(bilibili_color_from_extra(&json!({"color": "#00FF00"})), Some(0x00FF00));
+
+        let mut meta: Vec<serde_json::Value> = vec![serde_json::Value::Null; 16];
+        meta[1] = json!(1);
+        meta[3] = json!(16777215);
+        meta[15] = json!(r##"{"extra":"{\"color\":\"#FF7204\"}"}"##);
+        let info = vec![serde_json::Value::Array(meta.clone())];
+        assert_eq!(bilibili_extract_color(&info), Some(0xFF7204), "扩展字段优先");
+
+        // 没有扩展字段时用 info[7]
+        meta[15] = serde_json::Value::Null;
+        meta[7] = json!(0x33_6699u64);
+        let info = vec![serde_json::Value::Array(meta.clone())];
+        assert_eq!(bilibili_extract_color(&info), Some(0x33_6699));
+
+        // 都没有再回落 info[3]
+        meta[7] = serde_json::Value::Null;
+        let info = vec![serde_json::Value::Array(meta)];
+        assert_eq!(bilibili_extract_color(&info), Some(0xFF_FFFF));
     }
 
     #[test]

@@ -34,7 +34,8 @@ const FALLBACK_CONFIG = {
 
 /// 性能档位：只改**绘制成本**与实例上限，不动用户设定的字号、颜色、区域。
 /// canvas 上最贵的是阴影和描边，所以档位越高越倾向把它们关掉；
-/// DPR 是第二贵的因素（画布面积按 dpr² 增长），极速档把它压到 1。
+/// DPR 是第二贵的因素（画布面积按 dpr² 增长），极速档把它压到 1；
+/// sendScale < 1 表示「发送间隔放大」，档位越高每秒进的弹幕越少，绘制压力更小。
 const PERF_PROFILES = {
   balanced: { maxStored: 1500, dprCap: 0, shadowBlur: 2, minSpace: 26, sendScale: 1, noStroke: false },
   smooth: { maxStored: 1000, dprCap: 2, shadowBlur: 0, minSpace: 22, sendScale: 0.8, noStroke: false },
@@ -85,6 +86,10 @@ export function createDanmakuLayer(container, video, config = null) {
     queueTimer: 0,
     sent: 0,
     lastSendAt: 0,
+    // 实测宽度的移动平均，用于估算轨道容量（见 sendGap）
+    widthAvg: 0,
+    // 满轨被丢弃的条数，调试用
+    dropped: 0,
     destroyed: false,
     observer: null,
     resizeHandle: 0,
@@ -168,8 +173,15 @@ export function createDanmakuLayer(container, video, config = null) {
     );
     // 极速档无视用户的描边开关：描边 + 阴影是弹幕卡顿的主因。
     const strokeWidth = perf.noStroke ? 0 : config.stroke ? Math.max(0, Number(config.strokeWidth) || 0) : 0;
+    // 用户设定的「滚动速度」是**弹幕持续秒数**（越小越快）。
+    // 固定时长模式：所有弹幕都用这段时间穿过画面，(画布宽 + 弹幕宽) / 时长 得到每条的速度，
+    // 长弹幕自动更快、短弹幕更慢，不会出现「长弹幕挂半天不走」。防追尾由库按每条弹幕的
+    // 基准速度再动态减速。
+    const durationSeconds = Math.max(3, Math.min(20, Number(config.speed) || 8));
     return {
-      speed: Math.max(60, (session.width || container.clientWidth || 960) / Math.max(3, Number(config.speed) || 8)),
+      scrollDuration: durationSeconds * 1000,
+      // 兜底用的固定像素速度：库在没有 scrollDuration 时才用它，口径与上面一致。
+      speed: Math.max(60, (session.width || container.clientWidth || 960) / durationSeconds),
       opacity: Math.max(0.2, Math.min(1, (config.opacity ?? 95) / 100)),
       renderRegion: Math.max(0.1, Math.min(1, regionPx / height)),
       fontFamily: '"Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif',
@@ -255,6 +267,8 @@ export function createDanmakuLayer(container, video, config = null) {
     const next = buildRenderConfig();
     const current = renderer.renderConfig || {};
     const keys = [
+      // scrollDuration 变了等同于速度变了：库会重算每条弹幕的速度与结束时间再重排。
+      'scrollDuration',
       'speed',
       'renderRegion',
       'opacity',
@@ -324,12 +338,26 @@ export function createDanmakuLayer(container, video, config = null) {
     });
   }
 
-  /// 两条弹幕之间的最小间隔（毫秒）。行数越多间隔越小，性能档位再乘一个系数。
+  /// 两条弹幕之间的最小间隔（毫秒）：按「轨道实际能吸收的速率」算，而不是拍一个固定值。
+  ///
+  /// 一条弹幕要等前一条的右边缘让出 `宽 + 间距`，它才能在右边缘入场；
+  /// 固定时长模式下速度是 (画布宽 + 宽) / 时长，于是单轨每
+  ///   `(宽 + 间距) × 时长 / (画布宽 + 宽)`
+  /// 毫秒才能放一条，再除以轨道数就是整体的入场速率。宽度用实测的移动平均值估算。
   function sendGap() {
     const config = session.config || FALLBACK_CONFIG;
     const lanes = Math.max(2, Math.min(20, Number(config.lines) || 10));
-    const base = Math.max(16, Math.round(900 / (lanes * 2)));
-    return Math.max(12, Math.round(base * profile().sendScale));
+    // 实际轨道数按库算出来的为准：区域高度不够时轨道会比「显示几行」少。
+    const realTracks = session.renderer?.barrageLayoutCalculate?.virtualTrackAlgorithm?.realTrackNum;
+    const tracks = Math.max(1, Number(realTracks) || lanes);
+    const canvasWidth = session.width || container.clientWidth || 960;
+    const durationMs = Math.max(3, Math.min(20, Number(config.speed) || 8)) * 1000;
+    // 没量到过宽度时按「约 12 个字符」估一下，之后用实测值修正。
+    const width = session.widthAvg || Math.min(canvasWidth * 0.4, 200);
+    const perTrack = ((width + profile().minSpace) * durationMs) / (canvasWidth + width);
+    // 上限 400ms：再慢就变成明显延迟了，宁可后面按「满轨」丢弃。
+    const gap = Math.min(400, perTrack / tracks);
+    return Math.max(16, Math.round(gap / profile().sendScale));
   }
 
   function scheduleDrain() {
@@ -365,16 +393,23 @@ export function createDanmakuLayer(container, video, config = null) {
     const renderer = session.renderer;
     if (!renderer) return;
     const fontSize = Math.max(12, Math.min(48, Number(config.font) || FALLBACK_CONFIG.font));
-    const color = message.color == null ? '#ffffff' : `#${Number(message.color).toString(16).padStart(6, '0')}`;
+    // 颜色统一截到 RGB888：平台偶尔会下发 32 位带 alpha 的值，
+    // `padStart(6)` 不会截断，会拼出 `#xxxxxxxx` 这种非法 hex —— canvas 直接不画，
+    // 表现就是「彩色弹幕不渲染」。
+    const color =
+      message.color == null
+        ? '#ffffff'
+        : `#${(Number(message.color) & 0xffffff).toString(16).padStart(6, '0')}`;
     const position = Number(message.position) || 0;
     const barrageType = position === 1 ? 'top' : position === 2 ? 'bottom' : 'scroll';
-    // 速度策略：滚动弹幕统一用全局基准速度（renderConfig.speed，由用户速度档位决定），
-    // 不再按文字长度逐条变速；「前方空间小就减速防追尾」由库的轨道分配器动态处理，
-    // 这里不传 addition.speed，让库回落全局速度。
+    // 速度策略：不在这里传 addition.speed，让库走**固定时长模式**——
+    // 每条弹幕按 (画布宽 + 自身宽) / scrollDuration 单独算速度，长弹幕更快、短弹幕更慢，
+    // 所有弹幕「同时开始、同时结束」。追尾由库的轨道分配器按每条弹幕的基准速度动态减速。
     const option = {
       id: `d${++session.sent}`,
       time: Math.max(0, clockSource.currentTime * 1000),
-      text: String(message.text || ''),
+      // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
+      text: message.text == null ? '' : String(message.text),
       fontSize,
       // 行高是倍数，与算显示区域用的是同一个常量。
       lineHeight: LINE_HEIGHT_RATIO,
@@ -383,10 +418,36 @@ export function createDanmakuLayer(container, video, config = null) {
       addition: { user: message.user || '' },
     };
     if (barrageType !== 'scroll') option.duration = 4200;
+    const calc = renderer.barrageLayoutCalculate;
+    const before = calc?.scrollBarrageInstances.length || 0;
+    let created = null;
     try {
       renderer.send(option);
+      const instances = calc?.scrollBarrageInstances;
+      if (instances && instances.length > before) created = instances[instances.length - 1];
     } catch {
       /* 库对个别非法参数会抛错，忽略单条不影响其他弹幕 */
+      return;
+    }
+    if (!created) return;
+    // 用实测宽度修正发送速率（EMA），下一次 sendGap() 会更接近真实轨道容量。
+    session.widthAvg = session.widthAvg
+      ? session.widthAvg * 0.85 + created.width * 0.15
+      : created.width;
+    // 满轨：库只能把它丢到随机轨道上，结果一定是叠字。
+    // 这条直接撤下不显示——刷屏时宁可少显示，也不叠成一坨（B 站同样会丢弃满轨的弹幕）。
+    if (created.fallbackTrack) dropInstance(created);
+  }
+
+  /// 把刚创建但放不下的实例从库里摘干净。
+  /// 它没有被塞进任何虚拟轨道，只要从两个实例数组里删掉就不会再参与渲染与布局。
+  function dropInstance(instance) {
+    const calc = session.renderer?.barrageLayoutCalculate;
+    if (!calc) return;
+    session.dropped += 1;
+    for (const list of [calc.scrollBarrageInstances, calc.canShowScrollBarrageInstances]) {
+      const index = list.indexOf(instance);
+      if (index >= 0) list.splice(index, 1);
     }
   }
 
@@ -408,6 +469,9 @@ export function createDanmakuLayer(container, video, config = null) {
     },
     get queued() {
       return session.queue.length;
+    },
+    get dropped() {
+      return session.dropped;
     },
     get renderer() {
       return session.renderer;
