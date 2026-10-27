@@ -12,11 +12,13 @@
 import { canonicalImage, ENABLED_PLATFORMS, normalizePlatform, roomUrl } from './api.js';
 import {
   ACCOUNT_PLATFORMS,
+  clone,
   followKey,
   HISTORY_LIMIT,
   loadFollow,
   loadHistory,
   loadLogin,
+  merge,
   saveFollow,
   saveHistory,
   saveLogin,
@@ -35,11 +37,17 @@ export const BUNDLE_VERSION = 1;
 /// 输出的是「中立格式」（驼峰字段），和 dart 的 toJson 命名对齐，
 /// 这样同一个文件既能喂给自己的导入逻辑，也方便别的工具处理。
 export function buildBundle() {
+  // 设置里含 WebDAV 账号口令，而这份包本身就是要 PUT 到 WebDAV 上的，
+  // 口令跟着一起传等于把自己的网盘密码写进远端文件。这里先摘掉。
+  const settings = clone(state.settings ?? {});
+  if (settings.sync?.webdav) {
+    delete settings.sync.webdav.password;
+  }
   return {
     version: BUNDLE_VERSION,
     app: '星幕直播 Starveil',
     exportedAt: new Date().toISOString(),
-    settings: state.settings,
+    settings,
     follow: loadFollow().map((item) => ({
       platform: item.platform,
       roomId: String(item.room_id ?? ''),
@@ -342,10 +350,20 @@ function importBundle(data, options = {}) {
   }
 
   let settingsCount = 0;
-  if (data.settings && typeof data.settings === 'object') {
-    state.settings = { ...state.settings, ...data.settings };
+  if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
+    // 深合并前先把类型不对的整段剃掉：包里某一段是 null（手工改过、旧版本写的）
+    // 时直接合并会让 `settings.danmaku` 变 null，进房读 `danmaku.enabled`
+    // 就是 TypeError，整页渲染失败，而且坏数据会被写回 localStorage，重启也不自愈。
+    const patch = clone(data.settings);
+    for (const key of ['home', 'appearance', 'player', 'live', 'danmaku', 'follow', 'timer', 'sync', 'other']) {
+      const value = patch[key];
+      if (value !== undefined && (value === null || typeof value !== 'object' || Array.isArray(value))) {
+        delete patch[key];
+      }
+    }
+    state.settings = merge(clone(state.settings), patch);
     saveSettings();
-    settingsCount = Object.keys(data.settings).length;
+    settingsCount = Object.keys(patch).length;
   }
 
   const accounts = [];

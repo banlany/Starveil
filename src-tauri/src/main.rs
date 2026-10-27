@@ -9,11 +9,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use live_core::{
@@ -399,7 +399,7 @@ async fn search_anchors(
                         ("v", "1"),
                         ("typ", "-5"),
                         ("livestate", "0"),
-                        ("rows", &(page * 20).to_string()),
+                        ("rows", &page.saturating_mul(20).to_string()),
                         ("start", "0"),
                     ],
                     &[("user-agent", DESKTOP_UA)],
@@ -567,15 +567,61 @@ fn unescape_html(value: &str) -> String {
         .replace("&gt;", ">")
 }
 
+/// 代理并发上限。每条连接一个线程，卡死的连接会一直占着线程不放，
+/// 这里加个闸：超了直接 503，让播放器立刻走换线，别把进程拖垮。
+const PROXY_MAX_CONNECTIONS: usize = 32;
+
+/// 上游只建一次客户端。原先每条连接都 `Client::builder().build()`，
+/// 连接池和内部 runtime 全重建一遍，卡死的连接越多浪费越大。
+///
+/// 注意这里**不能**用 `read_timeout`（blocking 版没有），也不能用 `.timeout()`——
+/// 那是整个请求的总超时，会把正常的长连接直播流拦腰砍断。上游真的挂死时
+/// 靠的是前端 stall 检测换线 → 浏览器关掉旧连接 → 我们写 socket 失败退出。
+fn upstream_client() -> Option<reqwest::blocking::Client> {
+    static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .ok()
+        })
+        .clone()
+}
+
 fn start_proxy() -> (u16, Arc<Mutex<HashMap<String, ProxyTarget>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("启动本地流代理失败");
     let port = listener.local_addr().expect("读取代理端口失败").port();
     let targets = Arc::new(Mutex::new(HashMap::new()));
     let shared = targets.clone();
+    let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
-        for stream in listener.incoming().flatten() {
+        for stream in listener.incoming() {
+            // 以前用 `incoming().flatten()` 把 accept 错误整个吞掉：句柄耗尽
+            // 之类的持续错误会让这里满核空转，日志里还一个字都没有。
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("[proxy] accept 失败：{error}");
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+            };
+            if active.load(Ordering::Relaxed) >= PROXY_MAX_CONNECTIONS {
+                let mut socket = stream;
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                );
+                continue;
+            }
             let targets = shared.clone();
-            std::thread::spawn(move || proxy_connection(stream, targets));
+            let active = active.clone();
+            active.fetch_add(1, Ordering::Relaxed);
+            std::thread::spawn(move || {
+                proxy_connection(stream, targets);
+                active.fetch_sub(1, Ordering::Relaxed);
+            });
         }
     });
     (port, targets)
@@ -583,6 +629,10 @@ fn start_proxy() -> (u16, Arc<Mutex<HashMap<String, ProxyTarget>>>) {
 
 fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyTarget>>>) {
     let _ = stream.set_nodelay(true);
+    // 半开连接（浏览器崩溃、睡眠唤醒、预连接）会让读请求头永久阻塞。
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    // 浏览器不再读数据时（切线路、关房间、MSE 卡死），写方向也要能退出来。
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
     let Ok(clone) = stream.try_clone() else { return };
     let mut reader = BufReader::new(clone);
     let mut line = String::new();
@@ -629,12 +679,12 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
         return;
     };
 
-    let client = match reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-    {
-        Ok(client) => client,
-        Err(_) => return,
+    let Some(client) = upstream_client() else {
+        let _ = write!(
+            socket,
+            "HTTP/1.1 502 Bad Gateway\r\n{cors}Connection: close\r\nContent-Length: 0\r\n\r\n"
+        );
+        return;
     };
     let response = client
         .get(&target.url)
@@ -660,7 +710,24 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     {
         return;
     }
-    let _ = std::io::copy(&mut response, &mut socket);
+    // 响应头已经发完，后面只写不读，读超时没有意义。
+    let _ = socket.set_read_timeout(None);
+    // 手动搬数据而不是 `std::io::copy`：写失败要立刻退出。
+    // 否则浏览器切线路/关房间后，这条线程还会卡在 write 上，
+    // 上游连接也一直挂着，长时间挂机线程数只增不减。
+    let mut buffer = vec![0u8; 32 * 1024];
+    loop {
+        match response.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                if socket.write_all(&buffer[..count]).is_err() {
+                    break;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
     let _ = socket.flush();
 }
 
@@ -976,7 +1043,14 @@ async fn douyu_play(
 
     let referer = format!("https://www.douyu.com/{}", detail.room_id);
     let mut proxy_urls = Vec::with_capacity(urls.len());
-    if let Ok(mut targets) = state.proxy_targets.lock() {
+    // 锁中毒（持锁线程 panic）时用 into_inner 继续：这里如果直接跳过，
+    // 所有平台的播放都会返回空地址列表，界面只显示「没有可用的播放地址」，
+    // 真实原因（代理表不可用）完全看不到。
+    let mut targets = match state.proxy_targets.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    {
         for (line, url) in urls.into_iter().enumerate() {
             let token = format!("{}-{}-{line}", key.replace(':', "_"), index);
             targets.insert(
@@ -1009,7 +1083,14 @@ fn proxy_play_urls(
     referer: String,
 ) -> Vec<String> {
     let mut proxied = Vec::with_capacity(urls.len());
-    if let Ok(mut targets) = state.proxy_targets.lock() {
+    // 锁中毒（持锁线程 panic）时用 into_inner 继续：这里如果直接跳过，
+    // 所有平台的播放都会返回空地址列表，界面只显示「没有可用的播放地址」，
+    // 真实原因（代理表不可用）完全看不到。
+    let mut targets = match state.proxy_targets.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    {
         for (line, url) in urls.into_iter().enumerate() {
             let token = format!("{}-{}-{line}", key.replace(':', "_"), index);
             targets.insert(
@@ -1145,6 +1226,13 @@ fn open_url(url: String) -> Result<(), String> {
     let url = url.trim().to_string();
     if url.is_empty() {
         return Err("链接为空".to_string());
+    }
+    // 只放行 http/https。这个命令 WebView 可以直接调，不校验的话
+    // `file:///...exe`、UNC 路径都会被 ShellExecuteW 当成可执行目标。
+    let lower = url.get(..8).map(str::to_ascii_lowercase).unwrap_or_default();
+    let is_http = lower.starts_with("https://") || lower.starts_with("http://");
+    if !is_http {
+        return Err("只支持打开 http/https 链接".to_string());
     }
     win32::open_in_browser(&url)
 }
@@ -1491,52 +1579,6 @@ fn webview_data_dir() -> PathBuf {
     }
 }
 
-/// 旧版本 WebView2 的默认目录（跟着 identifier 走）。
-fn legacy_webview_dir() -> Option<PathBuf> {
-    std::env::var("LOCALAPPDATA")
-        .ok()
-        .map(|local| Path::new(&local).join("top.june6699.starveil").join("EBWebView"))
-}
-
-/// 老版本的 localStorage 留在默认目录里，首次启动时搬一次，避免设置/关注丢失。
-///
-/// 注意 WebView2 会在我们指定的目录里再建一层 `EBWebView`（profile 根），
-/// 所以落点是 `<data_dir>/EBWebView/Default/Local Storage`，少写一层就会搬错地方。
-fn migrate_webview_profile(target: &Path) {
-    let marker = target
-        .join("EBWebView")
-        .join("Default")
-        .join("Local Storage");
-    if marker.exists() {
-        return;
-    }
-    let Some(legacy) = legacy_webview_dir() else {
-        return;
-    };
-    let source = legacy.join("Default").join("Local Storage");
-    if !source.exists() {
-        return;
-    }
-    if copy_dir(&source, &marker).is_ok() {
-        println!("[starveil] 已迁移旧的 WebView 本地存储：{}", source.display());
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest = to.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir(&path, &dest)?;
-        } else {
-            std::fs::copy(&path, &dest)?;
-        }
-    }
-    Ok(())
-}
-
 /// 运行时日志：写到 `%LOCALAPPDATA%\Starveil\starveil.log`，
 /// 出问题（比如窗口空白）时用户可以直接把这个文件发过来。
 fn log_line(message: &str) {
@@ -1616,14 +1658,13 @@ async fn webdav_download(
     .map_err(|error| format!("同步任务异常：{error}"))?
 }
 
-/// 准备 WebView2 的数据目录：迁移旧 localStorage，并把目录通过环境变量交给 WebView2。
+/// 准备 WebView2 的数据目录，并把目录通过环境变量交给 WebView2。
 ///
 /// 这里不用 `WebviewWindowBuilder::data_directory`——实践里由 Rust 手动建窗时
 /// WebView2 环境会创建失败（窗口在但没有 webview 进程、页面空白），
 /// 而配置建窗 + `WEBVIEW2_USER_DATA_FOLDER` 这条路上表现正常。
 fn prepare_webview_data() {
     let data_dir = webview_data_dir();
-    migrate_webview_profile(&data_dir);
     let _ = std::fs::create_dir_all(&data_dir);
 
     if std::env::var("STARVEIL_NO_DATADIR").is_err() {

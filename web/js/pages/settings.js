@@ -11,6 +11,7 @@ import {
   HISTORY_LIMIT,
   STATS_RANGES,
   getSetting,
+  loadFollow,
   loadLogin,
   resetSettings,
   saveLogin,
@@ -551,8 +552,6 @@ function themeLabel(theme) {
 
 function applyCardSize(size) {
   document.body.dataset.cardSize = size;
-  const grid = document.getElementById('view');
-  if (!grid) return;
 }
 
 function applyScaleMode(mode) {
@@ -590,6 +589,10 @@ function paintHistory(content, ctx) {
   };
 
   function paintRecords() {
+    // 「加载更多」是直接再调一次本函数的，而顶部分段控件是 paint() 加的。
+    // 这里先清掉上一次画的内容（只留第一段），否则每点一次就叠一层：
+    // 两个「清空记录」、两份提示、两整份卡片，DOM 数量随点击次数涨。
+    while (content.childElementCount > 1) content.lastElementChild.remove();
     const head = document.createElement('div');
     head.className = 'history-actions';
     head.innerHTML = `<button class="btn small ghost">${icon('close', 15)} 清空记录</button>`;
@@ -762,7 +765,9 @@ function paintSync(content, ctx, repaint) {
         keywords: state.settings.danmaku?.blockKeywords || '',
         users: state.settings.danmaku?.blockUsers || '',
       },
-      follows: JSON.parse(localStorage.getItem('simple-live.follow.v2') || '[]'),
+      // 走 store 的读取而不是直接 JSON.parse：localStorage 里的数据可能被
+      // 半写入或手工改坏，未捕获的异常会让「导出备份」点了毫无反应。
+      follows: loadFollow(),
       history: state.history,
       // 登录信息（Cookie）一并导出，换机后导入即可恢复登录态。
       accounts: collectAccounts(),

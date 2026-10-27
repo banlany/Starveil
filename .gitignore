@@ -38,6 +38,10 @@ ToDo.md
 /tools/shot_any.py
 /tools/type_text.py
 
+# 排查「看一段时间卡一下」时写的直链探针与等价代理（只在本机用）
+/tools/flv_probe.py
+/tools/flv_proxy.py
+
 # 图片：只保留文档配图与运行/构建必需的资源，其余一律忽略
 *.png
 *.jpg

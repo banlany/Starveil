@@ -139,9 +139,17 @@ function openRoom(platform, roomId) {
     roomRootParams = state.routeParams;
     roomStackDepth = backStack.length;
   }
+  // 同平台进房（从搜索结果/首页点卡片）不要动缓存，否则返回后列表和关键词都没了。
+  const platformChanged = platform !== state.platform;
   state.platform = platform;
   state.settings.home.platform = platform;
   saveSettings();
+  if (platformChanged) {
+    // 从别的平台点进来（关注页里混着虎牙主播）时要清掉上一平台的列表缓存，
+    // 否则返回首页会看到 tab 已是新平台、卡片还是旧平台的。
+    resetPlatformCaches();
+    syncPlatformTabs();
+  }
   go('room', { platform, roomId: String(roomId) });
 }
 
@@ -165,6 +173,15 @@ function showPlatformLocked(platform) {
   });
 }
 
+/// 切平台后必须清掉上一平台的列表缓存：首页/分类/搜索都是全局 state，
+/// 不清就会出现「tab 已经切到虎牙、列表还是 B 站卡片」这种错位。
+function resetPlatformCaches() {
+  state.home = { items: [], page: 0, loading: false, done: false, error: '' };
+  state.category = { tree: [], expanded: {}, loading: false, error: '' };
+  state.search.results = [];
+  state.search.keyword = '';
+}
+
 function selectPlatform(platform, options = {}) {
   if (!isPlatformEnabled(platform)) {
     if (!options.silent) showPlatformLocked(platform);
@@ -174,10 +191,7 @@ function selectPlatform(platform, options = {}) {
   state.platform = platform;
   state.settings.home.platform = platform;
   saveSettings();
-  state.home = { items: [], page: 0, loading: false, done: false, error: '' };
-  state.category = { tree: [], expanded: {}, loading: false, error: '' };
-  state.search.results = [];
-  state.search.keyword = '';
+  resetPlatformCaches();
   syncPlatformTabs();
   if (state.page === 'home' || state.page === 'category') {
     render({ keepScroll: false });
@@ -357,6 +371,10 @@ function initGlobalShortcuts() {
       back();
     }
     if (event.key === 'Escape' && ['settingsDetail', 'categoryRooms', 'search'].includes(state.page)) {
+      // 有弹窗/下拉菜单开着时，Escape 只关浮层，不要再退一页。
+      // 浮层的 keydown 是后注册的，靠它 stopPropagation 拦不住这里（同节点需要
+      // stopImmediatePropagation 且先注册），所以在源头判一下。
+      if (document.querySelector('.modal-overlay, .menu-overlay')) return;
       event.preventDefault();
       back();
     }
@@ -538,9 +556,16 @@ function init() {
   // 预加载分类树，切换分类页更快
   setTimeout(() => {
     if (!state.category.tree.length && !state.category.loading) {
-      api.categories(state.platform).then((tree) => {
+      // 记住发起时的平台：启动后 1.2 秒内用户可能已经切到别的平台，
+      // 回来的是上一个平台的分类树，直接塞进去会让分类页显示错内容。
+      const platform = state.platform;
+      state.category.loading = true;
+      api.categories(platform).then((tree) => {
+        if (platform !== state.platform) return;
         if (!state.category.tree.length) state.category.tree = tree;
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        state.category.loading = false;
+      });
     }
   }, 1200);
 }

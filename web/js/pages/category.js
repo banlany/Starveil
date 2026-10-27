@@ -2,7 +2,7 @@
 import { api, categoryImage } from '../api.js';
 import { icon } from '../icons.js';
 import { state } from '../store.js';
-import { emptyState, skeletonGrid, toast } from '../ui.js';
+import { emptyState, escapeHtml, skeletonGrid, toast } from '../ui.js';
 
 const COLLAPSED_COUNT = 15;
 
@@ -21,10 +21,8 @@ export function renderCategory(ctx) {
       const tree = await api.categories(platform);
       if (platform !== state.platform || ctx.route() !== 'category') return;
       state.category.tree = tree;
-      state.category.loading = false;
       renderTree();
     } catch (error) {
-      state.category.loading = false;
       state.category.error = String(error);
       body.replaceChildren(
         emptyState({
@@ -35,6 +33,10 @@ export function renderCategory(ctx) {
           onAction: load,
         })
       );
+    } finally {
+      // 早退（平台已切、已换页）也要复位：否则这个标志一直是 true，
+      // 启动时的分类预加载会被永久跳过。
+      state.category.loading = false;
     }
   }
 
@@ -62,9 +64,11 @@ export function renderCategory(ctx) {
         item.className = 'category-item';
         const pic = categoryImage(child.pic);
         const initial = (child.name || '?').slice(0, 1);
+        // 分类名和图标地址都来自平台接口（网络数据），拼进 innerHTML 前必须转义，
+        // 否则名字里一个 `<` 就能破坏结构，地址里一个引号能注入属性。
         item.innerHTML = `
-          <span class="category-icon">${pic ? `<img src="${pic}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : initial}</span>
-          <span class="category-name">${child.name}</span>`;
+          <span class="category-icon">${pic ? `<img src="${escapeHtml(pic)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : escapeHtml(initial)}</span>
+          <span class="category-name">${escapeHtml(child.name)}</span>`;
         const image = item.querySelector('.category-icon img');
         if (image) {
           image.addEventListener('error', () => {
@@ -110,15 +114,9 @@ export function renderCategory(ctx) {
     load();
   }
 
-  const onScroll = () => {
-    const view = document.getElementById('view');
-    if (!view.dataset.categoryHint && view.scrollTop > 0) {
-      view.dataset.categoryHint = '1';
-    }
-  };
+  // 分类页没有滚动联动逻辑，返回值是给路由的清理钩子预留的。
   return () => {};
 }
-
 function skeletonLines() {
   const wrap = document.createElement('div');
   wrap.innerHTML = `

@@ -1101,6 +1101,10 @@ export function renderRoom(ctx, params = {}) {
         enableStashBuffer: true,
         stashInitialSize: 1024,
         autoCleanupSourceBuffer: true,
+        // 库默认向后保留 120~180 秒。直播用不到这么长的历史，一旦播放点落后，
+        // 这段数据只会白占内存、并拖慢每次 appendBuffer，所以收紧到 30~60 秒。
+        autoCleanupMaxBackwardDuration: 60,
+        autoCleanupMinBackwardDuration: 30,
         liveBufferLatencyChasing: false,
         fixAudioTimestampGap: true,
       });
@@ -1640,6 +1644,21 @@ export function renderRoom(ctx, params = {}) {
       session.stallTimer = setInterval(() => {
         if (session.destroyed || video.paused || video.readyState < 2) return;
         const now = Date.now();
+        // 延迟兜底。关掉 liveBufferLatencyChasing 后，任何一次卡顿（窗口被切走、
+        // 网络抖一下、解码跟不上）都会让播放点永久落后：之后收到的数据只会继续
+        // 往后 append，播放点按 1 倍速再也追不回来，延迟和缓冲一起膨胀到几分钟，
+        // 内存与 appendBuffer 压力反过来让小卡更多——就是「越看越卡、最后重连」。
+        // 只在落后超过 30 秒时跳一次回到最新位置，日常小抖动不参与，避免频繁跳帧。
+        const bufferedEnd = video.buffered.length
+          ? video.buffered.end(video.buffered.length - 1)
+          : 0;
+        if (bufferedEnd - video.currentTime > 30) {
+          const target = Math.max(0, bufferedEnd - 2);
+          video.currentTime = target;
+          session.lastProgressTime = target;
+          session.lastProgressAt = now;
+          return;
+        }
         if (Math.abs(video.currentTime - session.lastProgressTime) > 0.4) {
           session.lastProgressTime = video.currentTime;
           session.lastProgressAt = now;

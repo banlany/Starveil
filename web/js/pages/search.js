@@ -176,19 +176,24 @@ export function renderSearch(ctx, params = {}) {
     runSearch(value);
   }
 
+  // 请求序号：连续回车、切平台、切「房间/主播」都会并发多个请求，
+  // 慢的那个回来不能把新结果盖掉（以前只判路由，同一个路由判不出来）。
+  let searchSeq = 0;
+
   async function runSearch(keyword) {
+    const seq = ++searchSeq;
     state.search.keyword = keyword;
     addSearchHistory(keyword);
     input.value = keyword;
     if (searchType === 'anchor') {
-      await runAnchorSearch(keyword);
+      await runAnchorSearch(keyword, seq);
       return;
     }
     body.replaceChildren(skeletonGrid(10));
     const platform = state.platform;
     try {
       const results = await api.search(platform, keyword);
-      if (ctx.route() !== 'search') return;
+      if (seq !== searchSeq || ctx.route() !== 'search') return;
       state.search.results = results;
       body.innerHTML = '';
       const hint = document.createElement('div');
@@ -215,7 +220,7 @@ export function renderSearch(ctx, params = {}) {
       }
       body.appendChild(grid);
     } catch (error) {
-      if (ctx.route() !== 'search') return;
+      if (seq !== searchSeq || ctx.route() !== 'search') return;
       body.innerHTML = '';
       body.appendChild(
         emptyState({
@@ -230,7 +235,7 @@ export function renderSearch(ctx, params = {}) {
     }
   }
 
-  async function runAnchorSearch(keyword) {
+  async function runAnchorSearch(keyword, seq = ++searchSeq) {
     state.search.keyword = keyword;
     addSearchHistory(keyword);
     input.value = keyword;
@@ -238,7 +243,7 @@ export function renderSearch(ctx, params = {}) {
     const platform = state.platform;
     try {
       const anchors = await api.searchAnchors(platform, keyword);
-      if (ctx.route() !== 'search') return;
+      if (seq !== searchSeq || ctx.route() !== 'search') return;
       state.search.anchors = anchors;
       body.innerHTML = '';
       const hint = document.createElement('div');
@@ -283,7 +288,7 @@ export function renderSearch(ctx, params = {}) {
       bindImageFallback(grid);
       body.appendChild(grid);
     } catch (error) {
-      if (ctx.route() !== 'search') return;
+      if (seq !== searchSeq || ctx.route() !== 'search') return;
       body.innerHTML = '';
       body.appendChild(
         emptyState({

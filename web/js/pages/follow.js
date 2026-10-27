@@ -1,7 +1,7 @@
 // 关注页：本地关注列表、标签与平台筛选。
 import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
-import { collectAccounts, loadFollow, removeFollow, restoreAccounts, state, updateFollow } from '../store.js';
+import { collectAccounts, followKey, loadFollow, removeFollow, restoreAccounts, saveFollow, state, updateFollow } from '../store.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
 export function renderFollow(ctx) {
@@ -355,12 +355,16 @@ export function renderFollow(ctx) {
     const button = page.querySelector('#follow-refresh');
     button?.classList.add('is-loading');
     let cursor = 0;
+    // 结果先攒在内存里，全部拉完再落一次盘：原先每个主播都走一次
+    // updateFollow（load + 解析 + 序列化 + 写盘），200 个关注就是几百次同步 IO，
+    // 刷新期间界面会明显发顿。
+    const patches = new Map();
     const worker = async () => {
       while (cursor < list.length) {
         const item = list[cursor++];
         try {
           const payload = await api.openRoom(item.platform, item.room_id);
-          updateFollow(item.platform, item.room_id, {
+          patches.set(followKey(item.platform, item.room_id), {
             live: Boolean(payload.detail.live),
             title: payload.detail.title || item.title,
             user_name: payload.detail.user_name || item.user_name,
@@ -373,7 +377,17 @@ export function renderFollow(ctx) {
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    // 并发数取设置里的「更新线程数」，0/未设置时按 4 跑。
+    const threads = Math.max(1, Math.min(8, Number(state.settings.follow?.threads) || 4));
+    await Promise.all(Array.from({ length: Math.min(threads, list.length) }, worker));
+    if (patches.size) {
+      saveFollow(
+        list.map((item) => {
+          const patch = patches.get(followKey(item.platform, item.room_id));
+          return patch ? { ...item, ...patch } : item;
+        })
+      );
+    }
     refreshing = false;
     if (!alive) return;
     button?.classList.remove('is-loading');

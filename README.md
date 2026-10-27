@@ -183,8 +183,7 @@ cargo tauri build --no-bundle
 ```
 
 **数据位置**：设置、关注、观看记录与登录 Cookie 存在  
-`%LOCALAPPDATA%\Starveil\WebView2`（0.4.0 起；旧版本在 `top.june6699.starveil\EBWebView`，
-首次启动会自动把 localStorage 迁过来）；删除该目录会同时清掉设置与登录态。
+`%LOCALAPPDATA%\Starveil\WebView2`；删除该目录会同时清掉设置与登录态。
 
 ## 后端命令
 

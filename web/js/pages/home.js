@@ -66,11 +66,22 @@ export function renderHome(ctx) {
     if (state.home.loading) {
       tail.appendChild(spinner(state.home.page > 0 ? '正在加载更多…' : '正在加载热门直播…'));
     } else if (state.home.error) {
+      // 后端/网络返回的错误文本里可能带 `<`、`&`，用 textContent 而不是拼 HTML。
       const error = document.createElement('div');
       error.className = 'page-error';
-      error.innerHTML = `<span>${state.home.error}</span><button class="btn small">重试</button>`;
-      error.querySelector('button').addEventListener('click', () => load(true));
+      const text = document.createElement('span');
+      text.textContent = state.home.error;
+      const retry = document.createElement('button');
+      retry.className = 'btn small';
+      retry.textContent = '重试';
+      retry.addEventListener('click', () => load(true));
+      error.append(text, retry);
       tail.appendChild(error);
+      // 首屏就失败时骨架屏还挂在上面，看起来像还在加载，这里一并清掉。
+      if (skeleton) {
+        skeleton.remove();
+        skeleton = null;
+      }
     } else if (state.home.done || state.settings.home.showMore === false) {
       const end = document.createElement('div');
       end.className = 'list-end';

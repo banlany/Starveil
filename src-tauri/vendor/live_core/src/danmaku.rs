@@ -169,6 +169,43 @@ fn sleep_while(stop: &AtomicBool, duration: Duration) -> bool {
     !stop.load(Ordering::Relaxed)
 }
 
+/// 断线重连的起始间隔。
+const RECONNECT_MIN: Duration = Duration::from_secs(3);
+/// 连续失败时的退避上限。
+const RECONNECT_MAX: Duration = Duration::from_secs(30);
+
+/// 0.4.5 之前是「整个会话累计 3 次就退出」，挂机时间一长（睡眠唤醒、切网、
+/// CDN 踢线）弹幕线程就直接结束，界面既不报错也没有重连按钮，只能重进房。
+/// 现在改成无限重连：连上过一次就把退避拉回最短，连续失败逐次翻倍封顶。
+fn next_backoff(current: Duration) -> Duration {
+    (current * 2).min(RECONNECT_MAX)
+}
+
+/// 失败提示的节流：前两次都提示，之后每 10 次提示一次，避免挂机时刷屏。
+fn should_report(failures: u32) -> bool {
+    failures <= 2 || failures % 10 == 0
+}
+
+/// 给 WebSocket 底层 TCP 设读超时。房间安静时没有它 `read()` 会永久阻塞，
+/// 切房后线程退不出去，socket 与缓冲区一起泄漏。
+///
+/// 目前三站都用 rustls（B 站/虎牙 wss，斗鱼自己包 native-tls），所以正常路径
+/// 一定命中 `Rustls`。剩下的分支打个日志，免得哪天换 TLS 后端后静默失效。
+fn set_read_timeout(
+    socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+) {
+    const TIMEOUT: Option<Duration> = Some(Duration::from_millis(600));
+    match socket.get_ref() {
+        tungstenite::stream::MaybeTlsStream::Rustls(stream) => {
+            let _ = stream.sock.set_read_timeout(TIMEOUT);
+        }
+        tungstenite::stream::MaybeTlsStream::Plain(stream) => {
+            let _ = stream.set_read_timeout(TIMEOUT);
+        }
+        _ => eprintln!("[danmaku] 未预期的 TLS 后端，读超时没有设置"),
+    }
+}
+
 // ---------------------------------------------------------------- 哔哩哔哩
 
 fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
@@ -192,13 +229,14 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
         return;
     }
     let Some(room_id) = bilibili_room_id(extra) else {
+        let _ = tx.send(DanmakuMessage::system("B 站弹幕房间号缺失，弹幕不可用"));
         return;
     };
 
     let url = format!("wss://{host}/sub");
-    let mut attempt = 0;
-    while !stop.load(Ordering::Relaxed) && attempt < 3 {
-        attempt += 1;
+    let mut backoff = RECONNECT_MIN;
+    let mut failures = 0u32;
+    while !stop.load(Ordering::Relaxed) {
         // B 站弹幕服务器会校验 Origin，并可能根据 buvid 下发不同的房间流。
         let mut request = match url.as_str().into_client_request() {
             Ok(request) => request,
@@ -222,13 +260,10 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
 
         match tungstenite::connect(request) {
             Ok((mut socket, _)) => {
-                // 给底层 TCP 设个读超时：否则房间安静时 read() 会永久阻塞，
-                // 切房后线程退不出去，socket 与缓冲区都泄漏。
-                if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_ref() {
-                    let _ = stream
-                        .sock
-                        .set_read_timeout(Some(Duration::from_millis(600)));
-                }
+                // 连上就算一次成功：退避和失败计数都归零，下一次断线重新从 3 秒起步。
+                backoff = RECONNECT_MIN;
+                failures = 0;
+                set_read_timeout(&mut socket);
                 if let Err(error) = socket.send(tungstenite::Message::Binary(
                     bilibili_packet(7, bilibili_join_body(&room_id, token, buvid3, *uid)).into(),
                 )) {
@@ -264,16 +299,25 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
                         Err(_) => break,
                     }
                 }
+                // 连上之后又断了：提示一次（后续静默重试，别刷屏）。
+                failures += 1;
+                if !stop.load(Ordering::Relaxed) && failures == 1 {
+                    let _ = tx.send(DanmakuMessage::system("B 站弹幕已断开，正在重连…"));
+                }
             }
             Err(error) => {
-                let _ = tx.send(DanmakuMessage::system(format!(
-                    "B 站弹幕连接失败：{error}"
-                )));
+                failures += 1;
+                if should_report(failures) {
+                    let _ = tx.send(DanmakuMessage::system(format!(
+                        "B 站弹幕连接失败：{error}"
+                    )));
+                }
             }
         }
-        if !sleep_while(stop, Duration::from_secs(3)) {
+        if !sleep_while(stop, backoff) {
             return;
         }
+        backoff = next_backoff(backoff);
     }
 }
 
@@ -622,15 +666,21 @@ fn bilibili_extract_color(info: &[serde_json::Value]) -> Option<u32> {
 fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
     ensure_crypto_provider();
     let RoomExtra::Douyu { rid } = extra else {
+        let _ = tx.send(DanmakuMessage::system("斗鱼弹幕参数缺失，已跳过弹幕"));
         return;
     };
     let host = "danmuproxy.douyu.com";
-    let mut attempt = 0;
-    while !stop.load(Ordering::Relaxed) && attempt < 3 {
-        attempt += 1;
-        let port = 8501 + (attempt - 1) % 6;
+    // 端口 8501~8506 轮着试；退避与失败计数单独维护，连上就重置。
+    let mut attempt = 0u16;
+    let mut backoff = RECONNECT_MIN;
+    let mut failures = 0u32;
+    while !stop.load(Ordering::Relaxed) {
+        let port = 8501 + attempt % 6;
+        attempt = attempt.wrapping_add(1);
         match douyu_connect(host, port) {
             Ok(mut socket) => {
+                backoff = RECONNECT_MIN;
+                failures = 0;
                 let _ = socket.send(tungstenite::Message::Binary(
                     douyu_packet(&format!("type@=loginreq/roomid@={rid}/")).into(),
                 ));
@@ -663,16 +713,24 @@ fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) 
                         Err(_) => break,
                     }
                 }
+                failures += 1;
+                if !stop.load(Ordering::Relaxed) && failures == 1 {
+                    let _ = tx.send(DanmakuMessage::system("斗鱼弹幕已断开，正在重连…"));
+                }
             }
             Err(error) => {
-                let _ = tx.send(DanmakuMessage::system(format!(
-                    "斗鱼弹幕连接失败：{error}"
-                )));
+                failures += 1;
+                if should_report(failures) {
+                    let _ = tx.send(DanmakuMessage::system(format!(
+                        "斗鱼弹幕连接失败：{error}"
+                    )));
+                }
             }
         }
-        if !sleep_while(stop, Duration::from_secs(3)) {
+        if !sleep_while(stop, backoff) {
             return;
         }
+        backoff = next_backoff(backoff);
     }
 }
 
@@ -1105,24 +1163,20 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
         .decode("ABQdAAwsNgBM")
         .unwrap_or_default();
     let url = "wss://cdnws.api.huya.com";
-    let mut attempt = 0;
-    while !stop.load(Ordering::Relaxed) && attempt < 3 {
-        attempt += 1;
+    let mut backoff = RECONNECT_MIN;
+    let mut failures = 0u32;
+    while !stop.load(Ordering::Relaxed) {
         match tungstenite::connect(url) {
             Ok((mut socket, _)) => {
-                if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_ref() {
-                    let _ = stream
-                        .sock
-                        .set_read_timeout(Some(Duration::from_millis(600)));
-                }
-                if socket
-                    .send(tungstenite::Message::Binary(
-                        huya_join_packet(ayyuid, top_sid).into(),
-                    ))
-                    .is_err()
-                {
-                    continue;
-                }
+                backoff = RECONNECT_MIN;
+                failures = 0;
+                set_read_timeout(&mut socket);
+                // 进房包发不出去说明这条连接已经废了：照常进读取循环，
+                // 第一次 read 就会报错退出，交给外层统一退避。
+                // （这里不能用 continue —— 会跳过下面的 sleep，变成紧循环狂连。）
+                let _ = socket.send(tungstenite::Message::Binary(
+                    huya_join_packet(ayyuid, top_sid).into(),
+                ));
                 let mut last_heartbeat = std::time::Instant::now();
                 loop {
                     if stop.load(Ordering::Relaxed) {
@@ -1147,15 +1201,23 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
                         Err(_) => break,
                     }
                 }
+                failures += 1;
+                if !stop.load(Ordering::Relaxed) && failures == 1 {
+                    let _ = tx.send(DanmakuMessage::system("虎牙弹幕已断开，正在重连…"));
+                }
             }
             Err(error) => {
-                let _ = tx.send(DanmakuMessage::system(format!(
-                    "虎牙弹幕连接失败：{error}"
-                )));
+                failures += 1;
+                if should_report(failures) {
+                    let _ = tx.send(DanmakuMessage::system(format!(
+                        "虎牙弹幕连接失败：{error}"
+                    )));
+                }
             }
         }
-        if !sleep_while(stop, Duration::from_secs(3)) {
+        if !sleep_while(stop, backoff) {
             return;
         }
+        backoff = next_backoff(backoff);
     }
 }

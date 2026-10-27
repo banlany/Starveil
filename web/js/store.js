@@ -165,14 +165,19 @@ export const state = {
   unlistenDanmaku: null,
 };
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function merge(base, patch) {
+/// 深合并：对象逐层递归，其它类型（含数组、null）直接覆盖。
+///
+/// 导出的目的是给导入/同步用——浅展开会让「只带部分字段」的包把整段默认值顶掉，
+/// 例如 `{"danmaku": null}` 会让 `settings.danmaku` 变成 null，进房时读
+/// `danmaku.enabled` 直接抛 TypeError，整页渲染失败。
+export function merge(base, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return base;
   const output = { ...base };
   for (const [key, value] of Object.entries(patch)) {
+    // null 不覆盖已有的对象段。localStorage 里某段是 null（旧版本写的、手工改的、
+    // 写入被打断）时，如果照直覆盖，后面读 `danmaku.enabled` 就是 TypeError，
+    // 整页渲染失败且坏数据会一直留在盘上。
+    if (value === null && base[key] && typeof base[key] === 'object') continue;
     if (value && typeof value === 'object' && !Array.isArray(value) && base[key] && typeof base[key] === 'object') {
       output[key] = merge(base[key], value);
     } else {
@@ -180,6 +185,10 @@ function merge(base, patch) {
     }
   }
   return output;
+}
+
+export function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 export function loadSettings() {
@@ -190,19 +199,26 @@ export function loadSettings() {
     stored = {};
   }
   const settings = merge(clone(DEFAULT_SETTINGS), stored);
-  // 兼容旧键
-  if (stored.theme) {
+  // 兼容 0.3 时代的顶层 theme/accent：只有新结构里缺这一项时才回退。
+  // 以前是无条件覆盖，而 saveSettings 又会把旧镜像一并写出去，
+  // 结果「设置里改成浅色 → 重启又变回深色」。
+  if (stored.theme && !stored.appearance?.theme) {
     settings.appearance.theme = stored.theme;
-    settings.theme = stored.theme;
   }
-  if (stored.accent) {
+  if (stored.accent && !stored.appearance?.accent) {
     settings.appearance.accent = stored.accent;
-    settings.accent = stored.accent;
   }
   return settings;
 }
 
 export function saveSettings() {
+  // 顶层 theme/accent 是早期键，现在只当镜像：每次落盘都从 appearance 回填，
+  // 保证两条路径写出去的值一致，loadSettings 的兼容分支不会再拿旧值覆盖新值。
+  const appearance = state.settings?.appearance;
+  if (appearance) {
+    state.settings.theme = appearance.theme;
+    state.settings.accent = appearance.accent;
+  }
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
 }
 
@@ -224,7 +240,10 @@ export function setSetting(path, value) {
   }
   node[parts.at(-1)] = value;
   saveSettings();
-  applyTheme();
+  // 只有外观类设置需要重算样式（applyTheme 会改 CSS 变量并广播事件，
+  // 侧边栏主题按钮也会跟着重建）。拖弹幕不透明度这种滑块时每移动一格都重算，
+  // 主线程会被这些无关的 DOM 操作占住，手感明显发涩。
+  if (path.startsWith('appearance.')) applyTheme();
   return value;
 }
 
