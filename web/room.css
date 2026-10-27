@@ -1090,6 +1090,14 @@ body.is-resizing-chat .room-chat {
   color: rgba(255, 255, 255, 0.9);
 }
 
+/* 聊天行里的表情图：按父元素字号缩放，基线略微下沉让它和文字居中（em 单位随字号走） */
+.chat-emoji {
+  height: 1.25em;
+  width: auto;
+  vertical-align: -0.25em;
+  margin: 0 1px;
+}
+
 .chat-line.system {
   color: rgba(255, 255, 255, 0.38);
   font-size: 11.5px;

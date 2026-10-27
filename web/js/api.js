@@ -250,7 +250,7 @@ const DEMO_DM_TEXTS = [
   '刚下班就来了',
   '这局有点难啊',
   '对面有点东西',
-  '弹幕护体',
+  '弹幕护体[赞]',
   '这歌好听',
   '求个歌单',
   '第一次看，已关注',
@@ -268,17 +268,34 @@ const DEMO_DM_TEXTS = [
   '明天还播吗',
 ];
 
+/// 演示用的表情弹幕。真机上这些图是平台下发的 https 地址，这里用内联 SVG，
+/// 保证离线打开 web/ 也能看到「表情混排」的渲染效果（弹幕层与聊天栏共用）。
+const DEMO_EMOTICON = {
+  key: '[赞]',
+  url:
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E" +
+    "%3Ccircle cx='10' cy='10' r='9' fill='%23ffcd00'/%3E" +
+    "%3Ccircle cx='7' cy='8' r='1.3' fill='%23333'/%3E" +
+    "%3Ccircle cx='13' cy='8' r='1.3' fill='%23333'/%3E" +
+    "%3Cpath d='M6.2 12.2q3.8 3 7.6 0' stroke='%23333' stroke-width='1.3' fill='none' stroke-linecap='round'/%3E" +
+    '%3C/svg%3E',
+  width: 20,
+  height: 20,
+};
+
 function startDemoDanmaku(handler) {
   let index = 0;
   const timer = setInterval(() => {
     const text = DEMO_DM_TEXTS[index % DEMO_DM_TEXTS.length];
-    handler({
+    const payload = {
       user: DEMO_DM_USERS[index % DEMO_DM_USERS.length],
       text,
       color: index % 9 === 0 ? 0x66ccff : 0xffffff,
       position: index % 27 === 0 ? 1 : 0,
       system: false,
-    });
+    };
+    if (text.includes(DEMO_EMOTICON.key)) payload.emoticons = [DEMO_EMOTICON];
+    handler(payload);
     index += 1;
   }, 300);
   return () => clearInterval(timer);

@@ -6,7 +6,7 @@
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE），  
 协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.4.4** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
+> 当前版本 **0.4.5** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
 
@@ -146,10 +146,9 @@ Starveil/
 │  ├─ shot.py               按进程截图与点击（DPI 感知）
 │  └─ make_icon.py          生成 1024 图标、ico 与 web logo
 ├─ docs/
-│  ├─ reference-spec.md     原版界面逐页记录
-│  └─ img/                  界面截图（README 引用，其余图片不入库）
+│  ├─ fly-barrage-changes.md  弹幕库改造清单与重建步骤
+│  └─ img/                  界面截图（README 引用）
 ├─ .github/workflows/       CI：Windows 构建 + Release（手动触发，出 NSIS 安装包 / 免安装 zip）
-├─ dist/                    本机构建产物（starveil.exe 不入库，只保留随包分发的说明文件）
 └─ CHANGELOG.md             更新日志
 ```
 
@@ -239,8 +238,8 @@ cargo tauri build --no-bundle
 ## 文档
 
 - [CHANGELOG.md](CHANGELOG.md)：版本更新日志
-- [docs/reference-spec.md](docs/reference-spec.md)：原版界面逐页对照
-- [docs/img/](docs/img)：界面截图（README 引用的配图都在这里；仓库不收录其它图片）
+- [docs/fly-barrage-changes.md](docs/fly-barrage-changes.md)：弹幕库改动清单与重建步骤
+- [docs/img/](docs/img)：界面截图
 
 ## 许可与致谢
 

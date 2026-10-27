@@ -34,6 +34,23 @@ pub struct DanmakuMessage {
     /// B 站醒目留言（SC）；普通弹幕为 None。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sc: Option<SuperChatMessage>,
+    /// 表情弹幕（B 站大表情 / 内嵌小表情）；普通弹幕为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emoticons: Option<Vec<Emoticon>>,
+}
+
+/// 正文里的一个表情片段。
+///
+/// `key` 是它**在正文中出现的样子**：内嵌小表情是带中括号的占位符（`[热]`），
+/// 大表情是正文本身（`冲鸭`，`upower_*` 这类自带中括号）。前端据此把正文换成
+/// `[图片 id]` 占位符，交给弹幕库的图文混排渲染。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Emoticon {
+    pub key: String,
+    /// 已经统一成 https 的表情图地址（B 站下发的是 http，WebView 里会被拦）。
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -55,6 +72,7 @@ impl DanmakuMessage {
             system: false,
             position: 0,
             sc: None,
+            emoticons: None,
         }
     }
 
@@ -66,6 +84,7 @@ impl DanmakuMessage {
             system: true,
             position: 0,
             sc: None,
+            emoticons: None,
         }
     }
 }
@@ -388,6 +407,7 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
                     start_time,
                     end_time,
                 }),
+                emoticons: None,
             });
             continue;
         }
@@ -420,6 +440,7 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             _ => 0,
         };
         let color = bilibili_extract_color(info);
+        let emoticons = bilibili_extract_emoticons(info, &text);
 
         let _ = tx.send(DanmakuMessage {
             user,
@@ -428,6 +449,7 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             system: false,
             position,
             sc: None,
+            emoticons,
         });
     }
 }
@@ -454,6 +476,108 @@ fn normalize_color(value: &serde_json::Value) -> Option<u32> {
     let rgb = (raw & 0x00FF_FFFF) as u32;
     // 0 在弹幕里等于「没给颜色」，交给下一层回退。
     (rgb > 0).then_some(rgb)
+}
+
+/// 值可能是对象，也可能是「对象序列化成的 JSON 字符串」，统一解析成对象。
+///
+/// 平台这两种形态都会下发（同一字段在不同客户端/版本里不一致），
+/// 所以凡是要读 `info[0][13]` / `info[0][15]` 的地方都得先过这一层。
+fn bilibili_as_object(value: &serde_json::Value) -> Option<serde_json::Value> {
+    match value {
+        serde_json::Value::String(text) => {
+            let parsed = serde_json::from_str::<serde_json::Value>(text).ok()?;
+            parsed.is_object().then_some(parsed)
+        }
+        other => other.is_object().then(|| other.clone()),
+    }
+}
+
+/// B 站下发的表情图都是 `http://`，在 WebView 里会被当作混合内容拦掉，
+/// 表现为「表情占位符在、图片不出来」。这里统一升到 https。
+fn bilibili_upgrade_scheme(url: &str) -> String {
+    match url.strip_prefix("http://") {
+        Some(rest) => format!("https://{rest}"),
+        None => url.to_string(),
+    }
+}
+
+fn emoticon_dimension(object: &serde_json::Value, key: &str) -> u32 {
+    object
+        .get(key)
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse::<u64>().ok()))
+        })
+        .unwrap_or(20)
+        .clamp(1, 4096) as u32
+}
+
+/// 从一条 `DANMU_MSG` 里挖出表情，两种形态都要处理：
+///
+/// 1. **大表情**（房间/UP 主/官方/收藏集）：`info[0][13]` 是表情对象，正文就是表情名，
+///    可能带中括号（`[2026嘉然的画册_顿悟]`）也可能不带（`冲鸭`）。普通弹幕这里是 `"{}"`。
+/// 2. **内嵌小表情**：`info[0][15].extra` 里的 `emots`，key 是正文中的 `[表情名]` 占位符。
+///
+/// 返回的 `key` 一律取「它在正文里的原样」，前端负责替换成图片占位符。
+fn bilibili_extract_emoticons(
+    info: &[serde_json::Value],
+    text: &str,
+) -> Option<Vec<Emoticon>> {
+    let meta = info.first()?.as_array()?;
+    let mut list: Vec<Emoticon> = Vec::new();
+
+    // ① 大表情：整条弹幕就是一个表情。
+    if let Some(object) = meta.get(13).and_then(bilibili_as_object) {
+        let url = object
+            .get("url")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim();
+        let word = text.trim();
+        if !url.is_empty() && !word.is_empty() {
+            list.push(Emoticon {
+                key: word.to_string(),
+                url: bilibili_upgrade_scheme(url),
+                width: emoticon_dimension(&object, "width"),
+                height: emoticon_dimension(&object, "height"),
+            });
+        }
+    }
+
+    // ② 内嵌小表情：`info[0][15].extra` 是 JSON 字符串，里面的 `emots` 以占位符为 key。
+    let emots = meta
+        .get(15)
+        .and_then(bilibili_as_object)
+        .and_then(|object| object.get("extra").and_then(bilibili_as_object))
+        .and_then(|extra| extra.get("emots").cloned());
+    if let Some(serde_json::Value::Object(map)) = emots {
+        for (key, value) in &map {
+            // 正文里没出现的占位符不用管（平台会把整套表情都塞进来）。
+            if key.is_empty() || !text.contains(key.as_str()) {
+                continue;
+            }
+            let Some(object) = bilibili_as_object(value) else {
+                continue;
+            };
+            let url = object
+                .get("url")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim();
+            if url.is_empty() {
+                continue;
+            }
+            list.push(Emoticon {
+                key: key.clone(),
+                url: bilibili_upgrade_scheme(url),
+                width: emoticon_dimension(&object, "width"),
+                height: emoticon_dimension(&object, "height"),
+            });
+        }
+    }
+
+    (!list.is_empty()).then_some(list)
 }
 
 /// 从 `info[15]` 里挖颜色。
@@ -625,6 +749,7 @@ fn douyu_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
                     system: false,
                     position: 0,
                     sc: None,
+                    emoticons: None,
                 });
             }
             return;
@@ -742,6 +867,47 @@ mod tests {
         assert_eq!(messages[0].user, "测试用户");
         assert_eq!(messages[0].text, "你好世界");
         assert_eq!(messages[0].color, Some(0xFF0000));
+    }
+
+    #[test]
+    fn b站大表情取正文并升https() {
+        // info[0][13] 是表情对象，正文就是表情名（官方表情不带中括号）。
+        let json = r#"{"cmd":"DANMU_MSG","info":[[0,1,25,16777215,1700000000,0,0,0,0,0,0,0,0,{"url":"http://i0.hdslb.com/big.png","emoticon_unique":"official_332","width":200,"height":60,"bulge_display":0},0,{}],"冲鸭","[uid,名字]"]}"#;
+        let (tx, rx) = channel();
+        bilibili_parse_json(json, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        let emoticons = messages[0].emoticons.as_ref().expect("应该有表情");
+        assert_eq!(emoticons.len(), 1);
+        assert_eq!(emoticons[0].key, "冲鸭");
+        assert_eq!(emoticons[0].url, "https://i0.hdslb.com/big.png");
+        assert_eq!(emoticons[0].width, 200);
+        assert_eq!(emoticons[0].height, 60);
+    }
+
+    #[test]
+    fn b站内嵌小表情按正文占位符取() {
+        // info[0][15].extra 是 JSON 字符串，emots 以正文里的 [表情名] 为 key；
+        // 平台会把整套表情都塞进来，正文没出现的不能收。
+        let json = r#"{"cmd":"DANMU_MSG","info":[[0,1,25,16777215,1700000000,0,0,0,0,0,0,0,0,{},0,{"extra":"{\"emots\":{\"[热]\":{\"url\":\"http://i0.hdslb.com/hot.png\",\"width\":20,\"height\":20},\"[冷]\":{\"url\":\"http://i0.hdslb.com/cold.png\",\"width\":20,\"height\":20}}}"}],"白花300块[热]","[uid,名字]"]}"#;
+        let (tx, rx) = channel();
+        bilibili_parse_json(json, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        let emoticons = messages[0].emoticons.as_ref().expect("应该有表情");
+        assert_eq!(emoticons.len(), 1);
+        assert_eq!(emoticons[0].key, "[热]");
+        assert_eq!(emoticons[0].url, "https://i0.hdslb.com/hot.png");
+    }
+
+    #[test]
+    fn 普通弹幕没有表情字段() {
+        let json = r#"{"cmd":"DANMU_MSG","info":[[0,1,25,16777215],"普通弹幕","[uid]"]}"#;
+        let (tx, rx) = channel();
+        bilibili_parse_json(json, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].emoticons.is_none());
     }
 
     #[test]
@@ -878,6 +1044,7 @@ fn huya_parse_message(data: &[u8], tx: &Sender<DanmakuMessage>) {
         system: false,
         position: 0,
         sc: None,
+        emoticons: None,
     });
 }
 

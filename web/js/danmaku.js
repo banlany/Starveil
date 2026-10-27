@@ -60,6 +60,20 @@ export const FPS_OPTIONS = [
 /// 否则一帧里创建大量实例，正好撞上掉帧。
 const MAX_PER_DRAIN = 3;
 
+/// 已经预热过的表情图（url → Image）。持有引用是为了避免图片还没下载完就被回收，
+/// 命中之后浏览器缓存会接管，弹幕库自己再取一次就是同步的。
+const preloadedEmoticons = new Map();
+
+function preloadEmoticon(url) {
+  if (!url || preloadedEmoticons.has(url)) return;
+  const image = new Image();
+  image.decoding = 'async';
+  // 加载失败的从表里删掉，下次同一张图还有机会重试。
+  image.onerror = () => preloadedEmoticons.delete(url);
+  image.src = url;
+  preloadedEmoticons.set(url, image);
+}
+
 function rendererClass() {
   const lib = window[RENDERER_KEY];
   return lib?.BarrageRenderer || lib?.default || null;
@@ -110,6 +124,12 @@ export function createDanmakuLayer(container, video, config = null) {
     enabled: true,
     width: 0,
     height: 0,
+    // 表情图：`images` 直接交给库（构造时按引用持有，push 之后新弹幕立刻能用），
+    // 两个 Map 负责 url ↔ id 双向去重，避免同张图反复登记。
+    images: [],
+    imageIdByUrl: new Map(),
+    imageUrlById: new Map(),
+    imageSeq: 0,
   };
 
   /// 当前性能档位配置（缺省回落到「平衡」）。
@@ -134,6 +154,8 @@ export function createDanmakuLayer(container, video, config = null) {
       container: host,
       video: clockSource,
       renderConfig: buildRenderConfig(),
+      // 库把这份数组按引用存下来，之后 push 新表情不需要重建渲染器。
+      barrageImages: session.images,
     });
     session.sent = 0;
     primeTracks();
@@ -149,13 +171,33 @@ export function createDanmakuLayer(container, video, config = null) {
   function primeTracks() {
     const calculate = session.renderer?.barrageLayoutCalculate;
     const algorithm = calculate?.virtualTrackAlgorithm;
-    if (!algorithm || algorithm.virtualTracks?.length) return;
+    if (!algorithm) return;
+    if (algorithm.realTracks?.length && algorithm.virtualTracks?.length) return;
     const config = session.config || FALLBACK_CONFIG;
     try {
       algorithm.maxGrade = 1;
       algorithm.initTracks(lineHeightFor(Number(config.font) || FALLBACK_CONFIG.font));
     } catch {
       /* 初始化失败时弹幕不显示，但不影响播放 */
+    }
+  }
+
+  /// 轨道兜底：库在 `setRenderConfig` / `resize` 重排时会先清空轨道表，
+  /// 之后若没人再触发布局，新弹幕就拿不到 `top`（`show` 是 true 但 `top` 是 undefined），
+  /// 表现是**弹幕整个不显示**、且不会报错。
+  /// 这里在发送前检查一次，轨道没了就重建并把已有实例重新排一遍。
+  function ensureTracks() {
+    const calculate = session.renderer?.barrageLayoutCalculate;
+    const algorithm = calculate?.virtualTrackAlgorithm;
+    if (!algorithm) return;
+    if (algorithm.realTracks?.length && algorithm.virtualTracks?.length) return;
+    primeTracks();
+    const instances = calculate.scrollBarrageInstances || [];
+    if (!instances.length) return;
+    try {
+      algorithm.layoutScrollBarrages(instances);
+    } catch (error) {
+      console.warn('弹幕轨道重建失败', error);
     }
   }
 
@@ -166,6 +208,11 @@ export function createDanmakuLayer(container, video, config = null) {
     session.queue.length = 0;
     clearTimeout(session.queueTimer);
     session.queueTimer = 0;
+    // 表情尺寸是按字号算的，重建后（字号/档位变了）必须重新量一遍；
+    // 已经上屏的实例随 dispose 一起没了，不存在「旧图新尺寸」的问题。
+    session.images.length = 0;
+    session.imageIdByUrl.clear();
+    session.imageUrlById.clear();
     dispose();
     measure();
     build();
@@ -338,6 +385,8 @@ export function createDanmakuLayer(container, video, config = null) {
     }
     // 区域比例和滚动速度都跟尺寸有关，重排后同步一次渲染配置。
     syncRenderConfig();
+    // 重排可能把轨道表清掉（库的行为），先补轨道再看可显示集合。
+    ensureTracks();
     ensureLayout();
     // 尺寸变化不应该停掉动画，但保险起见确认渲染循环还在跑。
     if (session.enabled && !session.renderer.animationHandle) session.renderer.play();
@@ -402,6 +451,70 @@ export function createDanmakuLayer(container, video, config = null) {
     if (session.queue.length) scheduleDrain();
   }
 
+  /// 表情图尺寸对齐行高。大表情原图可能 200×60，按原尺寸画会把轨道撑高、挤掉正常弹幕；
+  /// 20×20 的小表情则偏小，和字号不搭。两种都等比缩到「一个行高」附近。
+  function fitEmoticon(width, height, fontSize) {
+    const rawWidth = Math.max(1, Number(width) || 20);
+    const rawHeight = Math.max(1, Number(height) || 20);
+    let nextHeight = Math.max(12, Math.round(fontSize * LINE_HEIGHT_RATIO * 0.92));
+    let nextWidth = (rawWidth / rawHeight) * nextHeight;
+    // 横条表情（收藏集里常见）限到 8 个字符宽，否则一条就占半屏。
+    const maxWidth = fontSize * 8;
+    if (nextWidth > maxWidth) {
+      nextWidth = maxWidth;
+      nextHeight = (rawHeight / rawWidth) * nextWidth;
+    }
+    return {
+      width: Math.max(1, Math.round(nextWidth)),
+      height: Math.max(1, Math.round(nextHeight)),
+    };
+  }
+
+  /// 登记一张表情图，返回库用的图片 id（正文里会写成 `[id]`，所以不能带中括号）。
+  /// 同一张图重复出现时复用已有 id；同名但不同图（不同房间的 `[热]`）另起一个。
+  function registerImage(url, size, preferredId) {
+    const known = session.imageIdByUrl.get(url);
+    if (known) return known;
+    let id = String(preferredId || '').replace(/[[\]]/g, '');
+    if (!id || session.imageUrlById.has(id)) id = `e${++session.imageSeq}`;
+    session.imageUrlById.set(id, url);
+    session.imageIdByUrl.set(url, id);
+    session.images.push({ id, url, width: size.width, height: size.height });
+    preloadEmoticon(url);
+    return id;
+  }
+
+  /// 把正文里的表情片段换成库认识的 `[图片id]` 占位符。
+  ///
+  /// 两种形态（见 `live_core` 的 `Emoticon`）：
+  /// - 内嵌小表情：正文本来就是 `[热]`，图片 id 取「热」后无需改动正文；
+  /// - 大表情：正文是表情名（`冲鸭`，收藏集那类自带中括号），必须整段替换成占位符，
+  ///   否则库只会把它当普通文字画出来。
+  ///
+  /// 关掉「显示弹幕表情」时不登记图片：小表情的占位符直接抹掉（留着 `[热]` 更怪），
+  /// 大表情正文本身就是可读的词，原样保留。
+  function applyEmoticons(message, fontSize) {
+    // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
+    let text = message.text == null ? '' : String(message.text);
+    const list = Array.isArray(message.emoticons) ? message.emoticons : null;
+    if (!list || !list.length) return text;
+    const showImages = (session.config || FALLBACK_CONFIG).emoji !== false;
+    for (const emoticon of list) {
+      const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
+      const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
+      if (!key || !url || !text.includes(key)) continue;
+      if (!showImages) {
+        if (key.startsWith('[')) text = text.split(key).join('');
+        continue;
+      }
+      const bracketed = key.startsWith('[') && key.endsWith(']');
+      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize);
+      const id = registerImage(url, size, bracketed ? key.slice(1, -1) : key);
+      text = text.split(key).join(`[${id}]`);
+    }
+    return text;
+  }
+
   function emit(message) {
     const config = session.config || FALLBACK_CONFIG;
     const renderer = session.renderer;
@@ -422,8 +535,7 @@ export function createDanmakuLayer(container, video, config = null) {
     const option = {
       id: `d${++session.sent}`,
       time: Math.max(0, clockSource.currentTime * 1000),
-      // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
-      text: message.text == null ? '' : String(message.text),
+      text: applyEmoticons(message, fontSize),
       fontSize,
       // 行高是倍数，与算显示区域用的是同一个常量。
       lineHeight: LINE_HEIGHT_RATIO,
@@ -434,6 +546,8 @@ export function createDanmakuLayer(container, video, config = null) {
     if (barrageType !== 'scroll') option.duration = 4200;
     const calc = renderer.barrageLayoutCalculate;
     const before = calc?.scrollBarrageInstances.length || 0;
+    // 轨道被重排清空时先补回来，否则这条弹幕拿到 undefined 的 top、整层都看不见。
+    ensureTracks();
     let created = null;
     try {
       renderer.send(option);
@@ -476,26 +590,8 @@ export function createDanmakuLayer(container, video, config = null) {
   video.addEventListener('play', () => session.renderer?.play());
   video.addEventListener('pause', () => session.renderer?.pause());
 
-  // 调试句柄：在控制台里可以查 sent / queued / renderer 状态。
-  host.__danmaku = {
-    get sent() {
-      return session.sent;
-    },
-    get queued() {
-      return session.queue.length;
-    },
-    get dropped() {
-      return session.dropped;
-    },
-    get renderer() {
-      return session.renderer;
-    },
-    get config() {
-      return session.config;
-    },
-  };
-
-  return {
+  // 调试句柄：在控制台里可以查 sent / queued / renderer 状态，也能手动塞一条弹幕试样式。
+  const api = {
     /** 应用新的弹幕设置（字号/速度/区域/行数/不透明度/描边/性能档位等） */
     update(config) {
       const previous = session.config;
@@ -511,6 +607,7 @@ export function createDanmakuLayer(container, video, config = null) {
       syncRenderConfig();
       // 帧率上限不受重建影响，改完立即生效。
       applyFrameLimit();
+      ensureTracks();
       ensureLayout();
     },
     /** 立刻显示一条弹幕；超出发送速率时先入队 */
@@ -567,4 +664,28 @@ export function createDanmakuLayer(container, video, config = null) {
       host.remove();
     },
   };
+
+  host.__danmaku = {
+    get sent() {
+      return session.sent;
+    },
+    get queued() {
+      return session.queue.length;
+    },
+    get dropped() {
+      return session.dropped;
+    },
+    get renderer() {
+      return session.renderer;
+    },
+    get config() {
+      return session.config;
+    },
+    /** 手动塞一条弹幕（调试表情/颜色时省得等真实弹幕） */
+    send(message) {
+      api.send(message);
+    },
+  };
+
+  return api;
 }

@@ -1,6 +1,6 @@
 [package]
 name = "starveil"
-version = "0.4.4"
+version = "0.4.5"
 description = "星幕直播 · Tauri 桌面客户端"
 edition = "2024"
 rust-version = "1.95"

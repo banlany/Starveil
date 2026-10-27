@@ -376,11 +376,14 @@ export function renderRoom(ctx, params = {}) {
   function pushMessage(message) {
     const entry = {
       user: message.user || '',
-      text: message.text || '',
+      // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
+      text: message.text == null ? '' : String(message.text),
       color: message.color,
       system: Boolean(message.system),
       position: Number(message.position) || 0,
       sc: message.sc || null,
+      // 表情弹幕的图片信息要一路带到弹幕层与聊天栏，漏掉这里表情就只剩占位文字。
+      emoticons: Array.isArray(message.emoticons) && message.emoticons.length ? message.emoticons : undefined,
       at: Date.now(),
     };
     session.messages.push(entry);
@@ -398,6 +401,49 @@ export function renderRoom(ctx, params = {}) {
     if (session.tab === 'chat') appendChatLine(entry);
   }
 
+  /// 聊天行正文：把表情占位符换成小图标。
+  ///
+  /// 用的是和弹幕层同一份 `message.emoticons`，区别只是这里按聊天区字号缩放（CSS 的 `em`）。
+  /// 关掉「显示弹幕表情」时和弹幕一样处理：小表情的 `[占位符]` 抹掉，大表情保留正文词。
+  function fillChatText(node, message) {
+    const text = message.text == null ? '' : String(message.text);
+    const list = Array.isArray(message.emoticons) ? message.emoticons : null;
+    if (!list || !list.length) {
+      node.textContent = text;
+      return;
+    }
+    const showEmoji = state.settings.danmaku.emoji !== false;
+    if (!showEmoji) {
+      let plain = text;
+      for (const emoticon of list) {
+        const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
+        if (key) plain = plain.split(key).join('');
+      }
+      node.textContent = plain;
+      return;
+    }
+    // 按 key 首次出现的位置切片，边切边插，正文与图片保持原始顺序。
+    let rest = text;
+    for (const emoticon of list) {
+      const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
+      const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
+      if (!key || !url) continue;
+      const at = rest.indexOf(key);
+      if (at < 0) continue;
+      if (at > 0) node.appendChild(document.createTextNode(rest.slice(0, at)));
+      const image = document.createElement('img');
+      image.className = 'chat-emoji';
+      image.src = url;
+      image.alt = key;
+      image.loading = 'lazy';
+      // 图片挂了就退回文字，不要把整条弹幕变空白。
+      image.addEventListener('error', () => image.replaceWith(document.createTextNode(key)));
+      node.appendChild(image);
+      rest = rest.slice(at + key.length);
+    }
+    if (rest) node.appendChild(document.createTextNode(rest));
+  }
+
   function appendChatLine(message) {
     const empty = chatList.querySelector('.chat-placeholder');
     if (empty) empty.remove();
@@ -413,7 +459,7 @@ export function renderRoom(ctx, params = {}) {
         who.textContent = `${message.user}：`;
         const text = document.createElement('span');
         text.className = 'text';
-        text.textContent = message.text;
+        fillChatText(text, message);
         line.append(tag, who, text);
       } else {
         const who = document.createElement('span');
@@ -421,7 +467,7 @@ export function renderRoom(ctx, params = {}) {
         who.textContent = `${message.user}：`;
         const text = document.createElement('span');
         text.className = 'text';
-        text.textContent = message.text;
+        fillChatText(text, message);
         if (message.color && message.color !== 0xffffff) {
           text.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
         } else {
