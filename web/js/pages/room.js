@@ -297,8 +297,10 @@ export function renderRoom(ctx, params = {}) {
     if (!session.danmakuEnabled || message.system || message.sc) return false;
     if (blocked(message) || deduped(message)) return false;
     if (!danmaku) return false;
-    // 库内部不回收已下屏的弹幕实例，长时间观看要定期重建，避免内存一直涨。
-    if (danmaku.sent > danmaku.limit) danmaku.reset();
+    // 库不回收已下屏的实例（数组只增不减，每帧渲染都要遍历一遍），长时间观看必须清理。
+    // 这里用 prune() 就地摘掉已经滚出去的，屏上正在滚的保持原位——
+    // 以前用 reset() 重建渲染器，代价是整层弹幕瞬间被清空，看起来像「弹幕重新刷了一次」。
+    if (danmaku.sent > danmaku.limit) danmaku.prune();
     danmaku.send(message);
     return true;
   }

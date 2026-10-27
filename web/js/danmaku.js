@@ -113,11 +113,16 @@ export function createDanmakuLayer(container, video, config = null) {
     queue: [],
     queueTimer: 0,
     sent: 0,
+    // 弹幕实例 id 的独立自增序号：回收实例时 `sent` 会归零，但 id 绝不能复用
+    // （库的预渲染缓存按 id 存 ImageBitmap，复用会让新弹幕画出上一条的图）。
+    seq: 0,
     lastSendAt: 0,
     // 实测宽度的移动平均，用于估算轨道容量（见 sendGap）
     widthAvg: 0,
     // 满轨被丢弃的条数，调试用
     dropped: 0,
+    // 累计回收掉的实例数，调试用
+    pruned: 0,
     destroyed: false,
     observer: null,
     resizeHandle: 0,
@@ -208,6 +213,72 @@ export function createDanmakuLayer(container, video, config = null) {
     session.images.length = 0;
     session.imageIdByUrl.clear();
     session.imageUrlById.clear();
+  }
+
+  /// 摘掉已经滚出屏幕（`endTime` 已过）的弹幕实例，返回清掉的条数。
+  ///
+  /// 库只按 `time <= endTime` 决定画不画：实例本身永远留在
+  /// `scrollBarrageInstances` / `canShowScrollBarrageInstances` 和每条虚拟轨道的
+  /// `barrages` 里，数组只增不减 —— 每帧渲染都要对这个越来越长的集合做一次 filter，
+  /// 预渲染缓存还按条存着一张 ImageBitmap。所以长时间观看必须回收。
+  ///
+  /// 回收是就地剔除而不是重建渲染器：仍在屏上的实例 `endTime > now`，一条都不动，
+  /// 所以画面不会闪、不会跳位；顺手把它们的位图从预渲染缓存里删掉。
+  function pruneEnded() {
+    const renderer = session.renderer;
+    const calc = renderer?.barrageLayoutCalculate;
+    if (!calc) return 0;
+    // 和 emit() 用同一个时钟（视频 currentTime，演示模式下是墙钟）。
+    const now = Math.max(0, Number(clockSource.currentTime) || 0) * 1000;
+    const removed = new Set();
+    const keep = (barrage) => {
+      // 没有 endTime 的实例（目前只有极少数类型）保守留着，不能误删。
+      if (!barrage || typeof barrage.endTime !== 'number' || barrage.endTime > now) return true;
+      removed.add(barrage);
+      return false;
+    };
+
+    for (const key of [
+      'allBarrageInstances',
+      'scrollBarrageInstances',
+      'fixedBarrageInstances',
+      'seniorBarrageInstances',
+      'canShowScrollBarrageInstances',
+    ]) {
+      if (Array.isArray(calc[key])) calc[key] = calc[key].filter(keep);
+    }
+    // 每条虚拟轨道里也挂着引用（只 push，只有全量重排才清空），一起摘掉。
+    for (const track of calc.virtualTrackAlgorithm?.virtualTracks || []) {
+      if (Array.isArray(track.barrages)) track.barrages = track.barrages.filter(keep);
+    }
+    // 固定弹幕布局维护着两份「正在渲染」列表。
+    const fixedLayout = calc.fixedBarrageLayout;
+    if (fixedLayout) {
+      if (Array.isArray(fixedLayout.topRenderBarrages)) {
+        fixedLayout.topRenderBarrages = fixedLayout.topRenderBarrages.filter(keep);
+      }
+      if (Array.isArray(fixedLayout.bottomRenderBarrages)) {
+        fixedLayout.bottomRenderBarrages = fixedLayout.bottomRenderBarrages.filter(keep);
+      }
+    }
+    // 预渲染缓存：一条实例一张 ImageBitmap，实例没了它就是纯占内存。
+    const bitmaps = renderer.preRenderOptimizer?.imageBitmapCache;
+    if (bitmaps && removed.size) {
+      for (const barrage of removed) {
+        const bitmap = bitmaps.get(barrage.id);
+        if (!bitmap) continue;
+        bitmaps.delete(barrage.id);
+        try {
+          bitmap.close?.();
+        } catch {
+          /* 位图已被释放 */
+        }
+      }
+    }
+    // 计数归零，下一轮重新累计（id 走 session.seq，不会因此重复）。
+    session.sent = 0;
+    session.pruned += removed.size;
+    return removed.size;
   }
 
   /// 整体重建渲染器。只在两种情况下用：
@@ -522,6 +593,8 @@ export function createDanmakuLayer(container, video, config = null) {
     const config = session.config || FALLBACK_CONFIG;
     const renderer = session.renderer;
     if (!renderer) return;
+    // 回收阈值用的计数（id 走 seq，两者必须分开）。
+    session.sent += 1;
     const fontSize = Math.max(12, Math.min(48, Number(config.font) || FALLBACK_CONFIG.font));
     // 颜色统一截到 RGB888：平台偶尔会下发 32 位带 alpha 的值，
     // `padStart(6)` 不会截断，会拼出 `#xxxxxxxx` 这种非法 hex —— canvas 直接不画，
@@ -536,7 +609,7 @@ export function createDanmakuLayer(container, video, config = null) {
     // 每条弹幕按 (画布宽 + 自身宽) / scrollDuration 单独算速度，长弹幕更快、短弹幕更慢，
     // 所有弹幕「同时开始、同时结束」。追尾由库的轨道分配器按每条弹幕的基准速度动态减速。
     const option = {
-      id: `d${++session.sent}`,
+      id: `d${++session.seq}`,
       time: Math.max(0, clockSource.currentTime * 1000),
       text: applyEmoticons(message, fontSize),
       fontSize,
@@ -647,15 +720,19 @@ export function createDanmakuLayer(container, video, config = null) {
         /* 忽略 */
       }
     },
-    /** 重建渲染器：直播流重连、时间轴归零或实例过多时调用 */
+    /** 重建渲染器：直播流重连、时间轴归零时调用（会整层清空，别用它做日常回收） */
     reset() {
       rebuild();
     },
-    /** 已收下的弹幕数量，用于判断是否需要重建 */
+    /** 摘掉已经滚出屏幕的实例，返回清掉的条数；屏上正在滚的不受影响 */
+    prune() {
+      return pruneEnded();
+    },
+    /** 已收下的弹幕数量，用于判断是否需要回收 */
     get sent() {
       return session.sent;
     },
-    /** 实例上限随性能档位变化：越极速越早重建，避免库不回收导致内存增长 */
+    /** 回收阈值随性能档位变化：越极速越早清理，控制每帧遍历的实例数 */
     get limit() {
       return profile().maxStored;
     },
@@ -681,6 +758,9 @@ export function createDanmakuLayer(container, video, config = null) {
     get dropped() {
       return session.dropped;
     },
+    get pruned() {
+      return session.pruned;
+    },
     get renderer() {
       return session.renderer;
     },
@@ -690,6 +770,10 @@ export function createDanmakuLayer(container, video, config = null) {
     /** 手动塞一条弹幕（调试表情/颜色时省得等真实弹幕） */
     send(message) {
       api.send(message);
+    },
+    /** 手动触发一次回收（调试用：看清掉多少条、屏上是否稳定） */
+    prune() {
+      return pruneEnded();
     },
   };
 
