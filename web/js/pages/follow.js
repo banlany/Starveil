@@ -12,6 +12,8 @@ export function renderFollow(ctx) {
   const platforms = [...new Set(follows.map((item) => item.platform))];
 
   page.innerHTML = `
+    <div class="follow-sticky-sentinel" id="follow-sentinel" aria-hidden="true"></div>
+    <div class="follow-sticky" id="follow-sticky">
     <header class="follow-header">
       <div class="header-left">
         <button class="icon-btn" id="follow-refresh" title="刷新直播状态">${icon('refresh', 19)}</button>
@@ -42,6 +44,7 @@ export function renderFollow(ctx) {
         </div>
         <div class="follow-row" id="follow-filters" style="gap:8px"></div>
       </div>
+    </div>
     </div>
     <div id="follow-body"></div>`;
 
@@ -380,11 +383,27 @@ export function renderFollow(ctx) {
 
   page.querySelector('#follow-refresh').addEventListener('click', refreshFollowStatus);
 
+  // 顶栏吸顶：哨兵滚出可视区域就说明顶栏已经贴在顶部，这时才补分隔阴影，
+  // 否则没滚动时也会有一条多余的横线。
+  const sticky = page.querySelector('#follow-sticky');
+  const sentinel = page.querySelector('#follow-sentinel');
+  let stickyObserver = null;
+  if (sticky && sentinel && typeof IntersectionObserver === 'function') {
+    stickyObserver = new IntersectionObserver(
+      (entries) => {
+        sticky.classList.toggle('is-stuck', !entries[0].isIntersecting);
+      },
+      { threshold: 0 }
+    );
+    stickyObserver.observe(sentinel);
+  }
+
   document.getElementById('view').appendChild(page);
   renderAll();
   // 只在点击刷新按钮时刷新一次，进入页面不再自动轮询。
   return () => {
     alive = false;
+    stickyObserver?.disconnect();
   };
 }
 

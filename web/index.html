@@ -12,7 +12,8 @@
   <link rel="stylesheet" href="room.css" />
 </head>
 <body>
-  <!-- 自绘标题栏：跟随主题色，关闭按钮悬停变红；拖动区交给系统处理移动与贴边吸附 -->
+  <!-- 自绘标题栏：跟随主题色，关闭按钮悬停变红；拖动区交给系统处理窗口移动
+       （无边框窗口拿不到系统的贴边吸附 Aero Snap） -->
   <header class="titlebar" id="titlebar" data-tauri-drag-region>
     <div class="titlebar-brand" data-tauri-drag-region>
       <img class="titlebar-logo" src="assets/logo.png" alt="" draggable="false" />

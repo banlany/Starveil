@@ -15,7 +15,6 @@ import {
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
-import { setCloseToTray } from '../titlebar.js';
 import {
   avatarHtml,
   confirmDialog,
@@ -32,8 +31,10 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.4.2';
-// 参考项目（原版 dart_simple_live 的 fork）。
+const FALLBACK_VERSION = '0.4.3';
+// 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
+const PROJECT_REPO = 'https://github.com/banlany/Starveil';
+// 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
 const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
 
 const SETTINGS_ITEMS = [
@@ -446,9 +447,21 @@ function detailSections(key, ctx, repaint) {
             { type: 'select', key: 'danmaku.weight', title: '字体粗细', numeric: true, valueMap: { 300: '极细', 400: '很细', 500: '正常', 600: '小粗', 700: '偏粗', 800: '很粗', 900: '极粗' } },
             { type: 'switch', key: 'danmaku.stroke', title: '弹幕描边' },
             { type: 'number', key: 'danmaku.strokeWidth', title: '描边宽度', min: 0, max: 5, step: 0.5, float: true, unit: ' px' },
-            { type: 'select', key: 'danmaku.fps', title: '帧率上限', numeric: true, valueMap: { 0: '跟随屏幕', 60: '60 帧', 30: '30 帧' } },
-            { type: 'number', key: 'danmaku.safeTop', title: '顶部安全边距', min: 0, max: 60, unit: ' px' },
+            { type: 'select', key: 'danmaku.fps', title: '帧率上限', desc: '限制弹幕层的重绘频率，越低越省电', numeric: true, valueMap: { 0: '跟随屏幕', 60: '60 帧', 30: '30 帧' } },
+            { type: 'number', key: 'danmaku.safeTop', title: '顶部安全边距', desc: '相对画面顶端；0 表示贴着顶端', min: 0, max: 60, unit: ' px' },
             { type: 'number', key: 'danmaku.safeBottom', title: '底部安全边距', min: 0, max: 60, unit: ' px' },
+          ],
+        },
+        {
+          label: '性能',
+          rows: [
+            {
+              type: 'select',
+              key: 'danmaku.perf',
+              title: '性能档位',
+              desc: '弹幕密集时卡顿就往下调：流畅档关阴影，极速档还会关描边并降低画布精度',
+              valueMap: { balanced: '平衡（默认）', smooth: '流畅', ultra: '极速' },
+            },
           ],
         },
         {
@@ -489,13 +502,6 @@ function detailSections(key, ctx, repaint) {
         {
           label: '桌面窗口',
           rows: [
-            {
-              type: 'switch',
-              key: 'other.closeToTray',
-              title: '关闭窗口时退到托盘',
-              desc: '点关闭只隐藏窗口，直播继续播放；从托盘图标或菜单可以恢复',
-              onChange: (value) => setCloseToTray(value),
-            },
             { type: 'switch', key: 'other.rememberWindow', title: '记住窗口大小和位置', desc: '下次启动时恢复上次的窗口尺寸' },
             { type: 'switch', key: 'other.log', title: '启用日志记录', desc: '记录调试日志，便于排查播放问题' },
           ],
@@ -732,10 +738,19 @@ function paintAbout(content, ctx) {
   actions.className = 'settings-action-card';
   actions.innerHTML = `
     <div class="action-icon">${icon('github', 20)}</div>
-    <div class="action-text"><h4>参考项目</h4><p>dart_simple_live 的 Windows 重制与原版源码</p></div>
+    <div class="action-text"><h4>项目主页</h4><p>本项目的源码、更新日志与问题反馈</p></div>
     <button class="btn small">打开</button>`;
-  actions.querySelector('button').addEventListener('click', () => api.openUrl(REFERENCE_REPO));
+  actions.querySelector('button').addEventListener('click', () => api.openUrl(PROJECT_REPO));
   content.appendChild(actions);
+
+  const reference = document.createElement('div');
+  reference.className = 'settings-action-card';
+  reference.innerHTML = `
+    <div class="action-icon">${icon('github', 20)}</div>
+    <div class="action-text"><h4>参考项目</h4><p>dart_simple_live —— 界面与协议层的来源</p></div>
+    <button class="btn small">打开</button>`;
+  reference.querySelector('button').addEventListener('click', () => api.openUrl(REFERENCE_REPO));
+  content.appendChild(reference);
 }
 
 function paintDisclaimer(content, ctx, repaint) {
@@ -1004,7 +1019,7 @@ function openDouyuLogin(onDone) {
 
 function runSettingAction(ctx, action) {
   if (action === 'github') {
-    api.openUrl('https://github.com/xiaoyaocz/dart_simple_live');
+    api.openUrl(PROJECT_REPO);
     return;
   }
 }

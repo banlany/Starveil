@@ -373,8 +373,10 @@ let windowSaveTimer = 0;
 // 窗口尺寸的合理下限。Windows 允许窗口被拖到最小（约 39×24），
 // 一旦把这个退化值存下来，下次启动窗口就几乎看不见了，
 // 所以保存与恢复两侧都要钳制。
-const MIN_WINDOW_WIDTH = 800;
-const MIN_WINDOW_HEIGHT = 600;
+// 这两个值必须跟 tauri.conf.json 里的 minWidth / minHeight 一致：
+// 系统会在更小的尺寸上直接拦住，前端存一个更小的值没有意义。
+const MIN_WINDOW_WIDTH = 1080;
+const MIN_WINDOW_HEIGHT = 640;
 
 function isUsableWindowSize(width, height) {
   return (

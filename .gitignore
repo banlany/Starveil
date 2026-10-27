@@ -9,11 +9,9 @@
 *.pdb
 *.log
 
-# 构建产物（保留目录说明，但忽略可执行文件）
-/dist/*.exe
-/dist/*.pdb
-/dist/*.msi
-/dist/*.nsis.zip
+# 构建产物（dist/ 只保留随包分发的说明文件，可执行文件不入库）
+/dist/*
+!/dist/README.txt
 
 # 临时文件
 *.bak

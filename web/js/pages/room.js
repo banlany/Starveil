@@ -227,10 +227,11 @@ export function renderRoom(ctx, params = {}) {
   function applyDanmakuStyle() {
     const config = state.settings.danmaku;
     // 顶部/底部安全边距交给容器留白，库只负责在剩余区域内排轨道。
-    // 顶部至少让开房间标题浮层（约 64px），否则弹幕会压在标题和主播信息上。
-    const HEADER_INSET = 64;
-    layer.style.top = `${Math.max(Number(config.safeTop) || 0, HEADER_INSET)}px`;
-    layer.style.bottom = `${Number(config.safeBottom) || 0}px`;
+    // 弹幕「顶部安全边距」是相对播放器画面顶端的真实边距，0 就是贴着画面顶端——
+    // 房间标题浮层会自动隐藏，不需要为它预留空间（早期这里强制钳到 64px，
+    // 导致设置里 0~60 的滑块怎么调都不生效）。
+    layer.style.top = `${Math.max(0, Number(config.safeTop) || 0)}px`;
+    layer.style.bottom = `${Math.max(0, Number(config.safeBottom) || 0)}px`;
     danmaku?.update(config);
   }
 

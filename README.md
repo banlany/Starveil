@@ -6,7 +6,7 @@
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE），  
 协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.4.1** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
+> 当前版本 **0.4.3** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
 
@@ -58,7 +58,8 @@
 
 - **自绘标题栏**：无边框窗口 + 自绘 38px 标题栏（图标、名称、最小化 / 最大化 / 关闭），
   拖动区交给系统，双击最大化，四边四角自带缩放热区；颜色跟主题走，关闭按钮悬停变红。
-- **后台常驻**：关闭窗口默认只隐藏到托盘，直播继续播；托盘左键恢复，菜单可退出。
+- **关闭即退出**：点关闭 / Alt+F4 / 任务栏关闭都直接结束进程，不驻留后台、没有托盘图标；
+  **可以多开**，多个窗口是互不影响的独立进程。
 - 左侧竖向图标栏（首页 / 关注 / 分类 / 设置）+ 顶部平台 Tab（哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手，  
   未接入的平台标「即将支持」）。
 - 深浅色主题、8 色主题色板、界面密度、首次启动免责声明、全局提示、骨架屏与错误重试。
@@ -79,14 +80,15 @@
 **设置**
 
 一级列表 + 二级详情（分组标题 + 圆角卡片行）：  
-外观、主页、播放页、直播、弹幕、关注、定时关闭、其他、数据同步、链接解析、账号管理、免责声明、关于。  
+观看记录、账号管理、数据同步、链接解析、外观、主页、播放页、直播、弹幕、关注、定时关闭、其他、免责声明、开源主页。  
 数据同步可导出 / 导入设置、关注、观看记录与**登录信息**。
 
 **直播间**
 
 - 视频铺满，`object-fit` 可切适应 / 铺满 / 拉伸；顶部浮层显示房间标题、主播、分区、人气与关注。
-- 弹幕层基于 [fly-barrage](https://github.com/feiafei27/fly-barrage)：canvas 渲染 + 虚拟轨道避让，  
-  支持颜色、字号、粗细、不透明度、描边、显示区域、行数、滚动速度、重复过滤与关键词/用户屏蔽。
+- 弹幕层基于 [fly-barrage](https://github.com/feiafei27/fly-barrage)：canvas 渲染 + 虚拟轨道避让，
+  支持颜色、字号、粗细、不透明度、描边、显示区域、行数、滚动速度、帧率上限、重复过滤与关键词/用户屏蔽；
+  「性能档位」（平衡 / 流畅 / 极速）可一键关掉阴影与描边、降低画布精度，弹幕密集时更顺。
 - 右侧聊天面板：主播信息 + 聊天 / SC / 关注 / 设置四个 Tab；SC 分「正在显示 / 历史」，到期自动归档。
 - 底部控制条：音量、直播时长、清晰度、线路、弹幕开关、设置、画中画、全屏（直播不提供暂停）；  
   底部动作栏：刷新、关注、标签、分享、复制链接、复制直播流。
@@ -124,7 +126,7 @@ Starveil/
 │  │  ├─ api.js             Tauri 命令封装 + 浏览器演示数据
 │  │  ├─ store.js           设置 / 关注 / 历史 / 搜索历史持久化
 │  │  ├─ danmaku.js         弹幕层：封装 fly-barrage
-│  │  ├─ titlebar.js        自绘标题栏：窗口按钮、拖拽、缩放热区、托盘开关同步
+│  │  ├─ titlebar.js        自绘标题栏：窗口按钮、拖拽、缩放热区
 │  │  ├─ ui.js              卡片、弹窗、菜单、空态、加载态
 │  │  ├─ icons.js           SVG 图标与平台图标
 │  │  └─ pages/             home / category / category-rooms / follow / search / settings / room
@@ -139,7 +141,7 @@ Starveil/
 │  ├─ reference-spec.md     原版界面逐页记录
 │  └─ img/                  界面截图（README 引用，其余图片不入库）
 ├─ .github/workflows/       CI：Windows 构建 + Release（NSIS 安装包 / 免安装 zip）
-├─ dist/                    本机构建产物（Starveil.exe 不入库）
+├─ dist/                    本机构建产物（starveil.exe 不入库，只保留随包分发的说明文件）
 └─ CHANGELOG.md             更新日志
 ```
 
@@ -154,9 +156,10 @@ Starveil/
 cd src-tauri && cargo run        # 直接跑，不需要另外起静态服务
 ```
 
-debug 构建会在窗口就绪后自动打开 DevTools；release 构建不带 DevTools。
+debug 与 release 都不带 DevTools（`devtools` feature 已移除）：WebView2 不接受
+`--remote-debugging-port`，所以界面调试统一走下面的 Edge 预览。
 
-调试界面可以用 DevTools 协议（用 Edge 打开同一套前端即可，WebView2 自身的调试端口在部分环境不可用）：
+调试界面用 DevTools 协议（同一个端口在 Edge 上是可用的）：
 
 ```bash
 python tools/serve.py 1420 web   # 浏览器预览用，禁缓存
@@ -202,6 +205,8 @@ cargo tauri build --no-bundle
 - 贡献榜 / 亲密榜的数据源不接（需求已取消）。
 - 虎牙不支持登录；斗鱼未登录时最高画质约 10 分钟过期，过期后会触发自动重取流。
 - 自绘标题栏意味着窗口没有系统边框，**失去了 Windows 原生的「贴边吸附（Aero Snap）」**。
+- 关闭窗口即退出进程，**没有托盘常驻、不保留后台播放**（0.4.3 起取消；换来的是不会有
+  多个托盘图标，且可以随意多开）。
 - 所有数据只在本机，不上传服务器。
 
 ## 已知问题与排查
@@ -214,7 +219,7 @@ cargo tauri build --no-bundle
   （`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`）；沙箱正常的机器不受影响。
   需要手动控制时：`STARVEIL_FORCE_GPU_SANDBOX=1` 强制保留，
   `STARVEIL_DISABLE_GPU_SANDBOX=1` 强制关闭。
-- **运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、托盘、窗口地址、
+- **运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、窗口地址、
   前端初始化与 GPU 沙箱的判定结果；反馈问题时请附上这个文件。
 - **拿 Chromium 自己的日志**（排查 WebView2 问题最有效的手段）：
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging --v=1 --log-file=<路径>`。

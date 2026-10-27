@@ -109,6 +109,7 @@ export const DEFAULT_SETTINGS = {
     safeTop: 8,
     safeBottom: 8,
     delay: 0,
+    perf: 'balanced',
   },
   follow: {
     autoUpdate: true,
@@ -123,7 +124,6 @@ export const DEFAULT_SETTINGS = {
   other: {
     rememberWindow: true,
     log: false,
-    closeToTray: true,
   },
 };
 

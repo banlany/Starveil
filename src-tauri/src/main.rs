@@ -22,8 +22,6 @@ use live_core::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 mod win32;
@@ -56,8 +54,6 @@ struct AppState {
     danmaku: Mutex<Option<DanmakuRuntime>>,
     proxy_port: u16,
     proxy_targets: Arc<Mutex<HashMap<String, ProxyTarget>>>,
-    /// 关闭窗口时是否退到托盘继续播放（由前端设置同步过来）。
-    resident: AtomicBool,
 }
 
 impl AppState {
@@ -1571,14 +1567,6 @@ fn frontend_log(message: String) {
     log_line(&format!("[web] {message}"));
 }
 
-fn show_main(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
-}
-
 /// 准备 WebView2 的数据目录：迁移旧 localStorage，并把目录通过环境变量交给 WebView2。
 ///
 /// 这里不用 `WebviewWindowBuilder::data_directory`——实践里由 Rust 手动建窗时
@@ -1729,57 +1717,6 @@ fn append_browser_args(extra: &str) {
     unsafe { std::env::set_var(key, merged) };
 }
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出星幕直播", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
-
-    let mut builder = TrayIconBuilder::with_id("starveil")
-        .tooltip("星幕直播")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => show_main(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main(tray.app_handle());
-            }
-        });
-
-    // 托盘图标直接复用应用图标（icons/icon.png 已随仓库提供）。
-    if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png")) {
-        builder = builder.icon(icon);
-    }
-    builder.build(app)?;
-    Ok(())
-}
-
-/// 前端把「关闭时退到托盘」的开关同步过来。
-#[tauri::command]
-fn set_resident(enabled: bool, state: State<'_, AppState>) {
-    state.resident.store(enabled, Ordering::Relaxed);
-}
-
-/// 自绘标题栏的关闭按钮：开启后台常驻时隐藏窗口，否则直接退出。
-#[tauri::command]
-fn window_close(app: AppHandle, state: State<'_, AppState>) {
-    if state.resident.load(Ordering::Relaxed) {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.hide();
-        }
-    } else {
-        app.exit(0);
-    }
-}
-
 fn main() {
     log_line("==== 启动 ====");
     // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
@@ -1800,19 +1737,13 @@ fn main() {
             danmaku: Mutex::new(None),
             proxy_port,
             proxy_targets,
-            resident: AtomicBool::new(true),
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            match setup_tray(&handle) {
-                Ok(()) => log_line("托盘创建成功"),
-                Err(error) => log_line(&format!("托盘创建失败：{error}")),
-            }
             // 启动后记录一次 webview 的真实状态，便于排查窗口空白之类的问题。
-            let probe = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(3));
-                match probe.get_webview_window("main") {
+                match handle.get_webview_window("main") {
                     Some(window) => {
                         log_line(&format!(
                             "窗口可见={:?} 地址={:?}",
@@ -1824,20 +1755,6 @@ fn main() {
                 }
             });
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            // Alt+F4 / 任务栏关闭也走这条路：常驻时只是隐藏，不退出进程。
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let resident = window
-                    .app_handle()
-                    .state::<AppState>()
-                    .resident
-                    .load(Ordering::Relaxed);
-                if resident {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-            }
         })
         .invoke_handler(tauri::generate_handler![
             recommend,
@@ -1860,8 +1777,6 @@ fn main() {
             login_status,
             bili_qr_generate,
             bili_qr_poll,
-            set_resident,
-            window_close,
             frontend_log
         ])
         .run(tauri::generate_context!())

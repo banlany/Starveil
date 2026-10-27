@@ -246,6 +246,28 @@
   padding-bottom: 50px;
 }
 
+/* 吸顶零高度哨兵：它的可见性决定顶栏要不要加分隔阴影 */
+.follow-sticky-sentinel {
+  height: 0;
+  overflow: hidden;
+}
+
+/* 头部 + 工具栏整体吸顶，只有下面的关注列表滚动；
+   背景必须不透明，否则内容会从下面透上来。 */
+.follow-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.follow-sticky.is-stuck {
+  border-bottom-color: var(--line);
+  box-shadow: 0 12px 22px -20px rgba(0, 0, 0, 0.8);
+}
+
 .follow-header {
   height: 62px;
   display: flex;
