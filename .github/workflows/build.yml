@@ -1,9 +1,9 @@
 name: build
 
+# 只手动触发：推代码、推 tag 都不会自动跑。
+# 需要出包时在 Actions 页面点「Run workflow」（或本地 `gh workflow run build.yml`）。
+# 版本号取自 src-tauri/tauri.conf.json，Release 的 tag 就是 `v<version>`。
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:

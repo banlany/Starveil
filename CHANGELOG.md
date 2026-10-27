@@ -64,6 +64,9 @@
 
 ### 工程
 
+- **GitHub Actions 改为手动触发**：删掉 `push: tags` 触发器，推代码、推 tag 都不会再自动跑构建；
+  需要出包时到 Actions 页面点「Run workflow」（或 `gh workflow run build.yml`）。
+  版本号仍从 `src-tauri/tauri.conf.json` 读，Release tag 是 `v<version>`。
 - **删掉两个跟了整场提交历史的遗留文件**：`web/app.js`（重构前的单文件前端，24 KB，
   早已没人引用，只在 `web/js/app.js` 才是真的入口）与 `web/_size_probe.txt`
   （排查窗口空白时塞进去的 980 KB 占位文本）。仓库体积减少约 1 MB。

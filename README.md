@@ -140,7 +140,7 @@ Starveil/
 ├─ docs/
 │  ├─ reference-spec.md     原版界面逐页记录
 │  └─ img/                  界面截图（README 引用，其余图片不入库）
-├─ .github/workflows/       CI：Windows 构建 + Release（NSIS 安装包 / 免安装 zip）
+├─ .github/workflows/       CI：Windows 构建 + Release（手动触发，出 NSIS 安装包 / 免安装 zip）
 ├─ dist/                    本机构建产物（starveil.exe 不入库，只保留随包分发的说明文件）
 └─ CHANGELOG.md             更新日志
 ```
