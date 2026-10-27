@@ -1,8 +1,9 @@
 // 直播间：mpegts 播放、滚动弹幕、聊天面板、清晰度/线路、全屏。
 import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
-import { createDanmakuLayer, flyBarrageAvailable } from '../danmaku.js';
+import { createDanmakuLayer, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import {
+  addWatchTime,
   DEFAULT_SETTINGS,
   isFollowing,
   loadFollow,
@@ -159,6 +160,12 @@ export function renderRoom(ctx, params = {}) {
     stallTimer: 0,
     lastProgressTime: 0,
     lastProgressAt: 0,
+    // 观看时长统计：watchSince 是「这一段从什么时候开始连续播放」，
+    // watchPending 是已经结算但还没落盘的部分，靠心跳定时刷进 localStorage，
+    // 这样关窗/崩溃最多丢一个心跳周期的时长。
+    watchSince: 0,
+    watchPending: 0,
+    watchTimer: 0,
   };
   state.room = session;
 
@@ -608,6 +615,12 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>描边宽度</span><input type="number" class="chat-setting-input" id="cs-stroke-width" min="0" max="5" step="0.5" value="${config.strokeWidth}" /><em>px</em></div>
         <div class="chat-setting-row"><span>顶部边距</span><input type="number" class="chat-setting-input" id="cs-safe-top" min="0" max="60" step="1" value="${config.safeTop}" /><em>px</em></div>
         <div class="chat-setting-row"><span>底部边距</span><input type="number" class="chat-setting-input" id="cs-safe-bottom" min="0" max="60" step="1" value="${config.safeBottom}" /><em>px</em></div>
+        <div class="chat-setting-row"><span>性能档位</span><select class="chat-setting-select" id="cs-perf">
+          ${PERF_OPTIONS.map((option) => `<option value="${option.value}"${config.perf === option.value ? ' selected' : ''}>${option.label}</option>`).join('')}
+        </select></div>
+        <div class="chat-setting-row"><span>帧率上限</span><select class="chat-setting-select" id="cs-fps">
+          ${FPS_OPTIONS.map((option) => `<option value="${option.value}"${Number(config.fps) === option.value ? ' selected' : ''}>${option.label}</option>`).join('')}
+        </select></div>
       </div>
       <div class="chat-settings-group">
         <h4>屏蔽设置</h4>
@@ -626,7 +639,7 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>到期自动消失</span><button class="switch" id="cs-sc-auto" aria-checked="${state.settings.player.superChatAutoRemove}"></button></div>
         <div class="chat-setting-row"><span>左下角浮动显示</span><button class="switch" id="cs-sc-float" aria-checked="${state.settings.player.superChatOverlay}"></button></div>
       </div>
-      <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。</div>`;
+      <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。切换性能档位会重建渲染器，当前屏上的弹幕会被清掉。</div>`;
     target.appendChild(wrap);
 
     const bindSwitch = (id, key) => {
@@ -676,6 +689,8 @@ export function renderRoom(ctx, params = {}) {
     bindNumber('cs-stroke-width', 'strokeWidth', 0, 5);
     bindNumber('cs-safe-top', 'safeTop', 0, 60);
     bindNumber('cs-safe-bottom', 'safeBottom', 0, 60);
+    bindSelect('cs-perf', 'perf');
+    bindSelect('cs-fps', 'fps', true);
     bindSwitch('cs-block', 'block');
     bindTextarea('cs-block-keywords', 'blockKeywords');
     bindTextarea('cs-block-users', 'blockUsers');
@@ -886,6 +901,8 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function destroyPlayer() {
+    // 换线/重连会先把旧播放器拆掉，这里先结算这一段观看时长。
+    stopWatchClock();
     if (session.player) {
       try {
         session.player.pause();
@@ -899,6 +916,49 @@ export function renderRoom(ctx, params = {}) {
     }
     session.playerReady = false;
   }
+
+  // ------------------------------------------------------------ 观看时长统计
+  //
+  // 口径是「真的在播的时间」：暂停、断流、换线、加载中都不计，
+  // 否则把直播间挂着不动也会一直累加。结算出的毫秒先放在 watchPending 里，
+  // 由 30 秒心跳写进 localStorage，关窗最多丢一个周期。
+  function startWatchClock() {
+    if (session.destroyed || session.watchSince) return;
+    session.watchSince = Date.now();
+  }
+
+  function flushWatch() {
+    if (session.watchPending < 1000) return;
+    const value = session.watchPending;
+    session.watchPending = 0;
+    addWatchTime(session.platform, session.roomId, value);
+  }
+
+  function stopWatchClock() {
+    if (session.watchSince) {
+      const delta = Date.now() - session.watchSince;
+      session.watchSince = 0;
+      if (delta > 0) session.watchPending += delta;
+    }
+    flushWatch();
+  }
+
+  session.watchTimer = setInterval(() => {
+    if (session.watchSince) {
+      const now = Date.now();
+      session.watchPending += now - session.watchSince;
+      session.watchSince = now;
+    }
+    flushWatch();
+  }, 30000);
+
+  // 关窗/切页时同步补一次，靠 pagehide 而不是 beforeunload（后者在 WebView2 里不保证触发）。
+  const flushWatchOnHide = () => stopWatchClock();
+  window.addEventListener('pagehide', flushWatchOnHide);
+  const resumeWatchOnShow = () => {
+    if (!document.hidden && !video.paused) startWatchClock();
+  };
+  document.addEventListener('visibilitychange', resumeWatchOnShow);
 
   function playLine(index) {
     const url = session.urls[index];
@@ -1064,12 +1124,16 @@ export function renderRoom(ctx, params = {}) {
     session.playStartedAt = Date.now();
     session.lastProgressTime = video.currentTime;
     session.lastProgressAt = Date.now();
+    // 真正出画了才开始计观看时长。
+    startWatchClock();
     setTimeout(() => {
       if (!session.destroyed && !video.paused && video.currentTime > 3) session.reconnectAttempts = 0;
     }, 5000);
   });
   video.addEventListener('ended', () => {
     if (session.destroyed) return;
+    // 流断了就不该继续累计时长，重连上会由 playing 重新开始计时。
+    stopWatchClock();
     // 有些线路第一次会返回一个只有几百毫秒的失效分片，自动重取一次。
     if (session.reconnectAttempts < 2) {
       session.reconnectAttempts += 1;
@@ -1086,10 +1150,12 @@ export function renderRoom(ctx, params = {}) {
   video.addEventListener('pause', () => {
     updatePlayIcon();
     page.classList.remove('ui-idle');
+    stopWatchClock();
   });
   video.addEventListener('volumechange', updateVolumeIcon);
   video.addEventListener('error', () => {
     if (session.destroyed) return;
+    stopWatchClock();
     setHint({ text: '视频播放出错，请尝试刷新或换线', actions: '<button class="btn" id="hint-retry">刷新</button>' });
     bindHintActions();
   });
@@ -1566,6 +1632,11 @@ export function renderRoom(ctx, params = {}) {
 
   return () => {
     session.destroyed = true;
+    // 退出直播间前把最后一段时长落盘，这也是「关窗即退出」时唯一可靠的结算点。
+    stopWatchClock();
+    clearInterval(session.watchTimer);
+    window.removeEventListener('pagehide', flushWatchOnHide);
+    document.removeEventListener('visibilitychange', resumeWatchOnShow);
     clearTimeout(session.idleTimer);
     clearInterval(session.clockTimer);
     clearInterval(session.statsTimer);

@@ -24,6 +24,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod webdav;
 mod win32;
 
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -1567,6 +1568,54 @@ fn frontend_log(message: String) {
     log_line(&format!("[web] {message}"));
 }
 
+// ---------------------------------------------------------------- WebDAV 同步
+
+/// 探测 WebDAV 目标：验证地址/账号，并报告同步文件是否已存在。
+#[tauri::command]
+async fn webdav_test(
+    url: String,
+    username: String,
+    password: String,
+    allow_insecure_tls: bool,
+) -> Result<webdav::WebdavInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        webdav::probe(&url, &username, &password, allow_insecure_tls)
+    })
+    .await
+    .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
+/// 把同步包整包上传（覆盖远端同名文件）。
+#[tauri::command]
+async fn webdav_upload(
+    url: String,
+    username: String,
+    password: String,
+    allow_insecure_tls: bool,
+    content: String,
+) -> Result<webdav::WebdavInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        webdav::upload(&url, &username, &password, allow_insecure_tls, &content)
+    })
+    .await
+    .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
+/// 拉取远端同步包，返回原文由前端解析。
+#[tauri::command]
+async fn webdav_download(
+    url: String,
+    username: String,
+    password: String,
+    allow_insecure_tls: bool,
+) -> Result<webdav::WebdavDownload, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        webdav::download(&url, &username, &password, allow_insecure_tls)
+    })
+    .await
+    .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
 /// 准备 WebView2 的数据目录：迁移旧 localStorage，并把目录通过环境变量交给 WebView2。
 ///
 /// 这里不用 `WebviewWindowBuilder::data_directory`——实践里由 Rust 手动建窗时
@@ -1777,7 +1826,10 @@ fn main() {
             login_status,
             bili_qr_generate,
             bili_qr_poll,
-            frontend_log
+            frontend_log,
+            webdav_test,
+            webdav_upload,
+            webdav_download
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");

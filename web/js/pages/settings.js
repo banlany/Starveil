@@ -2,11 +2,14 @@
 import { api, formatCount, formatOnline, timeAgo, roomUrl } from '../api.js';
 import {
   ACCENTS,
+  aggregateStats,
   applyTheme,
   clearHistory,
   clearLogin,
+  clearStats,
   collectAccounts,
-  restoreAccounts,
+  HISTORY_LIMIT,
+  STATS_RANGES,
   getSetting,
   loadLogin,
   resetSettings,
@@ -15,8 +18,14 @@ import {
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
+// 外部数据导入（starveil 备份 / dart profile / 中立同步包）与同步包构建。
+import { buildBundle, importData } from '../importer.js';
+// 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
+// 改档位定义时只改 danmaku.js 一处。
+import { FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
 import {
   avatarHtml,
+  bindImageFallback,
   confirmDialog,
   emptyState,
   escapeHtml,
@@ -31,11 +40,15 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.4.3';
+const FALLBACK_VERSION = '0.4.4';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
 const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
+
+// select 行要的是 { 值: 文案 }，这里由共享选项表派生，避免手工维护两份。
+const PERF_MAP = Object.fromEntries(PERF_OPTIONS.map((option) => [option.value, option.label]));
+const FPS_MAP = Object.fromEntries(FPS_OPTIONS.map((option) => [option.value, option.label]));
 
 const SETTINGS_ITEMS = [
   { key: 'history', icon: 'history', label: '观看记录' },
@@ -447,7 +460,7 @@ function detailSections(key, ctx, repaint) {
             { type: 'select', key: 'danmaku.weight', title: '字体粗细', numeric: true, valueMap: { 300: '极细', 400: '很细', 500: '正常', 600: '小粗', 700: '偏粗', 800: '很粗', 900: '极粗' } },
             { type: 'switch', key: 'danmaku.stroke', title: '弹幕描边' },
             { type: 'number', key: 'danmaku.strokeWidth', title: '描边宽度', min: 0, max: 5, step: 0.5, float: true, unit: ' px' },
-            { type: 'select', key: 'danmaku.fps', title: '帧率上限', desc: '限制弹幕层的重绘频率，越低越省电', numeric: true, valueMap: { 0: '跟随屏幕', 60: '60 帧', 30: '30 帧' } },
+            { type: 'select', key: 'danmaku.fps', title: '帧率上限', desc: '限制弹幕层的重绘频率，越低越省电', numeric: true, valueMap: FPS_MAP },
             { type: 'number', key: 'danmaku.safeTop', title: '顶部安全边距', desc: '相对画面顶端；0 表示贴着顶端', min: 0, max: 60, unit: ' px' },
             { type: 'number', key: 'danmaku.safeBottom', title: '底部安全边距', min: 0, max: 60, unit: ' px' },
           ],
@@ -460,7 +473,7 @@ function detailSections(key, ctx, repaint) {
               key: 'danmaku.perf',
               title: '性能档位',
               desc: '弹幕密集时卡顿就往下调：流畅档关阴影，极速档还会关描边并降低画布精度',
-              valueMap: { balanced: '平衡（默认）', smooth: '流畅', ultra: '极速' },
+              valueMap: PERF_MAP,
             },
           ],
         },
@@ -551,19 +564,42 @@ function applyScaleMode(mode) {
 // ---------------------------------------------------------------- 特殊页
 
 function paintHistory(content, ctx) {
-  const head = document.createElement('div');
-  head.className = 'history-actions';
-  head.innerHTML = `<button class="btn small ghost">${icon('close', 15)} 清空记录</button>`;
-  head.querySelector('button').addEventListener('click', async () => {
-    if (!state.history.length) return;
-    const ok = await confirmDialog({ title: '清空观看记录', text: '只会删除本机记录，不影响平台账号。', okLabel: '清空', danger: true });
-    if (!ok) return;
-    clearHistory();
-    paintCurrent();
-  });
+  // 观看记录页有两个视图：原始记录（最近看过的房间）与统计（按主播聚合的时长/次数）。
+  // 两者共用同一份数据源，不新增路由，避免动返回栈。
+  let view = 'records';
+  let range = 'week';
   let shown = 120;
-  const paintCurrent = () => {
+
+  const paint = () => {
     content.innerHTML = '';
+    content.appendChild(
+      segmented(
+        [
+          ['records', '观看记录'],
+          ['stats', '统计'],
+        ],
+        view,
+        (next) => {
+          view = next;
+          paint();
+        }
+      )
+    );
+    if (view === 'stats') paintStats();
+    else paintRecords();
+  };
+
+  function paintRecords() {
+    const head = document.createElement('div');
+    head.className = 'history-actions';
+    head.innerHTML = `<button class="btn small ghost">${icon('close', 15)} 清空记录</button>`;
+    head.querySelector('button').addEventListener('click', async () => {
+      if (!state.history.length) return;
+      const ok = await confirmDialog({ title: '清空观看记录', text: '只会删除本机记录，不影响平台账号。', okLabel: '清空', danger: true });
+      if (!ok) return;
+      clearHistory();
+      paint();
+    });
     if (!state.history.length) {
       content.appendChild(
         emptyState({ iconName: 'history', title: '还没有观看记录', text: '打开一个直播间后，这里会按时间倒序保留最近的记录。', actionLabel: '去首页看看', onAction: () => ctx.go('home') })
@@ -573,7 +609,7 @@ function paintHistory(content, ctx) {
     content.appendChild(head);
     const hint = document.createElement('div');
     hint.className = 'search-hint';
-    hint.innerHTML = `共 <strong>${state.history.length}</strong> 条记录，最多保留最近 1000 条`;
+    hint.innerHTML = `共 <strong>${state.history.length}</strong> 条记录，最多保留最近 ${HISTORY_LIMIT} 条`;
     content.appendChild(hint);
     const pageItems = state.history.slice(0, shown);
     const grid = roomGrid(
@@ -585,32 +621,138 @@ function paintHistory(content, ctx) {
       const more = loadMore(`加载更多（还有 ${state.history.length - shown} 条）`);
       more.addEventListener('click', () => {
         shown += 120;
-        paintCurrent();
+        paintRecords();
       });
       content.appendChild(more);
     }
-  };
-  paintCurrent();
+  }
+
+  function paintStats() {
+    const data = aggregateStats(range);
+    content.appendChild(
+      segmented(
+        STATS_RANGES.map((item) => [item.value, item.label]),
+        range,
+        (next) => {
+          range = next;
+          paint();
+        }
+      )
+    );
+
+    if (!data.rooms.length) {
+      content.appendChild(
+        emptyState({
+          iconName: 'timer',
+          title: '这个时间段还没有观看数据',
+          text: '统计只累计真正在播的时长，挂着不动不会计数。换个时间范围看看，或者先去一个直播间。',
+          actionLabel: '去首页看看',
+          onAction: () => ctx.go('home'),
+        })
+      );
+      return;
+    }
+
+    const summary = document.createElement('div');
+    summary.className = 'stats-summary';
+    summary.innerHTML = `
+      <div class="stats-card"><span>总时长</span><strong>${formatWatchTime(data.totalMs)}</strong></div>
+      <div class="stats-card"><span>观看次数</span><strong>${formatCount(data.totalVisits)} 次</strong></div>
+      <div class="stats-card"><span>主播数</span><strong>${data.rooms.length} 位</strong></div>
+      <div class="stats-card"><span>日均</span><strong>${formatWatchTime(data.activeDays ? data.totalMs / data.activeDays : 0)}</strong></div>`;
+    content.appendChild(summary);
+
+    const note = document.createElement('div');
+    note.className = 'search-hint';
+    note.innerHTML = `按有观看的 <strong>${data.activeDays}</strong> 天计算日均；点任意主播可直接进入直播间`;
+    content.appendChild(note);
+
+    const maxMs = data.rooms[0]?.ms || 1;
+    const list = document.createElement('div');
+    list.className = 'stats-list';
+    for (const [index, item] of data.rooms.slice(0, 60).entries()) {
+      const row = document.createElement('button');
+      row.className = 'stats-row';
+      const ratio = Math.max(3, Math.round((item.ms / maxMs) * 100));
+      row.innerHTML = `
+        <span class="stats-rank">${index + 1}</span>
+        ${avatarHtml(item.user_name || '未知主播', item.cover, 34)}
+        <span class="stats-main">
+          <b title="${escapeHtml(item.user_name || '未知主播')}">${escapeHtml(item.user_name || '未知主播')}</b>
+          <span class="stats-bar"><i style="width:${ratio}%"></i></span>
+        </span>
+        <span class="stats-value"><b>${formatWatchTime(item.ms)}</b><small>${item.visits} 次</small></span>`;
+      row.addEventListener('click', () => ctx.openRoom(item.platform, item.room_id));
+      list.appendChild(row);
+    }
+    content.appendChild(list);
+    bindImageFallback(list);
+
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+    actions.innerHTML = `<button class="btn small ghost">${icon('close', 15)} 清空统计</button>`;
+    actions.querySelector('button').addEventListener('click', async () => {
+      const ok = await confirmDialog({ title: '清空观看统计', text: '时长与次数会一起清掉，观看记录不受影响。', okLabel: '清空', danger: true });
+      if (!ok) return;
+      clearStats();
+      paint();
+    });
+    content.appendChild(actions);
+  }
+
+  paint();
+}
+
+/// 分段控件：设置页里「记录/统计」「本周/本月…」都用它，样式见 pages.css 的 .segmented。
+function segmented(options, active, onPick) {
+  const bar = document.createElement('div');
+  bar.className = 'segmented';
+  for (const [value, label] of options) {
+    const button = document.createElement('button');
+    button.className = value === active ? 'active' : '';
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      if (value === active) return;
+      onPick(value);
+    });
+    bar.appendChild(button);
+  }
+  return bar;
+}
+
+/// 把毫秒转成「2 小时 13 分」这类人话，统计卡片和排行都用它。
+function formatWatchTime(ms) {
+  const seconds = Math.round((Number(ms) || 0) / 1000);
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  if (hours < 24) return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return restHours ? `${days} 天 ${restHours} 小时` : `${days} 天`;
 }
 
 function paintSync(content, ctx, repaint) {
-  const card = document.createElement('div');
-  card.className = 'tool-card';
-  card.innerHTML = `
+  // ① 本机备份：仍是原来的导出一份 JSON / 导入回来。
+  const backup = document.createElement('div');
+  backup.className = 'tool-card';
+  backup.innerHTML = `
     <h3>本机数据备份</h3>
     <p>导出设置、关注列表、观看记录和登录信息为一个 JSON 文件；换机器或重装时可以再导入回来。</p>
     <div class="tool-actions">
       <button class="btn primary" id="sync-export">${icon('download', 16)} 导出备份</button>
       <button class="btn" id="sync-import">${icon('upload', 16)} 导入备份</button>
     </div>`;
-  const note = document.createElement('div');
-  note.className = 'pill-note';
-  note.style.marginTop = '14px';
-  note.innerHTML = `${icon('info', 16)}<div>当前版本使用本机 localStorage 保存数据，不会上传到服务器。导入会覆盖同名类别的数据。</div>`;
-  card.appendChild(note);
-  content.appendChild(card);
+  const backupNote = document.createElement('div');
+  backupNote.className = 'pill-note';
+  backupNote.style.marginTop = '14px';
+  backupNote.innerHTML = `${icon('info', 16)}<div>当前版本使用本机 localStorage 保存数据，不会上传到服务器。导入会覆盖同名类别的数据。</div>`;
+  backup.appendChild(backupNote);
+  content.appendChild(backup);
 
-  card.querySelector('#sync-export').addEventListener('click', async () => {
+  backup.querySelector('#sync-export').addEventListener('click', async () => {
     const payload = {
       version: 1,
       app: '星幕直播 Starveil',
@@ -629,37 +771,189 @@ function paintSync(content, ctx, repaint) {
     const saved = await saveJsonFile(filename, payload);
     if (saved) toast('备份已导出', 'success');
   });
+  backup.querySelector('#sync-import').addEventListener('click', () => pickJsonFile(runImport));
 
-  card.querySelector('#sync-import').addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'application/json,.json';
-    input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      try {
-        const data = JSON.parse(await file.text());
-        if (data.shield) {
-          data.settings = data.settings || {};
-          data.settings.danmaku = data.settings.danmaku || {};
-          if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
-          if (!data.settings.danmaku.blockUsers) data.settings.danmaku.blockUsers = data.shield.users || '';
-        }
-        if (data.settings) localStorage.setItem('simple-live.settings.v2', JSON.stringify(data.settings));
-        if (Array.isArray(data.follows)) localStorage.setItem('simple-live.follow.v2', JSON.stringify(data.follows));
-        if (Array.isArray(data.history)) localStorage.setItem('simple-live.history.v2', JSON.stringify(data.history));
-        const restored = restoreAccounts(data.accounts);
-        toast(
-          restored.length ? `导入成功（含 ${restored.length} 个平台登录信息），正在重新载入…` : '导入成功，正在重新载入…',
-          'success',
-        );
-        setTimeout(() => location.reload(), 700);
-      } catch (error) {
-        toast(`导入失败：${error}`, 'error');
+  // ② 从 dart_simple_live 迁移：直接吃它导出的 profile JSON。
+  const migrate = document.createElement('div');
+  migrate.className = 'tool-card';
+  migrate.innerHTML = `
+    <h3>从 dart_simple_live 迁移</h3>
+    <p>选择 SimpleLive 导出的 profile 文件（<code>simple_live_profile</code> 格式），
+       会把关注、观看记录、弹幕/播放设置与关键词屏蔽搬到本机；抖音/快手的记录会被跳过。</p>
+    <div class="tool-actions">
+      <button class="btn primary" id="sync-dart">${icon('upload', 16)} 选择 profile 文件</button>
+    </div>
+    <div id="import-report"></div>`;
+  content.appendChild(migrate);
+
+  const report = migrate.querySelector('#import-report');
+
+  migrate.querySelector('#sync-dart').addEventListener('click', () => pickJsonFile(runImport));
+
+  async function runImport(file) {
+    try {
+      const summary = importData(JSON.parse(await file.text()));
+      // 导入的 Cookie 要重新注入后端，否则页面看着「已登录」但取流仍是游客。
+      for (const platform of summary.accounts) {
+        const login = loadLogin(platform);
+        if (login?.cookie) await api.setCookie(platform, login.cookie).catch(() => {});
       }
+      report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('check', 16)}<div>${escapeHtml(
+        describeImport(summary)
+      )}，正在重新载入…</div></div>`;
+      setTimeout(() => location.reload(), 900);
+    } catch (error) {
+      report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('info', 16)}<div>导入失败：${escapeHtml(
+        String(error?.message || error)
+      )}</div></div>`;
+    }
+  }
+
+  // ③ WebDAV 同步：整包上传/下载，不做字段级合并。
+  const config = state.settings.sync.webdav;
+  const sync = document.createElement('div');
+  sync.className = 'tool-card';
+  sync.innerHTML = `
+    <h3>WebDAV 局域网同步</h3>
+    <p>把关注、观看记录与设置打包成一个 JSON 传到自己的 WebDAV（群晖、坚果云、Nextcloud 等），
+       多台机器共用同一份数据。</p>
+    <div class="sync-form">
+      <label class="sync-field"><span>服务器地址</span>
+        <input class="input" id="dav-url" placeholder="https://nas.local:5006/dav/starveil/" value="${escapeHtml(config.url)}" /></label>
+      <label class="sync-field"><span>文件名</span>
+        <input class="input" id="dav-path" placeholder="starveil-sync.json" value="${escapeHtml(config.path)}" /></label>
+      <label class="sync-field"><span>用户名</span>
+        <input class="input" id="dav-user" value="${escapeHtml(config.username)}" autocomplete="off" /></label>
+      <label class="sync-field"><span>密码</span>
+        <input class="input" id="dav-pass" type="password" value="${escapeHtml(config.password)}" autocomplete="off" /></label>
+      <div class="sync-toggles">
+        <div class="sync-toggle"><span>允许自签证书</span><button class="switch" id="dav-insecure" aria-checked="${config.insecureTls}"></button></div>
+        <div class="sync-toggle"><span>启动时自动拉取远端</span><button class="switch" id="dav-autopull" aria-checked="${config.autoPull}"></button></div>
+      </div>
+    </div>
+    <div class="tool-actions">
+      <button class="btn" id="dav-test">${icon('link', 16)} 测试连接</button>
+      <button class="btn primary" id="dav-upload">${icon('upload', 16)} 上传覆盖云端</button>
+      <button class="btn" id="dav-download">${icon('download', 16)} 下载覆盖本机</button>
+    </div>
+    <div id="dav-state"></div>`;
+  content.appendChild(sync);
+
+  const davState = sync.querySelector('#dav-state');
+  const showState = (text, tone = 'info') => {
+    davState.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon(tone === 'error' ? 'info' : 'check', 16)}<div>${escapeHtml(text)}</div></div>`;
+  };
+  const readForm = () => {
+    const next = {
+      url: sync.querySelector('#dav-url').value.trim(),
+      path: sync.querySelector('#dav-path').value.trim() || 'starveil-sync.json',
+      username: sync.querySelector('#dav-user').value.trim(),
+      password: sync.querySelector('#dav-pass').value,
+      insecureTls: sync.querySelector('#dav-insecure').getAttribute('aria-checked') === 'true',
+      autoPull: sync.querySelector('#dav-autopull').getAttribute('aria-checked') === 'true',
+    };
+    setSetting('sync.webdav', next);
+    return next;
+  };
+  const target = () => webdavUrl(readForm());
+
+  sync.querySelectorAll('.switch').forEach((button) => {
+    button.addEventListener('click', () => {
+      button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
+      readForm();
     });
-    input.click();
   });
+  for (const id of ['#dav-url', '#dav-path', '#dav-user', '#dav-pass']) {
+    sync.querySelector(id).addEventListener('change', readForm);
+  }
+
+  sync.querySelector('#dav-test').addEventListener('click', async () => {
+    const cfg = readForm();
+    try {
+      const info = await api.webdavTest(target(), cfg.username, cfg.password, cfg.insecureTls);
+      // 浏览器演示模式下命令会返回 null，这里给一句明确的提示而不是 TypeError。
+      if (!info) throw new Error('浏览器演示模式没有后端，WebDAV 只能在应用内使用');
+      showState(
+        info.exists
+          ? `连接正常，云端已有同步文件${info.modified ? `（${info.modified}）` : ''}`
+          : '连接正常，云端还没有同步文件，可以直接上传'
+      );
+    } catch (error) {
+      showState(String(error), 'error');
+    }
+  });
+
+  sync.querySelector('#dav-upload').addEventListener('click', async () => {
+    const cfg = readForm();
+    try {
+      const bundle = buildBundle();
+      await api.webdavUpload(target(), cfg.username, cfg.password, JSON.stringify(bundle, null, 2), cfg.insecureTls);
+      setSetting('sync.lastSyncAt', Date.now());
+      showState('已上传，云端文件被本机数据覆盖');
+    } catch (error) {
+      showState(String(error), 'error');
+    }
+  });
+
+  sync.querySelector('#dav-download').addEventListener('click', async () => {
+    const cfg = readForm();
+    const ok = await confirmDialog({
+      title: '下载覆盖本机',
+      text: '云端的关注、观看记录与设置会覆盖本机同名数据，本机独有的条目不会保留。',
+      okLabel: '覆盖',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const payload = await api.webdavDownload(target(), cfg.username, cfg.password, cfg.insecureTls);
+      importData(JSON.parse(payload.content));
+      setSetting('sync.lastSyncAt', Date.now());
+      showState('已从云端同步，正在重新载入…');
+      setTimeout(() => location.reload(), 900);
+    } catch (error) {
+      showState(String(error), 'error');
+    }
+  });
+
+  const tip = document.createElement('div');
+  tip.className = 'pill-note';
+  tip.style.marginTop = '14px';
+  tip.innerHTML = `${icon('info', 16)}<div>同步包<b>不含登录 Cookie</b>；账号密码以明文存在本机设置里，别在公用电脑上保存。
+    冲突处理只有「整包覆盖」，不做字段级合并；自动拉取只在云端比本机新时才应用。</div>`;
+  sync.appendChild(tip);
+}
+
+/// 选一个 JSON 文件交给回调处理，导入入口（备份/迁移）共用。
+function pickJsonFile(onPick) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (file) onPick(file);
+  });
+  input.click();
+}
+
+/// 把导入摘要翻成一句人话。
+function describeImport(summary) {
+  const parts = [`关注 ${summary.follows} 个`, `观看记录 ${summary.history} 条`];
+  if (summary.settings) parts.push(`设置 ${summary.settings} 项`);
+  if (summary.accounts?.length) parts.push(`登录 ${summary.accounts.length} 个平台`);
+  const skipped = Object.entries(summary.skipped || {});
+  if (skipped.length) {
+    parts.push(`跳过 ${skipped.map(([platform, count]) => `${PLATFORM_META[platform]?.name || platform} ${count} 条`).join('、')}（尚未支持该平台）`);
+  }
+  if (summary.truncated) parts.push(`超出上限丢弃 ${summary.truncated} 条`);
+  return `导入完成：${parts.join('，')}`;
+}
+
+/// 把 WebDAV 的目录地址与文件名拼成完整 URL，容忍多写/少写斜杠。
+function webdavUrl(config) {
+  const base = String(config.url || '').trim();
+  if (!base) throw new Error('请先填写 WebDAV 服务器地址');
+  const path = String(config.path || 'starveil-sync.json').trim().replace(/^\/+/, '');
+  return base.endsWith('/') ? `${base}${path}` : `${base}/${path}`;
 }
 
 function paintLink(content, ctx) {

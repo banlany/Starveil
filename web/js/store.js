@@ -5,7 +5,12 @@ const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
 const HISTORY_KEY = 'simple-live.history.v2';
 const SEARCH_KEY = 'simple-live.search.v2';
+const STATS_KEY = 'simple-live.stats.v2';
 const LOGIN_PREFIX = 'simple-live.login.v1.';
+
+/// 观看记录上限。0.4.4 从 1000 提到 2000：导入 dart 的 profile 时
+/// 单机历史常常超过一千条，旧上限会静默截掉一大半。
+export const HISTORY_LIMIT = 2000;
 
 export function loadLogin(platform) {
   try {
@@ -120,6 +125,19 @@ export const DEFAULT_SETTINGS = {
   timer: {
     enabled: false,
     minutes: 60,
+  },
+  sync: {
+    // WebDAV 局域网同步。密码明文存在本机 localStorage（设置页有风险提示），
+    // 只在本机使用、不上传任何第三方。
+    webdav: {
+      url: '',
+      path: 'starveil-sync.json',
+      username: '',
+      password: '',
+      insecureTls: false,
+      autoPull: false,
+    },
+    lastSyncAt: 0,
   },
   other: {
     rememberWindow: true,
@@ -354,13 +372,215 @@ export function recordHistory(room) {
     area: room.area || '',
     watched_at: Date.now(),
   });
-  state.history = filtered.slice(0, 1000);
+  state.history = filtered.slice(0, HISTORY_LIMIT);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+  // 进房同时累加统计里的「点进次数」，两处数据保持一致。
+  bumpStatsVisit(room);
+}
+
+export function saveHistory(list) {
+  state.history = (Array.isArray(list) ? list : []).slice(0, HISTORY_LIMIT);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+  return state.history;
 }
 
 export function clearHistory() {
   state.history = [];
   localStorage.removeItem(HISTORY_KEY);
+}
+
+// ---------------------------------------------------------------- 观看统计
+//
+// 与 history 分开存：history 是「最近看过谁」的列表（会被去重、有上限），
+// 统计要的是「每个主播累计看了多久、点进几次」，写的是累加值，
+// 混在一起会互相踩。底层粒度只存「按天」，周/月/年由展示层聚合，避免多份冗余。
+
+const STATS_DAY_LIMIT = 400; // 每个主播保留最近 400 天
+const STATS_ROOM_LIMIT = 300; // 最多统计 300 个主播
+const STATS_BYTE_BUDGET = 2.4 * 1024 * 1024; // localStorage 单域约 5MB，留出余量
+
+function statsKey(platform, roomId) {
+  return `${platform}:${roomId}`;
+}
+
+/// 本地时区的「日」键，不能用 toISOString（那是 UTC，跨时区会把凌晨的观看算到前一天）。
+export function dayKey(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function emptyStats() {
+  return { v: 1, rooms: {} };
+}
+
+export function loadStats() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STATS_KEY) || 'null');
+    if (data && typeof data === 'object' && data.rooms && typeof data.rooms === 'object') return data;
+  } catch {
+    /* 损坏时重建 */
+  }
+  return emptyStats();
+}
+
+/// 裁剪：先按天保留窗口，再按主播数上限淘汰最久没看的。
+function trimStats(stats) {
+  const cutoff = Date.now() - STATS_DAY_LIMIT * 86400000;
+  for (const entry of Object.values(stats.rooms)) {
+    for (const day of Object.keys(entry.daily || {})) {
+      const timestamp = Date.parse(`${day}T00:00:00`);
+      if (Number.isNaN(timestamp) || timestamp < cutoff) delete entry.daily[day];
+    }
+  }
+  const keys = Object.keys(stats.rooms);
+  if (keys.length > STATS_ROOM_LIMIT) {
+    keys
+      .sort((a, b) => (Number(stats.rooms[b].last_at) || 0) - (Number(stats.rooms[a].last_at) || 0))
+      .slice(STATS_ROOM_LIMIT)
+      .forEach((key) => delete stats.rooms[key]);
+  }
+}
+
+function saveStats(stats) {
+  trimStats(stats);
+  let text = JSON.stringify(stats);
+  // 极端情况下（几百个主播 × 400 天）体积仍可能顶到上限，按最久未看逐个丢弃再试。
+  while (text.length > STATS_BYTE_BUDGET) {
+    const oldest = Object.keys(stats.rooms).sort(
+      (a, b) => (Number(stats.rooms[a].last_at) || 0) - (Number(stats.rooms[b].last_at) || 0)
+    )[0];
+    if (!oldest) break;
+    delete stats.rooms[oldest];
+    text = JSON.stringify(stats);
+  }
+  try {
+    localStorage.setItem(STATS_KEY, text);
+  } catch {
+    /* 空间不足时放弃本次统计写入，不影响播放 */
+  }
+}
+
+function ensureStatsRoom(stats, room) {
+  const key = statsKey(room.platform, room.room_id);
+  let entry = stats.rooms[key];
+  if (!entry) {
+    entry = {
+      platform: room.platform,
+      room_id: String(room.room_id),
+      user_name: '',
+      cover: '',
+      total_ms: 0,
+      visits: 0,
+      last_at: 0,
+      daily: {},
+    };
+    stats.rooms[key] = entry;
+  }
+  // 主播改名/换封面时让统计里的展示信息跟上，历史数据不回溯。
+  if (room.user_name) entry.user_name = room.user_name;
+  const cover = canonicalImage(room.cover || room.avatar || '');
+  if (cover) entry.cover = cover;
+  return entry;
+}
+
+/// 进房一次：点进次数 +1（按天也记一份）。
+export function bumpStatsVisit(room) {
+  if (!room?.platform || !room?.room_id) return;
+  const stats = loadStats();
+  const entry = ensureStatsRoom(stats, room);
+  const now = Date.now();
+  entry.visits = (Number(entry.visits) || 0) + 1;
+  entry.last_at = now;
+  const day = dayKey(now);
+  if (!entry.daily[day]) entry.daily[day] = { ms: 0, visits: 0 };
+  entry.daily[day].visits += 1;
+  saveStats(stats);
+}
+
+/// 累加一次观看时长（毫秒）。不足 1 秒的碎片不计，避免心跳把噪声写进统计。
+export function addWatchTime(platform, roomId, ms) {
+  const value = Math.round(Number(ms) || 0);
+  if (!platform || !roomId || value < 1000) return;
+  const stats = loadStats();
+  const entry = stats.rooms[statsKey(platform, roomId)];
+  // 没有进房记录说明 history 被清过，这里不新建条目——统计只跟随真实访问。
+  if (!entry) return;
+  const now = Date.now();
+  entry.total_ms = (Number(entry.total_ms) || 0) + value;
+  entry.last_at = now;
+  const day = dayKey(now);
+  if (!entry.daily[day]) entry.daily[day] = { ms: 0, visits: 0 };
+  entry.daily[day].ms = (Number(entry.daily[day].ms) || 0) + value;
+  saveStats(stats);
+}
+
+export function clearStats() {
+  localStorage.removeItem(STATS_KEY);
+}
+
+export const STATS_RANGES = [
+  { value: 'week', label: '本周' },
+  { value: 'month', label: '本月' },
+  { value: 'year', label: '今年' },
+  { value: 'all', label: '全部' },
+];
+
+/// 时间范围的起点（本地零点）。week 按周一起算，和国内习惯一致。
+export function statsRangeStart(range, now = Date.now()) {
+  const date = new Date(now);
+  date.setHours(0, 0, 0, 0);
+  if (range === 'week') {
+    const offset = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - offset);
+    return date.getTime();
+  }
+  if (range === 'month') return new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  if (range === 'year') return new Date(date.getFullYear(), 0, 1).getTime();
+  return 0;
+}
+
+/**
+ * 聚合出某个时间范围下的统计。
+ * @returns {{range:string,start:number,totalMs:number,totalVisits:number,activeDays:number,rooms:Array}}
+ */
+export function aggregateStats(range = 'all', now = Date.now()) {
+  const stats = loadStats();
+  const start = statsRangeStart(range, now);
+  const activeDays = new Set();
+  const rooms = [];
+  let totalMs = 0;
+  let totalVisits = 0;
+  for (const entry of Object.values(stats.rooms)) {
+    let ms = 0;
+    let visits = 0;
+    for (const [day, bucket] of Object.entries(entry.daily || {})) {
+      const timestamp = Date.parse(`${day}T00:00:00`);
+      if (Number.isNaN(timestamp) || timestamp < start) continue;
+      const dayMs = Number(bucket?.ms) || 0;
+      const dayVisits = Number(bucket?.visits) || 0;
+      if (!dayMs && !dayVisits) continue;
+      ms += dayMs;
+      visits += dayVisits;
+      activeDays.add(day);
+    }
+    if (!ms && !visits) continue;
+    totalMs += ms;
+    totalVisits += visits;
+    rooms.push({
+      platform: entry.platform,
+      room_id: entry.room_id,
+      user_name: entry.user_name || '',
+      cover: entry.cover || '',
+      ms,
+      visits,
+      // 有范围内观看记录才算「最近」，否则按进房时间兜底。
+      last_at: Number(entry.last_at) || 0,
+    });
+  }
+  rooms.sort((a, b) => b.ms - a.ms || b.visits - a.visits);
+  return { range, start, totalMs, totalVisits, activeDays: activeDays.size, rooms };
 }
 
 // ---------------------------------------------------------------- 搜索历史

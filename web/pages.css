@@ -574,7 +574,7 @@
 .profile-logo {
   width: 50px;
   height: 50px;
-  border-radius: 13px;
+  border-radius: var(--radius);
   overflow: hidden;
   flex: none;
   background: #fff;
@@ -609,27 +609,29 @@
 .settings-list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 
+/* 一级设置项做成独立的圆角卡片（而不是长列表里的分隔行）：
+   每项自带背景与描边，hover 时圆角不会露出直角底色。 */
 .settings-item {
   min-height: 57px;
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 0 4px;
+  padding: 0 16px 0 14px;
   color: var(--fg);
-  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   font-size: 16px;
   text-align: left;
-  transition: background 0.14s ease;
-}
-
-.settings-item:first-child {
-  border-top: 1px solid var(--line);
+  transition: background 0.14s ease, border-color 0.14s ease;
 }
 
 .settings-item:hover {
-  background: var(--surface);
+  background: var(--surface-2);
+  border-color: var(--line-strong);
 }
 
 .settings-item .item-icon {
@@ -691,7 +693,7 @@
 .settings-group {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -798,7 +800,7 @@
   display: inline-flex;
   align-items: center;
   height: 32px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
   padding: 0 4px;
   gap: 2px;
@@ -839,7 +841,7 @@
 .swatch {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -884,7 +886,7 @@
   align-items: center;
   gap: 12px;
   padding: 15px 18px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--surface);
 }
@@ -892,7 +894,7 @@
 .settings-action-card .action-icon {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   display: flex;
   align-items: center;
@@ -934,7 +936,7 @@
 .about-logo {
   width: 74px;
   height: 74px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   margin: 0 auto 16px;
   background: #fff;
@@ -960,7 +962,7 @@
   display: inline-flex;
   margin-top: 14px;
   padding: 5px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
   color: var(--muted);
   font-size: 12px;
@@ -1221,6 +1223,147 @@
   margin-bottom: 12px;
 }
 
+/* ------------------------------------------------------------ 观看统计 */
+
+/* 分段控件：观看记录/统计、本周/本月/今年/全部 共用。 */
+.segmented {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.segmented button {
+  height: 30px;
+  padding: 0 15px;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  font-size: 12.5px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.segmented button:hover {
+  color: var(--fg);
+}
+
+.segmented button.active {
+  color: var(--fg);
+  background: var(--surface-3);
+}
+
+.stats-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stats-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.stats-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stats-card strong {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  text-align: left;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.stats-row:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.stats-rank {
+  width: 20px;
+  flex: none;
+  color: var(--dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.stats-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stats-main b {
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-bar {
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.stats-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.stats-value {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.stats-value b {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.stats-value small {
+  color: var(--dim);
+  font-size: 11.5px;
+}
+
 /* ------------------------------------------------------------ 平台未接入 */
 
 .platform-locked {
@@ -1275,7 +1418,7 @@
   display: flex;
   gap: 4px;
   padding: 3px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   align-self: flex-start;
 }
@@ -1283,7 +1426,7 @@
 .login-tab {
   height: 30px;
   padding: 0 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   color: var(--muted);
   font-size: 12.5px;
 }
@@ -1304,7 +1447,7 @@
 .login-qr-box {
   width: 216px;
   height: 216px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: #fff;
   display: flex;
   align-items: center;
@@ -1365,7 +1508,7 @@
 .tool-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   padding: 18px;
 }
 
@@ -1392,11 +1535,49 @@
   flex-wrap: wrap;
 }
 
+/* WebDAV 同步表单：两列，窄屏退成一列。 */
+.sync-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px 14px;
+  align-items: end;
+}
+
+.sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.sync-field .input {
+  width: 100%;
+}
+
+/* 两个同步开关单独占一行，不要挤进上面的字段网格里 */
+.sync-toggles {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  padding-top: 2px;
+}
+
+.sync-form .sync-toggle {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
 .pill-note {
   display: flex;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--muted);
   font-size: 12px;
@@ -1446,7 +1627,7 @@
 .select-btn {
   height: 30px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1467,7 +1648,7 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--line);
 }

@@ -185,6 +185,16 @@ export const api = {
   copyText(text) {
     return call('copy_text', { text });
   },
+  // WebDAV 同步：地址由前端拼好整条 URL 传下去（含目录与文件名）。
+  webdavTest(url, username, password, allowInsecureTls = false) {
+    return call('webdav_test', { url, username, password, allowInsecureTls });
+  },
+  webdavUpload(url, username, password, content, allowInsecureTls = false) {
+    return call('webdav_upload', { url, username, password, content, allowInsecureTls });
+  },
+  webdavDownload(url, username, password, allowInsecureTls = false) {
+    return call('webdav_download', { url, username, password, allowInsecureTls });
+  },
   openUrl(url) {
     return call('open_url', { url });
   },

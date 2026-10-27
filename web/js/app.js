@@ -20,6 +20,7 @@ import { renderFollow } from './pages/follow.js';
 import { renderSearch } from './pages/search.js';
 import { renderSettings, renderSettingsDetail } from './pages/settings.js';
 import { renderRoom } from './pages/room.js';
+import { importData } from './importer.js';
 import { initTitlebar } from './titlebar.js';
 
 const view = document.getElementById('view');
@@ -480,6 +481,29 @@ async function setupWindowState() {
   }
 }
 
+/// 启动时自动拉取 WebDAV 同步包。
+/// 只在「云端比本机上次同步更新」时才应用，避免每次启动都用旧包覆盖本机改动；
+/// 失败只写控制台，不弹窗打扰（网络不通是常态，手动同步仍然可用）。
+async function autoPullSync() {
+  const config = state.settings.sync?.webdav;
+  if (!config?.autoPull || !config.url) return;
+  const path = String(config.path || 'starveil-sync.json').trim().replace(/^\/+/, '');
+  const url = config.url.endsWith('/') ? `${config.url}${path}` : `${config.url}/${path}`;
+  try {
+    const payload = await api.webdavDownload(url, config.username, config.password, config.insecureTls);
+    const bundle = JSON.parse(payload.content);
+    const remoteAt = Date.parse(bundle.exportedAt || '') || 0;
+    if (!remoteAt || remoteAt <= (Number(state.settings.sync.lastSyncAt) || 0)) return;
+    importData(bundle);
+    state.settings.sync.lastSyncAt = Date.now();
+    saveSettings();
+    toast('已从云端同步数据', 'success');
+    render({ keepScroll: true });
+  } catch (error) {
+    console.warn('自动拉取云端同步失败', error);
+  }
+}
+
 function init() {
   // 禁用 WebView 默认右键菜单，避免露出浏览器菜单/刷新等开发项。
   document.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -509,6 +533,8 @@ function init() {
       api.setCookie(platform, login.cookie).catch((error) => console.warn('恢复登录态失败', platform, error));
     }
   }
+  // 启动时自动拉取云端同步包（默认关闭，需在设置里显式打开）。
+  setTimeout(autoPullSync, 1500);
   // 预加载分类树，切换分类页更快
   setTimeout(() => {
     if (!state.category.tree.length && !state.category.loading) {

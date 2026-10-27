@@ -42,6 +42,20 @@ const PERF_PROFILES = {
   ultra: { maxStored: 700, dprCap: 1, shadowBlur: 0, minSpace: 18, sendScale: 0.6, noStroke: true },
 };
 
+/// 性能档位与帧率上限的选项表。
+/// 设置页与直播间弹幕设置弹层都从这里取，避免两处各写一份导致取值/文案不一致。
+export const PERF_OPTIONS = [
+  { value: 'balanced', label: '平衡（默认）', desc: '保留阴影与描边' },
+  { value: 'smooth', label: '流畅', desc: '关阴影，降低画布精度' },
+  { value: 'ultra', label: '极速', desc: '再关描边，每秒进入的弹幕更少' },
+];
+
+export const FPS_OPTIONS = [
+  { value: 0, label: '跟随屏幕', desc: '不限制重绘频率' },
+  { value: 60, label: '60 帧', desc: '常规上限' },
+  { value: 30, label: '30 帧', desc: '省电档' },
+];
+
 /// 单次 drain 最多补发几条。批量发送时不能一口气全塞进去，
 /// 否则一帧里创建大量实例，正好撞上掉帧。
 const MAX_PER_DRAIN = 3;

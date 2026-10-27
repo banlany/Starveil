@@ -25,7 +25,13 @@
   --switch-on: var(--accent);
   --switch-knob: #ffffff;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  /* 圆角阶梯：设置页的卡片/列表项、弹层、按钮统一从这里取，
+     不要在组件里再写 8/10/13px 这类魔法值。 */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
   --radius: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
   --rail-width: 88px;
   --topbar-height: 64px;
   --titlebar-height: 38px;
