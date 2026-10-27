@@ -401,6 +401,22 @@ export function renderRoom(ctx, params = {}) {
     if (session.tab === 'chat') appendChatLine(entry);
   }
 
+  // 正则里的特殊字符要转义：表情 key 自带 `[` `]`，不转义会被当成字符组。
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function chatEmojiImage(key, url) {
+    const image = document.createElement('img');
+    image.className = 'chat-emoji';
+    image.src = url;
+    image.alt = key;
+    image.loading = 'lazy';
+    // 图片挂了就退回文字，不要把整条弹幕变空白。
+    image.addEventListener('error', () => image.replaceWith(document.createTextNode(key)));
+    return image;
+  }
+
   /// 聊天行正文：把表情占位符换成小图标。
   ///
   /// 用的是和弹幕层同一份 `message.emoticons`，区别只是这里按聊天区字号缩放（CSS 的 `em`）。
@@ -408,40 +424,38 @@ export function renderRoom(ctx, params = {}) {
   function fillChatText(node, message) {
     const text = message.text == null ? '' : String(message.text);
     const list = Array.isArray(message.emoticons) ? message.emoticons : null;
-    if (!list || !list.length) {
+    // 同一个 key 可能对应不同的图（每个房间都有自己那套 `[热]`），按出现顺序取第一个。
+    const urlByKey = new Map();
+    for (const emoticon of list || []) {
+      const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
+      const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
+      if (key && url && !urlByKey.has(key)) urlByKey.set(key, url);
+    }
+    if (!urlByKey.size) {
       node.textContent = text;
       return;
     }
-    const showEmoji = state.settings.danmaku.emoji !== false;
-    if (!showEmoji) {
+    if (state.settings.danmaku.emoji === false) {
       let plain = text;
-      for (const emoticon of list) {
-        const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
-        if (key) plain = plain.split(key).join('');
+      for (const key of urlByKey.keys()) {
+        if (key.startsWith('[')) plain = plain.split(key).join('');
       }
       node.textContent = plain;
       return;
     }
-    // 按 key 首次出现的位置切片，边切边插，正文与图片保持原始顺序。
-    let rest = text;
-    for (const emoticon of list) {
-      const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
-      const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
-      if (!key || !url) continue;
-      const at = rest.indexOf(key);
-      if (at < 0) continue;
-      if (at > 0) node.appendChild(document.createTextNode(rest.slice(0, at)));
-      const image = document.createElement('img');
-      image.className = 'chat-emoji';
-      image.src = url;
-      image.alt = key;
-      image.loading = 'lazy';
-      // 图片挂了就退回文字，不要把整条弹幕变空白。
-      image.addEventListener('error', () => image.replaceWith(document.createTextNode(key)));
-      node.appendChild(image);
-      rest = rest.slice(at + key.length);
+    // 整条扫一遍再切片，而不是按 emoticons 逐个 replace 一次：
+    // 同一条弹幕里同一个表情常出现多次（`[大哭][大哭]`），只换第一处会让后面几个留成文字。
+    // 长 key 排在前面，避免 `[热]` 抢走 `[热乎]` 的前半截。
+    const keys = [...urlByKey.keys()].sort((a, b) => b.length - a.length);
+    const pattern = new RegExp(keys.map(escapeRegExp).join('|'), 'g');
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+      const at = match.index ?? 0;
+      if (at > cursor) node.appendChild(document.createTextNode(text.slice(cursor, at)));
+      node.appendChild(chatEmojiImage(match[0], urlByKey.get(match[0])));
+      cursor = at + match[0].length;
     }
-    if (rest) node.appendChild(document.createTextNode(rest));
+    if (cursor < text.length) node.appendChild(document.createTextNode(text.slice(cursor)));
   }
 
   function appendChatLine(message) {
@@ -638,6 +652,8 @@ export function renderRoom(ctx, params = {}) {
     }
     if (session.tab === 'settings') {
       renderChatSettings();
+      // 从聊天切过来时会沿用聊天的滚动位置，面板直接从中间开始显示、顶上的开关看不见。
+      chatList.scrollTop = 0;
     }
   }
 
@@ -649,6 +665,7 @@ export function renderRoom(ctx, params = {}) {
       <div class="chat-settings-group">
         <h4>弹幕设置</h4>
         <div class="chat-setting-row"><span>弹幕开关</span><button class="switch" id="cs-enabled" aria-checked="${session.danmakuEnabled}"></button></div>
+        <div class="chat-setting-row"><span>弹幕表情</span><button class="switch" id="cs-emoji" aria-checked="${config.emoji !== false}"></button></div>
         <div class="chat-setting-row"><span>不透明度</span><input type="range" id="cs-opacity" min="20" max="100" step="5" value="${config.opacity}" /><em>${config.opacity}%</em></div>
         <div class="chat-setting-row"><span>显示区域</span><input type="range" id="cs-area" min="15" max="100" step="5" value="${config.area}" /><em>${config.area}%</em></div>
         <div class="chat-setting-row"><span>显示行数</span><input type="number" class="chat-setting-input" id="cs-lines" min="1" max="30" step="1" value="${config.lines}" /><em></em></div>
@@ -725,6 +742,7 @@ export function renderRoom(ctx, params = {}) {
     };
 
     bindSwitch('cs-enabled', 'enabled');
+    bindSwitch('cs-emoji', 'emoji');
     bindRange('cs-opacity', 'opacity', (value) => `${value}%`);
     bindRange('cs-area', 'area', (value) => `${value}%`);
     bindNumber('cs-lines', 'lines', 1, 30);
@@ -776,6 +794,10 @@ export function renderRoom(ctx, params = {}) {
       if (!session.danmakuEnabled) danmaku?.setEnabled(false);
     }
     saveSettings();
+    // 表情开关只影响「后续渲染」，聊天栏里已经画好的行要重画一遍才能立刻看到效果。
+    // 弹幕层不用动：新弹幕在 emit 时会重新读配置，屏上的旧弹幕滚过去就算了。
+    if (key === 'emoji' && session.tab === 'chat') renderChatTab();
+
     // 字号/行数/区域/速度的改动交给弹幕层：库内部会重排轨道并保留现有弹幕，
     // 只有字号变化才需要重建（弹幕实例的宽高是创建时固定的）。
     danmaku?.update(state.settings.danmaku);
