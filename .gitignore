@@ -49,3 +49,6 @@ ToDo.md
 !docs/img/**
 !web/assets/**
 !src-tauri/icons/**
+
+# 平台协议速查（含签名细节，只留本地，不入库）
+docs/platform-protocols.md
