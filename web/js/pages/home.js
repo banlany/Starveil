@@ -129,8 +129,10 @@ export function renderHome(ctx) {
       state.home.items.push(...fresh);
       state.home.page = nextPage;
       state.home.loadedAt = Date.now();
+      // 只有「这一页一条新的都没有」才算到底：抖音每页只给十几条，
+      // 用固定阈值（比如 <10）会一进首页就判定加载完，把「加载更多」按钮吞掉。
       state.home.done =
-        state.settings.home.showMore === false || fresh.length < 10 || nextPage >= 12;
+        state.settings.home.showMore === false || fresh.length === 0 || nextPage >= 12;
     } catch (error) {
       state.home.error = `加载失败：${String(error)}`;
     } finally {

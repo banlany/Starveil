@@ -140,7 +140,7 @@ function importDartProfile(data) {
     skipped[platform] = (skipped[platform] || 0) + 1;
   };
 
-  // 平台不在启用列表里就跳过：starveil 还不认识抖音/快手，
+  // 平台不在启用列表里就跳过：目前五站都已接入，这条判断留着防止将来下线某个平台。
   // 存进去只会在列表里露出来、点开必然报错。
   const takePlatform = (siteId) => {
     const platform = normalizePlatform(siteId);

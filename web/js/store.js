@@ -115,9 +115,17 @@ export const DEFAULT_SETTINGS = {
     safeBottom: 8,
     delay: 0,
     perf: 'balanced',
+    // 发送弹幕默认关闭：写操作会用账号 Cookie，让用户主动开启。
+    sendEnabled: false,
+    // 发送弹幕的入口默认**连设置项都不显示**，要在「关于」页连点版本号 7 次
+    // 才会解锁（见 docs/hidden-features.md）。这里只存解锁结果。
+    sendUnlocked: false,
   },
   follow: {
     autoUpdate: true,
+    // 进入关注页时是否自动刷新直播状态。默认关闭：关注几百个主播时
+    // 一进页面就打几百个请求，用户没要求就别替他决定。
+    autoRefresh: false,
     interval: 10,
     threads: 0,
     pageSize: 200,
@@ -163,6 +171,7 @@ export const state = {
   history: loadHistory(),
   settings: loadSettings(),
   unlistenDanmaku: null,
+  unlistenDanmakuStatus: null,
 };
 
 /// 深合并：对象逐层递归，其它类型（含数组、null）直接覆盖。

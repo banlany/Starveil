@@ -137,9 +137,18 @@ pub fn parse_qualities(playurl: &Value) -> Result<Vec<PlayQuality>, LiveError> {
 }
 
 /// 解析 `playurl_info.playurl`，拼出直链（非 mcdn 节点优先）。
+///
+/// `protocol=0,1` 同时要了 http_stream(FLV) 与 http_hls，两者的直链混在
+/// 同一棵 `stream` 树里，靠 `protocol_name` / URL 后缀区分：
+/// FLV 结尾是 `.flv`，HLS 结尾是 `.m3u8`。
 pub fn parse_play_urls(playurl: &Value) -> Result<PlayUrls, LiveError> {
     let mut urls: Vec<String> = Vec::new();
+    let mut hls_urls: Vec<String> = Vec::new();
     for stream in array_of(playurl, "stream") {
+        let protocol = stream
+            .get("protocol_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         for format in array_of(stream, "format") {
             for codec in array_of(format, "codec") {
                 let base = codec
@@ -150,18 +159,27 @@ pub fn parse_play_urls(playurl: &Value) -> Result<PlayUrls, LiveError> {
                     let host = info.get("host").and_then(Value::as_str).unwrap_or_default();
                     let extra = info.get("extra").and_then(Value::as_str).unwrap_or_default();
                     let url = format!("{host}{base}{extra}");
-                    if url.starts_with("http") {
+                    if !url.starts_with("http") {
+                        continue;
+                    }
+                    let is_hls = protocol == "http_hls" || url.contains(".m3u8");
+                    if is_hls {
+                        hls_urls.push(url);
+                    } else {
                         urls.push(url);
                     }
                 }
             }
         }
     }
-    if urls.is_empty() {
+    // HLS 只作为兜底线路，去重后限几条就够，避免线路列表被刷屏。
+    hls_urls.dedup();
+    if urls.is_empty() && hls_urls.is_empty() {
         return Err(LiveError::protocol("B 站没有返回可播放的直链"));
     }
     urls.sort_by_key(|url| url.contains("mcdn"));
     Ok(PlayUrls::new(urls)
+        .with_hls(hls_urls)
         .header("referer", REFERER)
         .header("user-agent", ROOM_UA))
 }
@@ -555,4 +573,66 @@ impl LiveSite for BilibiliSite {
         )?;
         parse_play_urls(&playurl)
     }
+
+    fn send_danmaku(
+        &self,
+        http: &HttpSession,
+        detail: &LiveRoomDetail,
+        text: &str,
+    ) -> Result<(), LiveError> {
+        // 发弹幕用的是 Cookie 里的 bili_jct（CSRF token），匿名态一定没有。
+        let cookie = http.cookie().unwrap_or_default();
+        let csrf = cookie_value(cookie, "bili_jct").ok_or_else(|| {
+            LiveError::unsupported("发送弹幕需要先登录哔哩哔哩账号（缺少 bili_jct）")
+        })?;
+        let full_cookie = self.cookie_header(http)?;
+        let value = http.post_form(
+            "https://api.live.bilibili.com/msg/send",
+            &[
+                ("bubble", "0".to_string()),
+                ("msg", text.to_string()),
+                ("color", "16777215".to_string()),
+                ("mode", "1".to_string()),
+                ("fontsize", "25".to_string()),
+                ("rnd", now_secs().to_string()),
+                ("roomid", detail.room_id.clone()),
+                ("csrf", csrf.clone()),
+                ("csrf_token", csrf),
+            ],
+            &[
+                (
+                    "referer",
+                    &format!("https://live.bilibili.com/{}", detail.room_id),
+                ),
+                ("user-agent", ROOM_UA),
+                ("cookie", full_cookie.as_str()),
+            ],
+        )?;
+        // 0 = 成功；10030 是「发送过于频繁」，其余按平台原文返回。
+        let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
+        if code == 0 {
+            return Ok(());
+        }
+        let message = value
+            .get("message")
+            .or_else(|| value.get("msg"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if code == -101 {
+            return Err(LiveError::unsupported("登录态已失效，请重新登录哔哩哔哩"));
+        }
+        Err(LiveError::protocol(format!(
+            "B 站拒绝发送弹幕 code={code} {message}"
+        )))
+    }
+}
+
+/// 从 Cookie 串里取一个键值（`a=1; b=2` 这种格式）。
+fn cookie_value(cookie: &str, key: &str) -> Option<String> {
+    cookie
+        .split(';')
+        .filter_map(|part| part.trim().split_once('='))
+        .find(|(name, _)| *name == key)
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }

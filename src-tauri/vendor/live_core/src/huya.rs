@@ -364,38 +364,42 @@ impl LiveSite for HuyaSite {
             .unwrap_or_default();
 
         let mut token_cache: BTreeMap<String, String> = BTreeMap::new();
-        let mut urls: Vec<String> = lines
-            .iter()
-            .filter_map(|line| {
-                // Dart 版每次取流都会向 getCdnTokenInfoEx 换新 token；
-                // 页面里的 anti-code 只能撑几秒，必须优先用新 token。
-                let token = token_cache
-                    .entry(line.stream_name.clone())
-                    .or_insert_with(|| {
-                        crate::huya_token::fetch_token(&line.stream_name)
-                            .unwrap_or_else(|_| line.anti_code.clone())
-                    })
-                    .clone();
-                let mut fresh = line.clone();
-                fresh.anti_code = token;
-                build_play_url(&fresh, *presenter_uid, bitrate, now_ms)
-            })
-            .collect();
-        // 页面默认把 AL 线路排在第一位，但 AL 在国内网络下最容易抖。
-        // 优先 TX/HS，最后再回退 AL，减少“刚进房就断流”的概率。
-        urls.sort_by_key(|url| {
-            if url.contains("tx.flv") || url.contains("hs.flv") {
-                0
-            } else if url.contains("al.flv") {
-                2
-            } else {
-                1
+        let mut urls: Vec<String> = Vec::new();
+        for line in lines {
+            // Dart 版每次取流都会向 getCdnTokenInfoEx 换新 token；
+            // 页面里的 anti-code 只能撑几秒，必须优先用新 token。
+            let token = token_cache
+                .entry(line.stream_name.clone())
+                .or_insert_with(|| {
+                    crate::huya_token::fetch_token(&line.stream_name)
+                        .unwrap_or_else(|_| line.anti_code.clone())
+                })
+                .clone();
+            let mut fresh = line.clone();
+            fresh.anti_code = token;
+            if let Some(url) = build_play_url(&fresh, *presenter_uid, bitrate, now_ms) {
+                urls.push(url);
             }
-        });
+        }
+        // 页面里虽然有 `sHlsUrl` / `sHlsAntiCode`，但我们按同一套算法拼出来的
+        // m3u8 拿不到流：带 Referer、裸请求都是 403（多个房间复现），说明 HLS
+        // 那一侧还有额外要求。与其给用户一条必失败的线路，不如只交 FLV。
+        urls.sort_by_key(|url| cdn_rank(url));
         if urls.is_empty() {
             return Err(LiveError::protocol("虎牙没有可用的播放地址"));
         }
         Ok(PlayUrls::new(urls).header("user-agent", DESKTOP_UA))
+    }
+}
+
+/// 线路排序权重：TX/HS 最稳，AL 放最后。
+fn cdn_rank(url: &str) -> u8 {
+    if url.contains("tx.") || url.contains("hs.") {
+        0
+    } else if url.contains("al.") {
+        2
+    } else {
+        1
     }
 }
 
@@ -413,14 +417,17 @@ pub fn presenter_uid(html: &str) -> Option<u64> {
         .filter(|uid: &u64| *uid > 0)
 }
 
-/// 重算 anticode 并拼出 flv 地址。
-pub fn build_play_url(
-    line: &HuyaLine,
+/// 重算 anticode，得到播放地址的查询串。
+///
+/// 虎牙页面里 `sFlvAntiCode` / `sHlsAntiCode` 是两套取值，虽然结构一样，
+/// 但只有 FLV 那套能真正取到流（HLS 那套拼出来的 m3u8 一律 403），所以只用前者。
+fn build_play_query(
+    anti_code: &str,
+    stream_name: &str,
     presenter_uid: u64,
-    bitrate: u32,
     now_ms: u64,
 ) -> Option<String> {
-    let params: BTreeMap<String, String> = form_urlencoded::parse(line.anti_code.as_bytes())
+    let params: BTreeMap<String, String> = form_urlencoded::parse(anti_code.as_bytes())
         .into_owned()
         .collect();
     let fm = params.get("fm")?.clone();
@@ -454,8 +461,7 @@ pub fn build_play_url(
         rotl64(presenter_uid)
     };
     let secret = md5_hex(&format!(
-        "{prefix}_{calc_uid}_{}_{secret_hash}_{ws_time}",
-        line.stream_name
+        "{prefix}_{calc_uid}_{stream_name}_{secret_hash}_{ws_time}"
     ));
 
     let ws_time_num = u64::from_str_radix(&ws_time, 16).unwrap_or(0);
@@ -472,7 +478,17 @@ pub fn build_play_url(
     } else {
         query.push_str(&format!("&u={calc_uid}"));
     }
+    Some(query)
+}
 
+/// 重算 anticode 并拼出 flv 地址。
+pub fn build_play_url(
+    line: &HuyaLine,
+    presenter_uid: u64,
+    bitrate: u32,
+    now_ms: u64,
+) -> Option<String> {
+    let query = build_play_query(&line.anti_code, &line.stream_name, presenter_uid, now_ms)?;
     let mut url = format!(
         "{}/{}.flv?{query}&codec=264",
         line.flv_url, line.stream_name
@@ -568,6 +584,7 @@ mod tests {
             stream_name: "294636272-294636272-1".to_string(),
             cdn: "AL".to_string(),
             anti_code: "wsSecret=abc&wsTime=6ade1c89&fm=RFdxOEJjSjNoNkRKdDZUWV8kMF8kMV8kMl8kMw%3D%3D&ctype=tars_mobile&fs=bgct&t=103".to_string(),
+            ..Default::default()
         };
         let url = build_play_url(&line, 294636272, 0, 1_700_000_000_000).unwrap();
         assert!(url.starts_with("http://al.flv.huya.com/src/294636272-294636272-1.flv?"));
@@ -594,6 +611,7 @@ mod tests {
             stream_name: "1-1-1".to_string(),
             cdn: "TX".to_string(),
             anti_code: "wsTime=6ade1c89&fm=RFdxOEJjSjNoNkRKdDZUWV8kMF8kMV8kMl8kMw%3D%3D&ctype=tars_mobile&fs=bgct&t=103".to_string(),
+            ..Default::default()
         };
         let url = build_play_url(&line, 1, 8000, 1).unwrap();
         assert!(url.contains("&ratio=8000"));

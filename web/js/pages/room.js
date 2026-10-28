@@ -1,6 +1,7 @@
 // 直播间：mpegts 播放、滚动弹幕、聊天面板、清晰度/线路、全屏。
 import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
 import { createDanmakuLayer, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
+import { signDouyinDanmaku } from '../douyin-sign.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import {
   addWatchTime,
@@ -89,7 +90,12 @@ export function renderRoom(ctx, params = {}) {
           <button class="chat-tab" data-tab="follow">关注</button>
           <button class="chat-tab" data-tab="settings">设置</button>
         </div>
+        <div class="chat-status" id="chat-status" hidden></div>
         <div class="chat-list" id="chat-list"></div>
+        <form class="chat-composer hidden" id="chat-composer" autocomplete="off">
+          <input class="chat-input" id="chat-input" type="text" maxlength="100" placeholder="发个弹幕…" />
+          <button class="chat-send" type="submit" title="发送">${icon('send', 17)}</button>
+        </form>
         <button class="chat-to-bottom" id="chat-to-bottom" title="回到底部">${icon('chevronDown', 15)}<span>回到底部</span></button>
       </aside>
     </div>
@@ -118,6 +124,8 @@ export function renderRoom(ctx, params = {}) {
   const chatList = $('chat-list');
   const chat = $('room-chat');
   const chatToBottom = $('chat-to-bottom');
+  const composer = $('chat-composer');
+  const chatInput = $('chat-input');
 
   const session = {
     platform,
@@ -126,10 +134,18 @@ export function renderRoom(ctx, params = {}) {
     detail: null,
     qualities: [],
     qualityIndex: 0,
-    urls: [],
     headers: [],
     lineIndex: 0,
     player: null,
+    // 弹幕发送是否正在进行（防连点）。
+    sendingDanmaku: false,
+    // 弹幕连接状态：{ state, reason }。聊天栏顶部的状态条就靠它，
+    // 未连接、连不上或被平台限制时把原因直接摆在用户眼前。
+    danmakuStatus: null,
+    // 当前播放器对应的协议：'flv'（mpegts.js）或 'hls'（hls.js / 原生 HLS）。
+    playerProtocol: '',
+    // 线路列表：[{ url, protocol }]，FLV 在前、HLS 作为兜底在后。
+    lines: [],
     messages: [],
     tab: 'chat',
     chatCollapsed: false,
@@ -207,6 +223,8 @@ export function renderRoom(ctx, params = {}) {
   });
   chatList.addEventListener('scroll', updateChatToBottom, { passive: true });
   chatToBottom.addEventListener('click', () => scrollChatToBottom(true));
+  composer.addEventListener('submit', submitDanmaku);
+  updateComposer();
   const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
   const wake = () => {
     page.classList.remove('ui-idle');
@@ -564,7 +582,14 @@ export function renderRoom(ctx, params = {}) {
     chatToBottom.classList.remove('is-shown');
     if (session.tab === 'chat') {
       if (!session.messages.length) {
-        chatList.appendChild(placeholder('正在连接弹幕服务器…', 'danmaku'));
+        const status = session.danmakuStatus;
+        const text =
+          status?.state === 'unsupported'
+            ? '本平台暂不支持弹幕'
+            : status?.state === 'failed'
+              ? '弹幕未连接，原因见上方提示'
+              : '正在连接弹幕服务器…';
+        chatList.appendChild(placeholder(text, 'danmaku'));
         return;
       }
       for (const message of session.messages) appendChatLine(message);
@@ -855,6 +880,36 @@ export function renderRoom(ctx, params = {}) {
       button.classList.toggle('active', button.dataset.tab === tab);
     }
     renderChatTab();
+    updateComposer();
+  }
+
+  // 发送弹幕的输入框默认隐藏（设置 → 弹幕设置 → 允许发送弹幕），
+  // 只在「聊天」标签下显示，避免挡住 SC/关注/设置面板。
+  function updateComposer() {
+    const enabled = Boolean(state.settings.danmaku.sendEnabled);
+    const visible = enabled && session.tab === 'chat';
+    composer.classList.toggle('hidden', !visible);
+  }
+
+  // 发送一条纯文本弹幕。失败原因原样透出（未登录 / 频率限制 / 平台不支持），
+  // 不要吞成一句「发送失败」，否则用户不知道是没登录还是被风控。
+  async function submitDanmaku(event) {
+    event?.preventDefault();
+    const text = chatInput.value.trim();
+    if (!text || session.sendingDanmaku) return;
+    session.sendingDanmaku = true;
+    composer.classList.add('is-sending');
+    try {
+      await api.sendDanmaku(session.key, text);
+      chatInput.value = '';
+      toast('弹幕已发送');
+    } catch (error) {
+      toast(`发送失败：${error}`);
+    } finally {
+      session.sendingDanmaku = false;
+      composer.classList.remove('is-sending');
+      if (!session.destroyed) chatInput.focus();
+    }
   }
 
   function setChatCollapsed(collapsed) {
@@ -967,8 +1022,11 @@ export function renderRoom(ctx, params = {}) {
 
   function setQualityLabel() {
     const quality = session.qualities[session.qualityIndex];
+    // 线路标签带上协议：用户能一眼看出当前是 FLV 还是 HLS，排查问题也省得猜。
+    const line = session.lines[session.lineIndex];
+    const suffix = line?.protocol === 'hls' ? ' · HLS' : '';
     $('ctrl-quality').innerHTML = `${escapeHtml(quality || '清晰度')} ${icon('chevronUp', 13)}`;
-    $('ctrl-line').innerHTML = `线路 ${session.lineIndex + 1} ${icon('chevronUp', 13)}`;
+    $('ctrl-line').innerHTML = `线路 ${session.lineIndex + 1}${suffix} ${icon('chevronUp', 13)}`;
   }
 
   function showQualityMenu() {
@@ -981,13 +1039,13 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function showLineMenu() {
-    if (session.urls.length <= 1) {
+    if (session.lines.length <= 1) {
       toast('当前只有一条线路');
       return;
     }
-    openMenu($('ctrl-line'), session.urls.map((url, index) => ({
-      label: `线路 ${index + 1}`,
-      value: url.includes('127.0.0.1') ? '' : shortHost(url),
+    openMenu($('ctrl-line'), session.lines.map((line, index) => ({
+      label: line.protocol === 'hls' ? `线路 ${index + 1} · HLS` : `线路 ${index + 1}`,
+      value: line.url.includes('127.0.0.1') ? '' : shortHost(line.url),
       active: index === session.lineIndex,
       onClick: () => playLine(index),
     })), { align: 'end', placement: 'top' });
@@ -1015,15 +1073,29 @@ export function renderRoom(ctx, params = {}) {
     stopWatchClock();
     if (session.player) {
       try {
-        session.player.pause();
-        session.player.unload();
-        session.player.detachMediaElement();
-        session.player.destroy();
+        if (session.playerProtocol === 'hls') {
+          // hls.js 只认 destroy()；mpegts 的 unload/detach 它没有。
+          session.player.destroy();
+        } else {
+          session.player.pause();
+          session.player.unload();
+          session.player.detachMediaElement();
+          session.player.destroy();
+        }
       } catch {
         /* 忽略销毁异常 */
       }
       session.player = null;
+    } else if (session.playerProtocol === 'native-hls') {
+      // 原生 HLS（iOS/Safari 路线）没实例可销毁，清掉 src 释放解码器。
+      try {
+        video.removeAttribute('src');
+        video.load();
+      } catch {
+        /* 忽略 */
+      }
     }
+    session.playerProtocol = '';
     session.playerReady = false;
   }
 
@@ -1070,9 +1142,84 @@ export function renderRoom(ctx, params = {}) {
   };
   document.addEventListener('visibilitychange', resumeWatchOnShow);
 
+  // 线路播放失败时的统一处理：能自动换线就换，换不了才把提示交给用户。
+  // FLV 与 HLS 走同一套逻辑，避免两条路径给出不一致的行为。
+  function onLineError(detail) {
+    if (session.destroyed) return;
+    if (state.settings.player.autoSwitchLine && session.lineIndex + 1 < session.lines.length) {
+      toast('当前线路播放失败，正在切换线路…');
+      setTimeout(() => playLine(session.lineIndex + 1), 300);
+      return;
+    }
+    setHint({
+      text: `播放失败：${detail || '无法连接视频流'}`,
+      actions: '<button class="btn" id="hint-switch">换线</button><button class="btn primary" id="hint-retry">重试</button>',
+    });
+    bindHintActions();
+  }
+
+  // HLS 线路：优先 hls.js（MSE），没有 MSE 时退回原生 HLS（iOS/WKWebView 那条路）。
+  function playHls(url) {
+    const Hls = window.Hls;
+    if (Hls && Hls.isSupported()) {
+      try {
+        const hls = new Hls({
+          // 直播只保留最近几个分片：窗口越小，延迟越不容易越积越大。
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 8,
+          maxBufferLength: 20,
+          backBufferLength: 30,
+          manifestLoadingTimeOut: 8000,
+          fragLoadingTimeOut: 20000,
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data?.fatal) return;
+          console.error('hls error', data.type, data.details);
+          hls.destroy();
+          session.player = null;
+          session.playerProtocol = '';
+          onLineError(data.details);
+        });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        session.player = hls;
+        session.playerProtocol = 'hls';
+        session.playerReady = true;
+        resumePlayback();
+        return;
+      } catch (error) {
+        setHint({ text: `创建 HLS 播放器失败：${error}`, actions: '<button class="btn primary" id="hint-retry">重试</button>' });
+        bindHintActions();
+        return;
+      }
+    }
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      session.playerProtocol = 'native-hls';
+      session.playerReady = true;
+      video.src = url;
+      resumePlayback();
+      return;
+    }
+    setHint({
+      text: '当前 WebView 既没有 MSE 也不支持原生 HLS，无法播放这条线路',
+      actions: '<button class="btn" id="hint-switch">换线</button>',
+    });
+    bindHintActions();
+  }
+
+  // 自动播放被拦截时静音兜底，不弹遮挡提示。
+  function resumePlayback() {
+    const promise = video.play();
+    if (promise?.catch) promise.catch(() => {
+      if (session.destroyed) return;
+      video.muted = true;
+      video.play().catch(() => {});
+    });
+  }
+
   function playLine(index) {
-    const url = session.urls[index];
-    if (!url) {
+    const line = session.lines[index];
+    if (!line) {
       setHint({ text: '没有可用的播放地址', actions: '<button class="btn" id="hint-retry">重试</button>' });
       bindHintActions();
       return;
@@ -1082,11 +1229,15 @@ export function renderRoom(ctx, params = {}) {
     danmaku?.reset();
     setHint({ spinner: true, text: '正在连接视频流…' });
     destroyPlayer();
+    if (line.protocol === 'hls') {
+      playHls(line.url);
+      return;
+    }
     if (!window.mpegts || !mpegts.isSupported()) {
       setHint({ text: '当前 WebView 不支持 FLV（MSE）播放' });
       return;
     }
-    const source = { type: 'flv', url, isLive: true, cors: true };
+    const source = { type: 'flv', url: line.url, isLive: true, cors: true };
     if (session.headers?.length) {
       source.headers = Object.fromEntries(session.headers);
       source.withCredentials = false;
@@ -1111,17 +1262,7 @@ export function renderRoom(ctx, params = {}) {
       player.attachMediaElement(video);
       player.on(mpegts.Events.ERROR, (_type, detail) => {
         console.error('mpegts error', _type, detail);
-        if (session.destroyed) return;
-        if (state.settings.player.autoSwitchLine && session.lineIndex + 1 < session.urls.length) {
-          toast('当前线路播放失败，正在切换线路…');
-          setTimeout(() => playLine(session.lineIndex + 1), 300);
-          return;
-        }
-        setHint({
-          text: `播放失败：${detail || '无法连接视频流'}`,
-          actions: '<button class="btn" id="hint-switch">换线</button><button class="btn primary" id="hint-retry">重试</button>',
-        });
-        bindHintActions();
+        onLineError(detail);
       });
       player.on(mpegts.Events.LOADING_COMPLETE, () => {
         if (!session.destroyed && video.paused) setHint({ text: '直播流已结束，可以尝试刷新', actions: '<button class="btn primary" id="hint-retry">刷新</button>' });
@@ -1129,15 +1270,9 @@ export function renderRoom(ctx, params = {}) {
       });
       player.load();
       session.player = player;
+      session.playerProtocol = 'flv';
       session.playerReady = true;
-      const promise = video.play();
-      if (promise?.catch) promise.catch(() => {
-        if (!session.destroyed) {
-          // 自动播放被拦截时静音兜底，不再弹“点击画面开始播放”的遮挡提示。
-          video.muted = true;
-          video.play().catch(() => {});
-        }
-      });
+      resumePlayback();
     } catch (error) {
       setHint({ text: `创建播放器失败：${error}`, actions: '<button class="btn primary" id="hint-retry">重试</button>' });
       bindHintActions();
@@ -1147,7 +1282,7 @@ export function renderRoom(ctx, params = {}) {
   function bindHintActions() {
     hint.querySelector('#hint-retry')?.addEventListener('click', () => refreshStream());
     hint.querySelector('#hint-switch')?.addEventListener('click', () => {
-      if (session.urls.length > 1) playLine((session.lineIndex + 1) % session.urls.length);
+      if (session.lines.length > 1) playLine((session.lineIndex + 1) % session.lines.length);
       else toast('当前没有其他线路');
     });
     hint.querySelector('#hint-browser')?.addEventListener('click', () => {
@@ -1156,18 +1291,27 @@ export function renderRoom(ctx, params = {}) {
     hint.querySelector('#hint-back-home')?.addEventListener('click', () => ctx.go('home'));
   }
 
+  // 后端把 FLV 与 HLS 分开返回：FLV 走本机代理（补 Referer/CORS），
+  // HLS 直连 CDN。FLV 在前，HLS 作为兜底线路排在后面。
+  function buildLines(payload) {
+    const lines = [];
+    for (const url of payload.urls || []) lines.push({ url, protocol: 'flv' });
+    for (const url of payload.hls_urls || []) lines.push({ url, protocol: 'hls' });
+    return lines;
+  }
+
   async function refreshStream(resetQuality = false) {
     if (!session.key) return;
     setHint({ spinner: true, text: '正在获取播放地址…' });
     try {
       const payload = await api.play(session.key, session.qualityIndex);
       if (session.destroyed) return;
-      session.urls = payload.urls || [];
+      session.lines = buildLines(payload);
       session.headers = payload.headers || [];
       session.lineIndex = 0;
       session.lineFailures = 0;
       setQualityLabel();
-      if (!session.urls.length) {
+      if (!session.lines.length) {
         setHint({ text: '这个房间暂时没有可用的播放地址（可能未开播或限制地区）', actions: '<button class="btn" id="hint-retry">重试</button>' });
         bindHintActions();
         return;
@@ -1387,7 +1531,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function copyStream() {
-    const url = session.urls[session.lineIndex];
+    const url = session.lines[session.lineIndex]?.url;
     if (!url) {
       toast('还没有取到直播流地址');
       return;
@@ -1429,7 +1573,7 @@ export function renderRoom(ctx, params = {}) {
 
     function paint() {
       const quality = session.qualities[session.qualityIndex] || '未知';
-      const lines = session.urls.length ? `线路 ${session.lineIndex + 1} / 共 ${session.urls.length} 条` : '未取到直播流';
+      const lines = session.lines.length ? `线路 ${session.lineIndex + 1} / 共 ${session.lines.length} 条` : '未取到直播流';
       const resolution = video.videoWidth && video.videoHeight ? `${video.videoWidth} × ${video.videoHeight}` : '未知';
       const playState = video.paused
         ? '已暂停'
@@ -1499,7 +1643,7 @@ export function renderRoom(ctx, params = {}) {
           <div><span>分区</span><b>${escapeHtml(detail.area || '未提供')}</b></div>
           <div><span>人气</span><b>${formatOnline(detail.online)}</b></div>
           <div><span>状态</span><b>${detail.live ? '直播中' : '未开播'}</b></div>
-          <div><span>直播流</span><b>${session.urls.length} 条线路 / ${session.qualities.length} 档清晰度</b></div>
+          <div><span>直播流</span><b>${session.lines.length} 条线路 / ${session.qualities.length} 档清晰度</b></div>
         </div>`,
       actions: [{ label: '关闭', kind: 'primary' }],
     });
@@ -1542,24 +1686,114 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 数据连接
 
-  async function startDanmaku() {
-    try {
-      await api.startDanmaku(session.key);
-      if (session.destroyed) return;
-      session.messages.push({ system: true, text: '弹幕服务器连接正常', user: '', at: Date.now() });
-      if (session.tab === 'chat') appendChatLine(session.messages.at(-1));
-      const unlisten = await api.onDanmaku((message) => {
-        if (!session.destroyed) pushMessage(message);
+  // ------------------------------------------------------------ 弹幕状态
+
+  /// 把当前弹幕连接状态画成聊天栏顶部的一条横幅。
+  ///
+  /// 只画「未连上/连不上/不支持」这三种：连上之后继续占着一行纯属浪费地方，
+  /// 但会短暂显示「已连接」给个反馈。任何平台都一样，不再只对抖音/快手说话。
+  let statusHideTimer = 0;
+  function renderDanmakuStatus() {
+    const bar = $('chat-status');
+    if (!bar) return;
+    const status = session.danmakuStatus;
+    if (!status) {
+      bar.hidden = true;
+      bar.className = 'chat-status';
+      bar.replaceChildren();
+      return;
+    }
+    const state = String(status.state || '');
+    const reason = String(status.reason || '');
+    bar.hidden = false;
+    bar.className = `chat-status is-${state}`;
+    bar.replaceChildren();
+
+    const dot = document.createElement('span');
+    dot.className = 'chat-status-dot';
+    const text = document.createElement('span');
+    text.className = 'chat-status-text';
+    text.textContent = reason || '弹幕连接状态未知';
+    bar.append(dot, text);
+
+    if (state === 'failed') {
+      const retry = document.createElement('button');
+      retry.className = 'chat-status-action';
+      retry.textContent = '重试';
+      retry.addEventListener('click', () => {
+        session.danmakuStatus = { state: 'connecting', reason: '正在重新连接弹幕服务器…' };
+        renderDanmakuStatus();
+        startDanmaku();
       });
-      if (session.destroyed) {
-        unlisten?.();
-        return;
-      }
-      state.unlistenDanmaku = unlisten;
+      bar.appendChild(retry);
+    } else if (state === 'unsupported') {
+      // 平台不支持时给个出口，别让用户对着空白聊天框猜。
+      const open = document.createElement('button');
+      open.className = 'chat-status-action';
+      open.textContent = '看网页弹幕';
+      open.addEventListener('click', () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)));
+      bar.appendChild(open);
+    }
+
+    if (statusHideTimer) {
+      clearTimeout(statusHideTimer);
+      statusHideTimer = 0;
+    }
+    if (state === 'connected') {
+      statusHideTimer = setTimeout(() => {
+        if (session.destroyed || session.danmakuStatus?.state !== 'connected') return;
+        bar.hidden = true;
+      }, 4000);
+    }
+  }
+
+  /// 抖音需要先算握手签名，其余平台直接连。
+  async function prepareDanmakuSignature() {
+    if (session.platform !== 'douyin') return {};
+    // RoomExtra 是枚举，序列化出来是 `{ Douyin: { room_id } }`；
+    // 顺手兼容一次「已经摊平」的形状，免得两边改来改去对不上。
+    const extra = session.detail?.extra || {};
+    const roomInnerId = extra?.Douyin?.room_id || extra?.room_id || '';
+    if (!roomInnerId) throw new Error('缺少抖音房间号，无法生成弹幕签名');
+    const { signature, userId } = await signDouyinDanmaku(roomInnerId);
+    return { signature, userId };
+  }
+
+  async function startDanmaku() {
+    session.danmakuStatus = { state: 'connecting', reason: '正在连接弹幕服务器…' };
+    renderDanmakuStatus();
+    // 重试时会再进这里：先把上一轮的监听摘掉，否则每重试一次就多一份监听。
+    if (typeof state.unlistenDanmaku === 'function') state.unlistenDanmaku();
+    if (typeof state.unlistenDanmakuStatus === 'function') state.unlistenDanmakuStatus();
+    state.unlistenDanmaku = null;
+    state.unlistenDanmakuStatus = null;
+    // 先挂监听再去连：后端的「不支持 / 连接失败」几乎是立刻推出来的，
+    // 等 startDanmaku 返回再挂就只能看到「正在连接」卡在那儿。
+    const unlistenStatus = await api.onDanmakuStatus((status) => {
+      if (session.destroyed) return;
+      session.danmakuStatus = { state: String(status?.state || ''), reason: String(status?.reason || '') };
+      renderDanmakuStatus();
+    });
+    const unlisten = await api.onDanmaku((message) => {
+      if (!session.destroyed) pushMessage(message);
+    });
+    if (session.destroyed) {
+      unlisten?.();
+      unlistenStatus?.();
+      return;
+    }
+    state.unlistenDanmaku = unlisten;
+    state.unlistenDanmakuStatus = unlistenStatus;
+    try {
+      const options = await prepareDanmakuSignature();
+      if (session.destroyed) return;
+      await api.startDanmaku(session.key, options);
+      // 状态由后端推事件驱动，这里不再自己往聊天记录里塞「连接正常」——
+      // 那句提示对不支持的平台是假的，会把真实原因挡在后面。
     } catch (error) {
       if (session.destroyed) return;
-      session.messages.push({ system: true, text: `弹幕连接失败：${error}`, user: '', at: Date.now() });
-      if (session.tab === 'chat') appendChatLine(session.messages.at(-1));
+      session.danmakuStatus = { state: 'failed', reason: `弹幕连接失败：${error}` };
+      renderDanmakuStatus();
     }
   }
 
@@ -1672,10 +1906,10 @@ export function renderRoom(ctx, params = {}) {
           return;
         }
         // 优先换线；线路用尽后重取流。两种情况都不需要用户操作。
-        if (session.urls.length > 1 && session.lineFailures < session.urls.length) {
+        if (session.lines.length > 1 && session.lineFailures < session.lines.length) {
           session.lineFailures += 1;
           toast('直播流卡顿，正在切换线路…');
-          playLine((session.lineIndex + 1) % session.urls.length);
+          playLine((session.lineIndex + 1) % session.lines.length);
         } else {
           session.lineFailures = 0;
           toast('直播流卡顿，正在重新连接…');
@@ -1781,6 +2015,12 @@ export function renderRoom(ctx, params = {}) {
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     if (typeof state.unlistenDanmaku === 'function') state.unlistenDanmaku();
     state.unlistenDanmaku = null;
+    if (typeof state.unlistenDanmakuStatus === 'function') state.unlistenDanmakuStatus();
+    state.unlistenDanmakuStatus = null;
+    if (statusHideTimer) {
+      clearTimeout(statusHideTimer);
+      statusHideTimer = 0;
+    }
     api.stopDanmaku().catch(() => {});
     destroyPlayer();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

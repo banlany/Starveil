@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// 支持的直播平台。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -6,17 +7,27 @@ pub enum Platform {
     Bilibili,
     Douyu,
     Huya,
+    Douyin,
+    Kuaishou,
 }
 
 impl Platform {
-    /// UI 顺序：先 B 站，再斗鱼、虎牙。
-    pub const ALL: [Platform; 3] = [Platform::Bilibili, Platform::Douyu, Platform::Huya];
+    /// UI 顺序：先 B 站，再斗鱼、虎牙，最后是抖音、快手。
+    pub const ALL: [Platform; 5] = [
+        Platform::Bilibili,
+        Platform::Douyu,
+        Platform::Huya,
+        Platform::Douyin,
+        Platform::Kuaishou,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
             Platform::Bilibili => "bilibili",
             Platform::Douyu => "douyu",
             Platform::Huya => "huya",
+            Platform::Douyin => "douyin",
+            Platform::Kuaishou => "kuaishou",
         }
     }
 
@@ -25,6 +36,8 @@ impl Platform {
             Platform::Bilibili => "哔哩哔哩",
             Platform::Douyu => "斗鱼",
             Platform::Huya => "虎牙",
+            Platform::Douyin => "抖音",
+            Platform::Kuaishou => "快手",
         }
     }
 
@@ -34,6 +47,8 @@ impl Platform {
             Platform::Bilibili => "https://live.bilibili.com",
             Platform::Douyu => "https://www.douyu.com",
             Platform::Huya => "https://www.huya.com",
+            Platform::Douyin => "https://live.douyin.com",
+            Platform::Kuaishou => "https://live.kuaishou.com",
         }
     }
 
@@ -43,6 +58,9 @@ impl Platform {
             Platform::Bilibili => "21452505",
             Platform::Douyu => "9999",
             Platform::Huya => "998",
+            // 抖音/快手都以「网页房间号」为准，这里放官方直播广场里的常驻房间。
+            Platform::Douyin => "631413137191",
+            Platform::Kuaishou => "3xab7d4v8m2kq9e",
         }
     }
 
@@ -51,6 +69,8 @@ impl Platform {
             "bilibili" => Some(Platform::Bilibili),
             "douyu" => Some(Platform::Douyu),
             "huya" => Some(Platform::Huya),
+            "douyin" => Some(Platform::Douyin),
+            "kuaishou" => Some(Platform::Kuaishou),
             _ => None,
         }
     }
@@ -128,6 +148,36 @@ pub enum RoomExtra {
     Douyu {
         rid: String,
     },
+    Douyin {
+        /// 一次性房间号（19 位），每次开播都会变，reflow 取流用它。
+        room_id: String,
+        /// 主播固定网页房间号，对外展示与拼接链接用它。
+        web_rid: String,
+        /// 进房接口下发的 `stream_url`，里面是带签名的 FLV/HLS 地址。
+        stream_url: Value,
+        /// 弹幕握手要用的 Cookie（登录态，缺 ttwid 时已补匿名值）。
+        /// 不下发给前端：SESSDATA 之类的凭据不出进程。
+        #[serde(default, skip_serializing)]
+        cookie: String,
+        /// webmssdk 生成的 `signature`。它只能在 JS 引擎里算出来，
+        /// 所以由 WebView 算好后随 `start_danmaku` 传进来；
+        /// 为空表示这次没拿到签名，弹幕会明确报错而不是静默空着。
+        #[serde(default, skip_serializing)]
+        signature: String,
+        /// 弹幕用的 `user_unique_id`，必须和算签名时用的是同一个值。
+        #[serde(default, skip_serializing)]
+        user_id: String,
+    },
+    Kuaishou {
+        /// 主播 ID（`live.kuaishou.com/u/<id>` 里的那一段）。
+        author_id: String,
+        /// 当前场次的直播流 ID，弹幕与取流都依赖它。
+        #[serde(default)]
+        stream_id: String,
+        /// `liveStream.playUrls`：快手把每个清晰度的地址都塞在这里。
+        #[serde(default)]
+        play_urls: Value,
+    },
     Empty,
 }
 
@@ -138,7 +188,7 @@ impl Default for RoomExtra {
 }
 
 /// 虎牙的一条推流线路。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HuyaLine {
     /// 如 `http://al.flv.huya.com/src`
     pub flv_url: String,
@@ -187,12 +237,22 @@ pub enum QualityData {
     Bilibili { qn: u32 },
     Huya { bitrate: u32 },
     Douyu { rate: u32, cdns: Vec<String> },
+    /// 抖音的档位键：`FULL_HD1` / `HD1` / `SD1` / `SD2`。
+    Douyin { key: String },
+    /// 快手的清晰度直接用地址列表表示（每档可能有多条同码率线路）。
+    Kuaishou { urls: Vec<String> },
 }
 
 /// 取流结果。
+///
+/// FLV 与 HLS 分两个字段而不是混在一个列表里：前端要按协议选不同的播放器
+/// （mpegts.js / hls.js），靠 URL 后缀猜不可靠（虎牙的 HLS 后缀由接口下发）。
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayUrls {
     pub urls: Vec<String>,
+    /// HLS（m3u8）线路；为空表示这个平台/清晰度没有 HLS 出口。
+    #[serde(default)]
+    pub hls_urls: Vec<String>,
     /// 播放器需要的请求头，如 `Referer` / `User-Agent`。
     pub headers: Vec<(String, String)>,
 }
@@ -201,8 +261,15 @@ impl PlayUrls {
     pub fn new(urls: Vec<String>) -> Self {
         Self {
             urls,
+            hls_urls: Vec::new(),
             headers: Vec::new(),
         }
+    }
+
+    /// 附上 HLS 线路（与 FLV 并列，前端作为可选/兜底线路）。
+    pub fn with_hls(mut self, urls: Vec<String>) -> Self {
+        self.hls_urls = urls;
+        self
     }
 
     pub fn header(mut self, key: &str, value: &str) -> Self {

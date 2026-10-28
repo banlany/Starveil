@@ -3,7 +3,9 @@ const TAURI = window.__TAURI__;
 const hasTauri = Boolean(TAURI?.core?.invoke);
 const invoke = hasTauri ? TAURI.core.invoke : null;
 
-export const ENABLED_PLATFORMS = ['bilibili', 'douyu', 'huya'];
+// 抖音、快手已接入取流（详情/清晰度/播放/推荐），先开放出来。
+// 它们的弹幕还没接入，进房后聊天栏会给出明确提示。
+export const ENABLED_PLATFORMS = ['bilibili', 'douyu', 'huya', 'douyin', 'kuaishou'];
 export const ALL_PLATFORMS = ['bilibili', 'douyu', 'huya', 'douyin', 'kuaishou'];
 
 /// 后端枚举会序列化成 "Bilibili" 这种 PascalCase，统一收敛成小写 id。
@@ -176,11 +178,20 @@ export const api = {
     }
     return call('play', { key, index });
   },
-  startDanmaku(key) {
-    return call('start_danmaku', { key });
+  // 抖音的弹幕握手要带 webmssdk 签名，由 room.js 算好后传进来；其余平台忽略这两个参数。
+  startDanmaku(key, options = {}) {
+    return call('start_danmaku', {
+      key,
+      signature: options.signature || null,
+      userId: options.userId || null,
+    });
   },
   stopDanmaku() {
     return call('stop_danmaku');
+  },
+  // 发送一条纯文本弹幕；需要该平台的登录态。
+  sendDanmaku(key, text) {
+    return call('send_danmaku', { key, text });
   },
   copyText(text) {
     return call('copy_text', { text });
@@ -213,6 +224,13 @@ export const api = {
   loginStatus(platform, cookie) {
     return call('login_status', { platform, cookie });
   },
+  // 打开独立的登录窗口（与主窗口共享 Cookie），登录后由后端读出来。
+  openLoginWindow(platform) {
+    return call('open_login_window', { platform });
+  },
+  captureLogin(platform) {
+    return call('capture_login', { platform });
+  },
   biliQrGenerate() {
     return call('bili_qr_generate');
   },
@@ -223,6 +241,12 @@ export const api = {
     // 浏览器里没有后端事件，用演示弹幕驱动布局/样式调试。
     if (!hasTauri) return startDemoDanmaku(handler);
     return TAURI.event.listen('danmaku', (event) => handler(event.payload));
+  },
+  // 弹幕连接状态（连接中 / 已连接 / 失败原因 / 本平台不支持）。
+  // 和 onDanmaku 分开：状态是"当前这一刻"的结论，界面用它画聊天栏顶部的横幅。
+  onDanmakuStatus(handler) {
+    if (!hasTauri) return Promise.resolve(() => {});
+    return TAURI.event.listen('danmaku-status', (event) => handler(event.payload));
   },
 };
 
@@ -411,7 +435,7 @@ async function demo(command, args) {
         qualities: ['原画', '蓝光', '高清'],
       };
     case 'play':
-      return { urls: [], headers: [] };
+      return { urls: [], hls_urls: [], headers: [] };
     case 'resolve_input':
       return { platform: args.current, room_id: args.input, is_short_link: false, raw: args.input };
     default:

@@ -1,12 +1,12 @@
 # 星幕直播 · Starveil
 
-用 **Tauri 2 + WebView2** 重写的聚合直播桌面客户端，支持哔哩哔哩 / 斗鱼 / 虎牙的  
-推荐、分类、搜索、直播间、弹幕与聊天。
+用 **Tauri 2 + WebView2** 重写的聚合直播桌面客户端，支持哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手的  
+推荐、搜索、直播间与播放；四站有分类浏览，抖音与前三站一样能看弹幕与聊天（快手弹幕尚未接入）。
 
-界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE），  
-协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
+界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE）与  
+hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.4.5** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
+> 当前版本 **0.5.0** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
 
@@ -60,8 +60,7 @@
   拖动区交给系统，双击最大化，四边四角自带缩放热区；颜色跟主题走，关闭按钮悬停变红。
 - **关闭即退出**：点关闭 / Alt+F4 / 任务栏关闭都直接结束进程，不驻留后台、没有托盘图标；
   **可以多开**，多个窗口是互不影响的独立进程。
-- 左侧竖向图标栏（首页 / 关注 / 分类 / 设置）+ 顶部平台 Tab（哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手，  
-  未接入的平台标「即将支持」）。
+- 左侧竖向图标栏（首页 / 关注 / 分类 / 设置）+ 顶部平台 Tab（哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手）。
 - 深浅色主题、8 色主题色板、界面密度、首次启动免责声明、全局提示、骨架屏与错误重试。
 
 **首页 / 分类 / 搜索**
@@ -109,7 +108,7 @@
 | 界面  | HTML / CSS / ES Modules | 无构建步骤，改完刷新即可                      |
 | 播放  | mpegts.js               | FLV over MSE，直播低延迟                |
 | 弹幕  | fly-barrage             | canvas + 虚拟轨道，避免叠字                |
-| 协议层 | Rust `live_core`        | 三站推荐 / 分类 / 搜索 / 详情 / 取流 / 弹幕     |
+| 协议层 | Rust `live_core`        | 五站详情 / 取流 / 推荐；B 站另有分类与搜索；四站有弹幕 |
 | 流代理 | 内置 `127.0.0.1` 转发       | 补齐 CDN 需要的 Referer / CORS         |
 
 ## 目录结构
@@ -122,7 +121,7 @@ Starveil/
 │  ├─ capabilities/         Tauri 2 权限
 │  ├─ tauri.conf.json       窗口、构建与打包配置（版本号以这里为准）
 │  ├─ icons/                应用图标（tools/make_icon.py 生成）
-│  └─ vendor/live_core/     内嵌直播协议层（B 站 / 斗鱼 / 虎牙 + Tars token）
+│  └─ vendor/live_core/     内嵌直播协议层（B 站 / 斗鱼 / 虎牙 / 抖音 / 快手）
 ├─ web/
 │  ├─ index.html
 │  ├─ styles.css            设计变量、外壳、卡片、按钮、弹窗
@@ -196,11 +195,12 @@ cargo tauri build --no-bundle
 | `category_rooms(platform, parentId, subId, name, page)`                   | 分类下直播间（分页）                    |
 | `open_room(platform, roomId)`                                             | 房间详情 + 清晰度，会话存在后端             |
 | `play(key, index)`                                                        | 按清晰度取直链与请求头                   |
-| `start_danmaku(key)` / `stop_danmaku()`                                   | 弹幕订阅，消息通过 `danmaku` 事件推送      |
+| `start_danmaku(key, signature?, userId?)` / `stop_danmaku()`              | 弹幕订阅；消息走 `danmaku`，状态走 `danmaku-status` |
 | `resolve_input(current, input)`                                           | 链接 / 房间号解析                    |
 | `copy_text(text)` / `open_url(url)` / `quit_app()`                        | 剪贴板、浏览器、退出                    |
 | `set_cookie(platform, cookie)` / `clear_cookie(platform)`                 | 注入 / 清除登录 Cookie 并重建 LiveCore |
 | `login_status(platform, cookie)`                                          | 校验登录态                         |
+| `open_login_window(platform)` / `capture_login(platform)`                 | 独立登录窗口、读出该域的 Cookie |
 | `bili_qr_generate()` / `bili_qr_poll(key)`                                | B 站扫码登录                       |
 | `douyu_qualities(key, signedArgs)` / `douyu_play(key, index, signedArgs)` | 斗鱼 WebView 签名后的清晰度 / 直链       |
 | `webdav_test(url, username, password, allowInsecureTls)`                  | 探测 WebDAV：认证、目标文件是否存在            |
@@ -208,8 +208,18 @@ cargo tauri build --no-bundle
 
 ## 已知限制
 
-- 播放内核是 mpegts.js（FLV over MSE），HLS 线路会被过滤，画质切换细节与原生 mpv 不完全一致。
-- 抖音、快手接口未移植，Tab 已预留。
+- 播放内核：FLV 走 mpegts.js（FLV over MSE），HLS 走 hls.js；线路菜单会标出哪条是 HLS。
+  虎牙没有可用的 HLS 出口（服务端一律 403），所以只有 FLV。画质切换细节与原生 mpv 不完全一致。
+- 抖音、快手已支持观看与账号登录（设置 → 账号管理里开独立登录窗口，登录后一键读取 Cookie）。
+  抖音弹幕已接入：它要求 webmssdk 生成的 `signature`，所以签名在 WebView 里算
+  （`web/vendor/douyin-sign.js` 只在进抖音房间时懒加载），连接与 protobuf 解码在 Rust 里做。
+  快手弹幕仍未接入（自定义 protobuf + 页面 token），抖音搜索与分类、快手搜索（需要 did 注册）
+  也暂不可用，界面上会给出对应提示。
+- 弹幕连接状态统一显示在聊天栏顶部：「连接中 / 已连接 / 连接失败（附原因 + 重试）/
+  本平台暂不支持」。连不上时不会再只剩一片空白，也不会假报「连接正常」。
+- 抖音首页的「加载更多」是「再拉一批 + 去重」：抖音推荐流没有真正的分页游标，
+  每批只给 6 条，所以翻几次之后可能重复较多。
+- 发送弹幕默认隐藏（属于写操作，需要主动解锁），且目前只有 B 站实现了发送接口。
 - 贡献榜 / 亲密榜的数据源不接（需求已取消）。
 - 虎牙不支持登录；斗鱼未登录时最高画质约 10 分钟过期，过期后会触发自动重取流。
 - 自绘标题栏意味着窗口没有系统边框，**失去了 Windows 原生的「贴边吸附（Aero Snap）」**。

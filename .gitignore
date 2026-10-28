@@ -22,6 +22,8 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
+# 没取到 LOCALAPPDATA 时会落到当前目录（只在极简环境下出现，不该进仓库）
+gpu-sandbox-broken.flag
 
 # 个人工作笔记（不入库）
 ToDo.md
@@ -42,6 +44,13 @@ ToDo.md
 /tools/flv_probe.py
 /tools/flv_proxy.py
 
+# 接入抖音/快手时写的取流探针、弹幕握手探针与一键复现脚本（只在本机用）
+/tools/douyin_flv_probe.py
+/tools/ws_probe_douyin.py
+/tools/dy_repro.py
+# 抖音签名/快手翻页的一次性验证脚本（直接抓页面 bundle 改着跑，不进仓库）
+/tools/probe/
+
 # 图片：只保留文档配图与运行/构建必需的资源，其余一律忽略
 *.png
 *.jpg
@@ -57,3 +66,4 @@ ToDo.md
 # 平台协议速查（含签名细节，只留本地，不入库）
 docs/platform-protocols.md
 docs/reference-spec.md
+docs/hidden-features.md

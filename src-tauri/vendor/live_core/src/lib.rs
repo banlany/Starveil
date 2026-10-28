@@ -5,12 +5,15 @@
 
 pub mod bilibili;
 pub mod danmaku;
+pub mod douyin;
+mod douyin_im;
 pub mod douyu;
 pub mod douyu_sign;
 pub mod error;
 pub mod http;
 pub mod huya;
 pub(crate) mod huya_token;
+pub mod kuaishou;
 pub mod model;
 pub mod site;
 pub mod url_parser;
@@ -18,7 +21,7 @@ pub mod url_parser;
 mod util;
 mod wbi;
 
-pub use danmaku::{DanmakuMessage, DanmakuSession};
+pub use danmaku::{DanmakuMessage, DanmakuSession, DanmakuStatus};
 pub use error::LiveError;
 pub use http::HttpSession;
 pub use model::{
