@@ -7,6 +7,118 @@
 
 ---
 
+## 0.5.0
+
+这一版按 ToDo 的四项推进：抖音/快手取流、弹幕发送、许可与致谢、HLS 线路；
+随后又补了三件事：抖音首页能翻页、抖音与快手的账号登录、发送弹幕的隐藏开关。
+
+### 功能新增
+
+- **抖音、快手直播**：两个平台的「首页推荐 / 房间详情 / 清晰度 / 取流」全部走通，
+  进房、切清晰度、自动换线、复制直播流都能用。
+
+  - 抖音（`live_core/src/douyin.rs`）：先用一次页面请求换匿名 `ttwid`，
+    再走 `webcast/room/web/enter`（按网页房间号）或 `webcast/room/reflow/info`（按 19 位房间号）拿
+    `stream_url`。实测这两个接口**不需要 `a_bogus` 签名**，所以没有移植那套 600 KB 的 webmssdk。
+    推荐页用 `webcast/feed`；对外统一用固定的网页房间号，避免「每次开播房间号都变」。
+  - 快手（`live_core/src/kuaishou.rs`）：首页推荐 `live_api/home/list`、一级/二级分类
+    `live_api/category/data`、分区 `gameboard|non-gameboard/list`、搜索 `live_api/search/liveStream`；
+    房间详情直接解析页面里的 `window.__INITIAL_STATE__`，`liveStream.playUrls` 里各档地址一并拿到。
+  - 平台枚举扩到五个（`Platform::ALL`），`url_parser.rs` 认得 `live.douyin.com/<id>`、
+    `live.kuaishou.com/u/<id>` 以及 `v.douyin.com` / `v.kuaishou.com` 短链。
+  - 前端 `ENABLED_PLATFORMS` 放开 `douyin` / `kuaishou`，首页、分类、搜索、关注页都能切过去。
+  - **抖音弹幕已接入**（见下方「抖音弹幕」一条）；快手要自定义 protobuf + 页面下发 token，
+    这一版仍未接入，聊天栏顶部会明确写出原因，视频不受影响。
+  - 抖音的搜索与分类、快手的搜索（接口固定返回「服务器繁忙」，需要 did 注册流程）暂不可用，
+    界面上会给出对应提示，而不是空列表。
+
+- **发送弹幕（隐藏开关）**：发送是写操作，入口默认连设置项都不显示。
+  在「设置 → 关于」里用连点方式解锁（具体步骤只写在本地维护文档，不进仓库），
+  解锁时会先弹出风险提示，确认后「弹幕设置」里出现「发送弹幕（实验）」分组，
+  再手动打开「允许发送弹幕」。
+  聊天栏底部随之出现输入框（只在「聊天」标签下显示）。协议层新增 `LiveSite::send_danmaku`，
+  默认返回「不支持」；B 站实现 `POST /msg/send`，用 Cookie 里的 `bili_jct` 作 csrf token，
+  失败原因（未登录 / 登录态失效 / 频率限制 / 平台拒绝）原样透出，不吞成「发送失败」。
+  斗鱼、虎牙、抖音、快手目前明确返回「暂不支持发送弹幕」。
+
+- **HLS（m3u8）线路**：`PlayUrls` 拆成 `urls`（FLV）与 `hls_urls`（HLS）两个字段，
+  前端按协议选播放器，不再靠 URL 后缀猜。
+
+  - 后端：B 站取 `protocol_name=http_hls` 的出口；抖音取 `hls_pull_url_map`。
+    两者的 m3u8 实测都不校验 Referer（裸请求也 200），所以 WebView 里 hls.js 能直接拉。
+  - 前端：`index.html` 引入 `vendor/hls.js`，`playLine()` 按线路协议分流
+    （FLV → mpegts.js，HLS → hls.js，不支持时回落原生 HLS），线路弹层与控制条都标出「HLS」，
+    自动换线可以跨协议。
+  - 抖音同样给出一条 HLS 兜底线路：FLV 那条偶发 403 时用户还有得换。
+  - **虎牙不提供 HLS 线路**：页面里虽然有 `sHlsUrl` / `sHlsAntiCode`，但按同一套算法拼出来的
+    m3u8 在多个房间、带不带 Referer 都是 403，说明 HLS 侧还有额外要求；与其给一条必失败的线路，
+    不如只交 FLV（实现与注释里都写明了原因）。
+  - 取流时重新拉一次签名地址：抖音 CDN 对过期或并发重复使用的签名直接回 403
+    （播放器报 `HttpStatusCodeInvalid`），所以每次 `play` 都重新进房换新 `stream_url`，
+    失败才退回进房时缓存的那份；本地代理对上游非 2xx 也补一次 300ms 重试。
+
+- **抖音、快手账号登录**：两站都有网页登录页，所以不自己实现扫码协议，而是开一个
+  **独立登录窗口**（与主窗口共用同一份 WebView2 Cookie 存储）。用户在窗口里扫码或输账号，
+  回到设置页点「读取登录状态」，后端用 `cookies_for_url()` 把该域的 Cookie 读出来并保存，
+  不用再去开发者工具里复制。登录后 `DouyinSite` 优先使用会话 Cookie（缺 `ttwid` 时自动补匿名值），
+  快手取流页也会自动带上登录态。抖音没有免签名的「当前用户」接口，因此登录状态按
+  `sessionid` / `sid_guard` 等字段判断，界面上只显示「已登录」与 Cookie 长度，不编造昵称。
+  斗鱼与 B 站的登录入口统一到了同一个弹窗，B 站仍保留原生的扫码登录。
+
+- **抖音首页「加载更多」**：抖音推荐流没有真正的分页（`count` 写多少都只回 6 条，`offset` 被忽略），
+  改用 `max_time` 作时间游标，在后端连拉最多 4 页、按 `room_id` 去重后凑成一屏返回；
+  首页的「到底了」改为「这一页一条新的都没有」，不再用固定条数阈值。
+  实测同一房间多次翻页能拿到 12~18 条不同的直播间。
+
+- **抖音弹幕**：`webcast/im/push/v2` 的 WebSocket 握手要求 webmssdk 生成的 `signature`，
+  而那个脚本是 600 KB 的混淆代码，Rust 侧没有放 JS 引擎的地方。所以拆成两半：
+  **签名在 WebView 里算**（`web/js/douyin-sign.js` 懒加载 `vendor/douyin-sign.js`，
+  按 `msStub = md5(参数串)` 调 `getMSSDKSignature`），**连接与解码在 Rust 里做**
+  （`live_core/src/douyin_im.rs`：手写 protobuf 读 `PushFrame`、gzip 解 `Response`、
+  按 `needAck` 回执、10 秒心跳、记住 `cursor` 重连）。
+  签名脚本必须用 `new Function` 塞进函数作用域跑：它开头会把 `document` / `window` / `navigator`
+  覆写成空对象，而浏览器里这三个是只读访问器，当普通 `<script>` 注入时覆写静默失败，
+  脚本会抛 `crawler is not a function`（这一版在实机验证时踩到并修正）。
+  收到的聊天弹幕直接进右侧聊天栏与弹幕层，和另外四站同一种结构。
+  礼物 / 进场 / 点赞暂不渲染，避免刷屏。
+
+- **弹幕连接状态常驻显示**：聊天栏顶部新增一条状态条，五站统一。
+  「连接中」有呼吸点，「已连接」显示 4 秒后收起，
+  「连接失败」直接写原因并带**重试**按钮，「本平台暂不支持」带一个「看网页弹幕」的出口。
+  以前连接失败只往聊天记录里塞一行系统消息，很快就被后面的弹幕顶走；
+  而不支持的平台还会假报一句「弹幕服务器连接正常」。
+
+- **关注页「进入页面自动刷新」**：设置 → 关注设置里新增开关，**默认关闭**。
+  打开后每次进入关注页自动刷一遍直播状态（并发数沿用「更新线程数」），
+  5 分钟内只自动刷一次，避免刷完重进页面又刷的死循环。手动刷新按钮照旧随时可用。
+
+- **许可与致谢**：新增根目录 `THANKS.md`（协议层来源、开源库、素材与商标、免责声明），
+  设置页「关于」里增加「许可与致谢」入口，内容与 `THANKS.md` 对应。
+
+### 优化增强
+
+- `HttpSession` 增加 `head_headers()`：只要响应头，供抖音读取 `Set-Cookie` 里的匿名 ttwid。
+- `Platform::sample_room()`、`from_id()`、`name()`、`home()` 补齐抖音与快手两档。
+- 抖音推荐用 `max_time` 游标 + 去重凑一屏（协议层负责凑够，前端只按「有没有新内容」判断到底）。
+- 快手不同：只有 `home/list`（首屏）不带 `home/more`（换一批）的接口，
+  `home/more?labelId=2..5` 每次回 12 条新房间，作为第 2 页起的来源。
+- 新增本地维护文档（不入库）：`docs/platform-protocols.md` 记录五站的登录 / 取流 / 弹幕处理方式，
+  `docs/hidden-features.md` 记录发送弹幕的解锁方式与其他调试入口。
+
+### 缺陷修复
+
+- 平台差异提示、导入说明等处的旧文案（"抖音、快手接口仍在接入中"）与现状对齐。
+- **快手首页「加载更多」点了没反应**：第二页起后端直接返回空数组，前端按「这一页没有新房间」
+  判定已经到底，按钮就再也不出现。现在第 2 页起改走 `home/more`（换一批），每页 12 条新房间。
+- **进入房间时的「弹幕服务器连接正常」是硬编码的**：不支持的平台也会显示这句，
+  把真实原因挡在后面。现在这句话删掉，改由后端推 `danmaku-status` 事件驱动状态条。
+- **打开登录窗口失败（`0x8007139F`）**：WebView2 的浏览器进程在多个 WebView 间共享，
+  新窗口的 environment 参数必须与主窗口完全一致，否则直接返回
+  `HRESULT_FROM_WIN32(ERROR_INVALID_STATE)`。现在建窗时显式传入与
+  `tauri.conf.json` 相同的 `additionalBrowserArgs`（两处必须同步修改）。
+
+---
+
 ## 0.4.5
 
 ### 功能新增

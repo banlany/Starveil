@@ -41,7 +41,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.4.5';
+const FALLBACK_VERSION = '0.5.0';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -82,6 +82,7 @@ const DETAIL_TITLES = {
   timer: '定时关闭',
   other: '其他设置',
   disclaimer: '免责声明',
+  licenses: '许可与致谢',
   about: '关于星幕直播',
 };
 
@@ -150,6 +151,7 @@ export function renderSettingsDetail(ctx, params = {}) {
     if (key === 'sync') return paintSync(content, ctx, paint);
     if (key === 'link') return paintLink(content, ctx);
     if (key === 'about') return paintAbout(content, ctx);
+    if (key === 'licenses') return paintLicenses(content, ctx);
     if (key === 'disclaimer') return paintDisclaimer(content, ctx, paint);
     if (key === 'account') return paintAccount(content, ctx);
     const sections = detailSections(key, ctx, paint);
@@ -436,10 +438,10 @@ function detailSections(key, ctx, repaint) {
             { type: 'switch', key: 'live.hideDanmakuOnMinimize', title: '最小化时隐藏弹幕' },
           ],
         },
-        { label: '提示', rows: [{ type: 'info', title: '平台差异', desc: '虎牙暂不提供贡献榜数据；抖音、快手接口仍在接入中', value: '三站已接入' }] },
+        { label: '提示', rows: [{ type: 'info', title: '平台差异', desc: '虎牙不提供贡献榜；抖音、快手已支持观看与账号登录，弹幕暂未接入，快手搜索暂不可用', value: '五站可选' }] },
       ];
-    case 'danmaku':
-      return [
+    case 'danmaku': {
+      const groups = [
         {
           label: '弹幕屏蔽',
           rows: [
@@ -489,12 +491,42 @@ function detailSections(key, ctx, repaint) {
         },
         { label: '提示', rows: [{ type: 'info', title: '即时生效', desc: '修改会立即保存，并在当前/下一个直播间生效', value: '已保存到本机' }] },
       ];
+      // 发送弹幕是写操作：默认连这一组设置都不出现，要在「关于」页连点版本号
+      // 7 次解锁（做法与安卓的开发者选项一致，见 docs/hidden-features.md）。
+      // 解锁后仍然默认关闭，需要用户再手动打开。
+      if (getSetting('danmaku.sendUnlocked')) {
+        groups.push({
+          label: '发送弹幕（实验）',
+          rows: [
+            {
+              type: 'switch',
+              key: 'danmaku.sendEnabled',
+              title: '允许发送弹幕',
+              desc: '开启后直播间聊天栏底部出现输入框；仅支持纯文本，目前只有哔哩哔哩实现了发送接口',
+            },
+            {
+              type: 'info',
+              title: '需要登录',
+              desc: '发弹幕用的是账号 Cookie，未登录或登录态失效时会直接失败，不会静默吞掉',
+              value: '账号管理',
+            },
+          ],
+        });
+      }
+      return groups;
+    }
     case 'follow':
       return [
         {
           label: '关注状态',
           rows: [
-            { type: 'info', title: '刷新方式', desc: '进入页面不会自动刷新；点击右上角刷新按钮，一次刷新全部关注主播（4 并发）。', value: '手动' },
+            {
+              type: 'switch',
+              key: 'follow.autoRefresh',
+              title: '进入页面自动刷新',
+              desc: '打开后每次进入关注页都刷新一次直播状态（并发数见下方）；默认关闭，避免一进页面就打几十个请求。',
+            },
+            { type: 'info', title: '手动刷新', desc: '点击右上角刷新按钮，随时刷新全部关注主播的直播状态。', value: '右上角 ↻' },
             { type: 'select', key: 'follow.threads', title: '更新线程数', numeric: true, valueMap: { 0: '自动', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8' } },
             { type: 'select', key: 'follow.pageSize', title: '关注每页数量', numeric: true, valueMap: { 50: '50', 100: '100', 150: '150', 200: '200', 300: '300', 400: '400' } },
           ],
@@ -1022,6 +1054,39 @@ function paintAbout(content, ctx) {
       <div class="setting-row"><div class="setting-info"><div class="setting-title">致敬</div><div class="setting-desc">界面与交互参考 dart_simple_live（xiaoyaocz）</div></div></div>
     </div>`;
   content.appendChild(card);
+  // 隐藏开关：连点版本号 7 次解锁「发送弹幕」，做法与安卓的开发者选项一致。
+  // 解锁说明见 docs/hidden-features.md（本地文档，不入库）。
+  const versionLabel = card.querySelector('#about-version');
+  let taps = 0;
+  let lastTap = 0;
+  versionLabel.addEventListener('click', async () => {
+    const now = Date.now();
+    taps = now - lastTap < 1500 ? taps + 1 : 1;
+    lastTap = now;
+    if (taps < 7) {
+      // 点到第 4 下才开始给提示，正常浏览版本号的人不会误触发。
+      if (taps >= 4) toast(`再点 ${7 - taps} 次…`, 'success');
+      return;
+    }
+    taps = 0;
+    const unlocked = Boolean(getSetting('danmaku.sendUnlocked'));
+    const ok = await confirmDialog({
+      title: unlocked ? '关闭实验功能' : '开启实验功能',
+      text: unlocked
+        ? '关闭后「弹幕设置 → 允许发送弹幕」会重新隐藏，已经发出去的弹幕不受影响。'
+        : '发送弹幕会以你的账号向直播间发出真实消息，内容会公开显示。发送过快或内容违规可能被平台限流、禁言甚至封禁，风险由你自己承担。解锁后还需要到「弹幕设置」里手动打开开关；目前只有哔哩哔哩实现了发送接口，并且要求先登录。',
+      okLabel: unlocked ? '关闭' : '我了解风险，解锁',
+      danger: !unlocked,
+    });
+    if (!ok) return;
+    setSetting('danmaku.sendUnlocked', !unlocked);
+    // 关掉实验功能时顺手把发送开关也关掉，否则聊天栏的输入框还会留着。
+    if (unlocked) setSetting('danmaku.sendEnabled', false);
+    toast(
+      unlocked ? '已关闭实验功能' : '已解锁：到「弹幕设置」里打开「允许发送弹幕」',
+      'success',
+    );
+  });
   // 版本号以打包配置为准：能读到运行时就覆盖，读不到（浏览器演示）显示兜底值。
   (async () => {
     const label = card.querySelector('#about-version');
@@ -1050,6 +1115,92 @@ function paintAbout(content, ctx) {
     <button class="btn small">打开</button>`;
   reference.querySelector('button').addEventListener('click', () => api.openUrl(REFERENCE_REPO));
   content.appendChild(reference);
+
+  const licenses = document.createElement('div');
+  licenses.className = 'settings-action-card';
+  licenses.innerHTML = `
+    <div class="action-icon">${icon('shield', 20)}</div>
+    <div class="action-text"><h4>许可与致谢</h4><p>协议层来源、第三方开源库与素材署名</p></div>
+    <button class="btn small">查看</button>`;
+  licenses.querySelector('button').addEventListener('click', () => ctx.go('settingsDetail', { key: 'licenses' }));
+  content.appendChild(licenses);
+}
+
+// 许可与致谢：内容与仓库根目录的 THANKS.md 保持一致，改一处要同步改另一处。
+const LICENSE_UPSTREAM = [
+  ['dart_simple_live', 'xiaoyaocz · GPL-3.0', '界面与交互的参照物'],
+  ['simple_live_core', 'xiaoyaocz · GPL-3.0', '三站取流与弹幕协议的主要来源'],
+  ['AllLive', 'AllLive', '多平台聚合的早期思路'],
+  ['simple-live-kuaishou', 'xuanxuan123xuan', '快手取流与弹幕的来源'],
+];
+
+const LICENSE_LIBS = [
+  ['Tauri 2', 'MIT / Apache-2.0', '桌面外壳与 IPC'],
+  ['mpegts.js 4.2.8', 'Apache-2.0', 'FLV 解封装 + MSE 播放'],
+  ['hls.js 1.x', 'Apache-2.0', 'HLS（m3u8）播放'],
+  ['fly-barrage', 'MIT', '弹幕渲染'],
+  ['CryptoJS', 'MIT', '斗鱼 / 抖音签名计算'],
+  ['douyin-sign.js', '字节跳动 webmssdk（仅本地随包，非商用）', '抖音弹幕握手签名'],
+  ['qrcode', 'MIT', '扫码登录二维码'],
+  ['reqwest / tungstenite / rustls', 'MIT / Apache-2.0', 'HTTP 与弹幕 WebSocket'],
+  ['serde / brotli / flate2 / md5', 'MIT / Apache-2.0', '序列化与签名工具'],
+];
+
+function paintLicenses(content, ctx) {
+  const intro = document.createElement('div');
+  intro.className = 'tool-card';
+  intro.innerHTML = `
+    <h3>授权说明</h3>
+    <p>星幕直播本身以 GPL-3.0 发布。下面列出的是本项目依赖或移植的上游项目，
+       各自的授权不因本项目而改变。</p>
+    <div class="pill-note">${icon('info', 16)}<div>直播平台的取流与弹幕均为各站私有接口，
+      本项目没有从零逆向，协议实现移植自上表所列的开源项目。</div></div>`;
+  content.appendChild(intro);
+
+  const readme = document.createElement('div');
+  readme.className = 'settings-action-card';
+  readme.innerHTML = `
+    <div class="action-icon">${icon('github', 20)}</div>
+    <div class="action-text"><h4>完整声明</h4><p>仓库根目录的 THANKS.md（含素材与免责说明）</p></div>
+    <button class="btn small">打开</button>`;
+  readme.querySelector('button').addEventListener('click', () => api.openUrl(`${PROJECT_REPO}/blob/main/THANKS.md`));
+  content.appendChild(readme);
+
+  for (const [title, rows] of [
+    ['协议层来源', LICENSE_UPSTREAM],
+    ['开源库', LICENSE_LIBS],
+  ]) {
+    const label = document.createElement('div');
+    label.className = 'settings-group-label';
+    label.textContent = title;
+    content.appendChild(label);
+    const group = document.createElement('div');
+    group.className = 'settings-group';
+    for (const [name, license, purpose] of rows) {
+      const row = document.createElement('div');
+      row.className = 'setting-row';
+      row.innerHTML = `
+        <div class="setting-info">
+          <div class="setting-title">${escapeHtml(name)}</div>
+          <div class="setting-desc">${escapeHtml(purpose)}</div>
+        </div>
+        <span class="item-value">${escapeHtml(license)}</span>`;
+      group.appendChild(row);
+    }
+    content.appendChild(group);
+  }
+
+  const assets = document.createElement('div');
+  assets.className = 'tool-card';
+  assets.innerHTML = `
+    <h3>素材、商标与签名脚本</h3>
+    <p>「哔哩哔哩」「斗鱼」「虎牙」「抖音」「快手」等名称与图标是各公司的商标，
+       本项目仅用于指示所对接的平台，与各公司无隶属或合作关系。</p>
+    <p>抖音游戏分类的封面素材来自 dart_simple_live 的 DouyinGameArtwork，
+       原始来源含 App Store / Steam / FLATICON 等，<b>仅限非商业使用</b>，不并入 GPL-3.0 授权。</p>
+    <p>抖音取流所需的 a_bogus 签名脚本沿用 dart 版内置内容，
+       原作者声明为「仅供学习交流，禁止商业与违法用途」，著作权归原作者所有。</p>`;
+  content.appendChild(assets);
 }
 
 function paintDisclaimer(content, ctx, repaint) {
@@ -1088,12 +1239,15 @@ function paintAccount(content, ctx) {
   intro.innerHTML = `
     <h3>账号登录</h3>
     <p>登录后可以使用账号 Cookie 获取更高画质，并让取流带上登录态。Cookie 只保存在本机 WebView 存储中，不会上传。</p>
-    <div class="pill-note">${icon('info', 16)}<div>哔哩哔哩支持扫码登录和 Cookie 登录；斗鱼当前提供 Cookie 登录（扫码需要 Passport 会话，后续版本再补）。</div></div>`;
+    <div class="pill-note">${icon('info', 16)}<div>哔哩哔哩支持扫码登录和 Cookie 登录；抖音、快手、斗鱼使用独立登录窗口，
+      在窗口里登录完点「读取登录状态」即可，不用手动复制 Cookie。</div></div>`;
   content.appendChild(intro);
 
   const rows = [
     { platform: 'bilibili', login: loadLogin('bilibili'), canLogin: true },
     { platform: 'douyu', login: loadLogin('douyu'), canLogin: true },
+    { platform: 'douyin', login: loadLogin('douyin'), canLogin: true },
+    { platform: 'kuaishou', login: loadLogin('kuaishou'), canLogin: true },
     { platform: 'huya', login: null, canLogin: false },
   ];
 
@@ -1106,11 +1260,13 @@ function paintAccount(content, ctx) {
     const subtitle = logged
       ? isBili
         ? `${login.name || 'B 站用户'}${login.uid ? ` · UID ${login.uid}` : ''}`
-        : `已配置 Cookie（${String(login.cookie).length} 字符）`
+        : `${login.name || '已登录'} · Cookie ${String(login.cookie).length} 字符`
       : entry.canLogin
         ? isBili
           ? '未登录 · 支持扫码 / Cookie'
-          : '未登录 · 支持 Cookie'
+          : platform === 'douyu'
+            ? '未登录 · 支持 Cookie'
+            : '未登录 · 支持网页登录'
         : '暂不支持账号登录';
     row.innerHTML = `
       <div class="action-icon" style="background:transparent">${
@@ -1138,7 +1294,8 @@ function paintAccount(content, ctx) {
     } else if (entry.canLogin) {
       button.addEventListener('click', () => {
         if (isBili) openBiliLogin(repaint);
-        else openDouyuLogin(repaint);
+        else if (platform === 'douyu') openDouyuLogin(repaint);
+        else openWebLogin(platform, repaint);
       });
     }
     content.appendChild(row);
@@ -1310,6 +1467,79 @@ function openDouyuLogin(onDone) {
       onDone();
     } catch (error) {
       toast(`保存失败：${error}`, 'error');
+    }
+  });
+}
+
+/**
+ * 抖音 / 快手（以及任何有网页登录页的平台）的登录框。
+ *
+ * 登录本身在一个独立窗口里完成，和主窗口共用 WebView2 的 Cookie 存储；
+ * 这里只负责「打开窗口」和「把 Cookie 读回来」，不让用户去开发者工具里翻。
+ */
+function openWebLogin(platform, onDone) {
+  const meta = PLATFORM_META[platform];
+  const body = document.createElement('div');
+  body.className = 'login-body';
+  body.innerHTML = `
+    <p class="login-hint">点「打开登录窗口」会弹出一个独立窗口，在窗口里扫码或输入账号登录 ${escapeHtml(meta.name)}。
+      登录完成后回到这里点「读取登录状态」，客户端会直接从窗口里取出 Cookie，不需要手动复制。</p>
+    <div class="login-actions">
+      <button class="btn primary" id="web-login-open">打开登录窗口</button>
+      <button class="btn" id="web-login-capture">读取登录状态</button>
+    </div>
+    <div class="login-status" id="web-login-status">还没有读取登录状态</div>`;
+  const modal = openModal({
+    title: `${meta.name}登录`,
+    subtitle: '独立登录窗口 · 登录后自动读取 Cookie',
+    width: 540,
+    body,
+    actions: [{ label: '关闭', kind: 'ghost' }],
+  });
+
+  const status = body.querySelector('#web-login-status');
+  const openButton = body.querySelector('#web-login-open');
+  const captureButton = body.querySelector('#web-login-capture');
+
+  openButton.addEventListener('click', async () => {
+    openButton.disabled = true;
+    status.textContent = '正在打开登录窗口…';
+    try {
+      await api.openLoginWindow(platform);
+      status.textContent = '登录窗口已打开：在窗口里完成扫码或账号登录，然后回到这里点「读取登录状态」';
+    } catch (error) {
+      status.textContent = `打开失败：${error}`;
+    } finally {
+      openButton.disabled = false;
+    }
+  });
+
+  captureButton.addEventListener('click', async () => {
+    captureButton.disabled = true;
+    captureButton.textContent = '读取中…';
+    status.textContent = '正在读取窗口里的 Cookie…';
+    try {
+      const { user, cookie } = await api.captureLogin(platform);
+      if (!user.logged_in) {
+        status.textContent = user.message || '没有读到登录状态';
+        return;
+      }
+      await api.setCookie(platform, cookie);
+      saveLogin(platform, {
+        cookie,
+        name: user.name || `${meta.name}账号`,
+        avatar: user.avatar || '',
+        uid: user.uid || '',
+      });
+      status.textContent = user.message || '已登录';
+      toast(`已登录：${user.name || meta.name}`, 'success');
+      modal.close();
+      onDone();
+    } catch (error) {
+      status.textContent = `读取失败：${error}`;
+    } finally {
+      captureButton.disabled = false;
+      captureButton.textContent = '读取登录状态';
     }
   });
 }

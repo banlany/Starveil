@@ -4,6 +4,13 @@ import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { collectAccounts, followKey, loadFollow, removeFollow, restoreAccounts, saveFollow, state, updateFollow } from '../store.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
+/// 上次刷新完成的时间。
+///
+/// 刷新结束会 `ctx.go('follow')` 重进本页，「进入页面自动刷新」如果只看开关，
+/// 就会变成刷新→重进→再刷新 的死循环。所以 5 分钟内只自动刷一次。
+const AUTO_REFRESH_COOLDOWN = 5 * 60 * 1000;
+let lastRefreshFinishedAt = 0;
+
 export function renderFollow(ctx) {
   const page = document.createElement('section');
   page.className = 'follow-page';
@@ -389,6 +396,7 @@ export function renderFollow(ctx) {
       );
     }
     refreshing = false;
+    lastRefreshFinishedAt = Date.now();
     if (!alive) return;
     button?.classList.remove('is-loading');
     toast('关注直播状态已刷新', 'success');
@@ -414,7 +422,17 @@ export function renderFollow(ctx) {
 
   document.getElementById('view').appendChild(page);
   renderAll();
-  // 只在点击刷新按钮时刷新一次，进入页面不再自动轮询。
+  // 设置里打开「进入页面自动刷新」才自动拉一次；默认关闭，手动刷是主路径。
+  if (
+    state.settings.follow?.autoRefresh &&
+    follows.length &&
+    Date.now() - lastRefreshFinishedAt > AUTO_REFRESH_COOLDOWN
+  ) {
+    // 放到下一帧再发请求：页面已经挂上，用户能先看到列表和刷新图标转起来。
+    requestAnimationFrame(() => {
+      if (alive) refreshFollowStatus();
+    });
+  }
   return () => {
     alive = false;
     stickyObserver?.disconnect();

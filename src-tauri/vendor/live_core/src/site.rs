@@ -1,10 +1,12 @@
 //! 站点抽象与分发。
 
 use crate::bilibili::BilibiliSite;
+use crate::douyin::DouyinSite;
 use crate::douyu::DouyuSite;
 use crate::error::LiveError;
 use crate::http::HttpSession;
 use crate::huya::HuyaSite;
+use crate::kuaishou::KuaishouSite;
 use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
 };
@@ -49,6 +51,22 @@ pub trait LiveSite: Send + Sync {
         detail: &LiveRoomDetail,
         quality: &PlayQuality,
     ) -> Result<PlayUrls, LiveError>;
+
+    /// 发送一条纯文本弹幕。
+    ///
+    /// 默认返回「不支持」：发弹幕必须带登录态，且各平台的发送协议独立于收弹幕，
+    /// 没实现的平台宁可明确报错，也不要发出去一条半成品。
+    fn send_danmaku(
+        &self,
+        _http: &HttpSession,
+        _detail: &LiveRoomDetail,
+        _text: &str,
+    ) -> Result<(), LiveError> {
+        Err(LiveError::unsupported(format!(
+            "{}暂不支持发送弹幕",
+            self.platform().name()
+        )))
+    }
 }
 
 /// 门面：持有会话与三个站点实现。
@@ -71,6 +89,8 @@ impl LiveCore {
                 Box::new(BilibiliSite::new()),
                 Box::new(DouyuSite::new()),
                 Box::new(HuyaSite::new()),
+                Box::new(DouyinSite::new()),
+                Box::new(KuaishouSite::new()),
             ],
         }
     }
@@ -149,6 +169,19 @@ impl LiveCore {
     ) -> Result<PlayUrls, LiveError> {
         self.site(detail.platform)?
             .play(&self.http, detail, quality)
+    }
+
+    /// 发送一条弹幕（需要该平台已带登录 Cookie）。
+    pub fn send_danmaku(&self, detail: &LiveRoomDetail, text: &str) -> Result<(), LiveError> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(LiveError::parse("弹幕内容不能为空"));
+        }
+        if text.chars().count() > 100 {
+            return Err(LiveError::parse("弹幕太长，最多 100 个字"));
+        }
+        self.site(detail.platform)?
+            .send_danmaku(&self.http, detail, text)
     }
 
     /// 把用户在输入框里填的东西变成 (平台, 房间号)。

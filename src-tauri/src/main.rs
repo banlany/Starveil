@@ -20,6 +20,7 @@ use live_core::{
     DanmakuSession, HttpSession, LiveCore, LiveError, LiveRoomDetail, LiveRoomItem, Platform,
     PlayQuality, QualityData,
 };
+use live_core::model::RoomExtra;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -105,6 +106,9 @@ struct RoomPayload {
 #[derive(Serialize)]
 struct PlayPayload {
     urls: Vec<String>,
+    /// HLS（m3u8）线路，交给前端的 hls.js；为空表示没有 HLS 出口。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hls_urls: Vec<String>,
     headers: Vec<(String, String)>,
 }
 
@@ -441,6 +445,11 @@ async fn search_anchors(
             }
             Ok(items)
         }
+        // 抖音/快手没有公开的主播搜索接口，关注页的「按昵称找主播」暂不适用。
+        Platform::Douyin | Platform::Kuaishou => Err(format!(
+            "{}暂不支持按昵称搜索主播，请直接粘贴直播间链接",
+            platform.name()
+        )),
     })
     .await
     .map_err(|error| format!("任务执行失败：{error}"))?
@@ -567,6 +576,17 @@ fn unescape_html(value: &str) -> String {
         .replace("&gt;", ">")
 }
 
+/// 代理出错时打印的 URL 片段。完整直链带签名且很长，日志里只留主机与路径开头。
+fn preview(url: &str) -> String {
+    let cut = url.find(['?', '#']).unwrap_or(url.len());
+    let base = &url[..cut];
+    if base.len() > 90 {
+        format!("{}…", &base[..90])
+    } else {
+        base.to_string()
+    }
+}
+
 /// 代理并发上限。每条连接一个线程，卡死的连接会一直占着线程不放，
 /// 这里加个闸：超了直接 503，让播放器立刻走换线，别把进程拖垮。
 const PROXY_MAX_CONNECTIONS: usize = 32;
@@ -672,6 +692,7 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
         .ok()
         .and_then(|map| map.get(token).cloned());
     let Some(target) = target else {
+        eprintln!("[proxy] 未知 token：{}", preview(path));
         let _ = write!(
             socket,
             "HTTP/1.1 404 Not Found\r\n{cors}Connection: close\r\nContent-Length: 0\r\n\r\n"
@@ -686,14 +707,38 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
         );
         return;
     };
-    let response = client
-        .get(&target.url)
-        .header("referer", &target.referer)
-        .header("user-agent", &target.user_agent)
-        .send();
+    let fetch = || {
+        client
+            .get(&target.url)
+            .header("referer", &target.referer)
+            .header("user-agent", &target.user_agent)
+            .send()
+    };
+    // 抖音/快手 CDN 偶发 403：签名刚下发、同一路流被并发拉取时都会这样，
+    // 停 300ms 再要一次多半就正常了。只重试一次，别把「真的拉不到」拖成卡顿。
+    let mut response = fetch();
+    if !matches!(&response, Ok(response) if response.status().is_success()) {
+        std::thread::sleep(Duration::from_millis(300));
+        response = fetch();
+    }
     let mut response = match response {
         Ok(response) if response.status().is_success() => response,
-        _ => {
+        Ok(response) => {
+            eprintln!(
+                "[proxy] 上游 HTTP {} ← {}\n        目标 {}\n        referer {}",
+                response.status().as_u16(),
+                preview(&target.url),
+                target.url,
+                target.referer
+            );
+            let _ = write!(
+                socket,
+                "HTTP/1.1 502 Bad Gateway\r\n{cors}Connection: close\r\nContent-Length: 0\r\n\r\n"
+            );
+            return;
+        }
+        Err(error) => {
+            eprintln!("[proxy] 上游请求失败 ← {}：{error}", preview(&target.url));
             let _ = write!(
                 socket,
                 "HTTP/1.1 502 Bad Gateway\r\n{cors}Connection: close\r\nContent-Length: 0\r\n\r\n"
@@ -1069,6 +1114,7 @@ async fn douyu_play(
     }
     Ok(PlayPayload {
         urls: proxy_urls,
+        hls_urls: Vec::new(),
         headers: Vec::new(),
     })
 }
@@ -1135,34 +1181,77 @@ async fn play(
     let platform = detail.platform;
     let room_id = detail.room_id.clone();
     let core = state.core(platform);
-    let mut urls = blocking(move || core.play(&detail, &quality)).await?.urls;
-    // 当前播放器是 mpegts.js，只能吃 FLV；B 站清晰度接口会混入 HLS 线路。
-    urls.retain(|url| !url.to_ascii_lowercase().contains(".m3u8"));
-    if urls.is_empty() {
-        return Err("这个清晰度只有 HLS 线路，当前播放器暂不支持".to_string());
+    let play = blocking(move || core.play(&detail, &quality)).await?;
+    let mut hls_urls = play.hls_urls;
+    let mut flv_urls = Vec::with_capacity(play.urls.len());
+    // 后端已按协议分流；这里再兜一层，防止某个平台把 m3u8 混进 urls。
+    for url in play.urls {
+        if url.to_ascii_lowercase().contains(".m3u8") {
+            hls_urls.push(url);
+        } else {
+            flv_urls.push(url);
+        }
     }
+    if flv_urls.is_empty() && hls_urls.is_empty() {
+        return Err("这个清晰度没有可用的播放地址".to_string());
+    }
+    eprintln!(
+        "[play] {key} 清晰度 {index}：FLV {} 条 / HLS {} 条",
+        flv_urls.len(),
+        hls_urls.len()
+    );
     let referer = match platform {
         Platform::Bilibili => format!("https://live.bilibili.com/{room_id}"),
         Platform::Huya => format!("https://www.huya.com/{room_id}"),
         Platform::Douyu => format!("https://www.douyu.com/{room_id}"),
+        Platform::Douyin => format!("https://live.douyin.com/{room_id}"),
+        Platform::Kuaishou => format!("https://live.kuaishou.com/u/{room_id}"),
     };
     Ok(PlayPayload {
-        urls: proxy_play_urls(&state, &key, index, urls, referer),
+        urls: proxy_play_urls(&state, &key, index, flv_urls, referer.clone()),
+        hls_urls,
         headers: Vec::new(),
     })
 }
 
 // ---------------------------------------------------------------- 弹幕
 
+/// 发送一条弹幕。只做纯文本，表情/图片/礼物弹幕不在支持范围内。
+#[tauri::command]
+async fn send_danmaku(
+    state: State<'_, AppState>,
+    key: String,
+    text: String,
+) -> Result<(), String> {
+    let detail = {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "会话锁失效".to_string())?;
+        let session = sessions
+            .get(&key)
+            .ok_or_else(|| "房间会话已失效，请重新进房".to_string())?;
+        session.detail.clone()
+    };
+    let core = state.core(detail.platform);
+    blocking(move || core.send_danmaku(&detail, &text)).await
+}
+
+/// 启动弹幕会话。
+///
+/// `signature` / `user_id` 只有抖音用：它的 WebSocket 握手要带 webmssdk 生成的
+/// 签名，而那个脚本只能在 JS 引擎里跑，所以由 WebView 算好后传进来。
 #[tauri::command]
 async fn start_danmaku(
     app: AppHandle,
     state: State<'_, AppState>,
     key: String,
+    signature: Option<String>,
+    user_id: Option<String>,
 ) -> Result<(), String> {
     stop_danmaku_inner(&state);
 
-    let detail = {
+    let mut detail = {
         let sessions = state
             .sessions
             .lock()
@@ -1173,6 +1262,17 @@ async fn start_danmaku(
             .ok_or_else(|| "房间会话已失效，请重新进房".to_string())?
     };
 
+    // 抖音的签名只能在 JS 引擎里算，所以由前端算好传进来；其余平台用不到这两个参数。
+    if let RoomExtra::Douyin {
+        signature: slot_sig,
+        user_id: slot_uid,
+        ..
+    } = &mut detail.extra
+    {
+        *slot_sig = signature.unwrap_or_default();
+        *slot_uid = user_id.unwrap_or_default();
+    }
+
     let session =
         DanmakuSession::start(detail.platform, &detail.extra).map_err(|error| error.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
@@ -1180,6 +1280,9 @@ async fn start_danmaku(
 
     std::thread::spawn(move || {
         while !flag.load(Ordering::Relaxed) {
+            for status in session.drain_status() {
+                let _ = app.emit("danmaku-status", &status);
+            }
             for message in session.drain() {
                 let _ = app.emit("danmaku", &message);
             }
@@ -1266,6 +1369,185 @@ async fn clear_cookie(state: State<'_, AppState>, platform: String) -> Result<()
     Ok(())
 }
 
+// ---------------------------------------------------------------- 网页登录
+
+/// 各平台的网页登录入口：(打开地址, 窗口标题, 读取 Cookie 的地址)。
+///
+/// Cookie 是按 URL 取的，第三个值必须和登录页同域，否则 WebView2 的
+/// CookieManager 会把真正的登录凭据过滤掉（尤其是 `.douyin.com` 这类父域 Cookie）。
+fn login_page(platform: Platform) -> Option<(&'static str, &'static str, &'static str)> {
+    match platform {
+        Platform::Bilibili => Some((
+            "https://passport.bilibili.com/login",
+            "登录哔哩哔哩",
+            "https://www.bilibili.com",
+        )),
+        Platform::Douyu => Some(("https://www.douyu.com/", "登录斗鱼", "https://www.douyu.com")),
+        Platform::Douyin => Some((
+            "https://live.douyin.com/",
+            "登录抖音",
+            "https://live.douyin.com",
+        )),
+        Platform::Kuaishou => Some((
+            "https://live.kuaishou.com/",
+            "登录快手",
+            "https://live.kuaishou.com",
+        )),
+        Platform::Huya => None,
+    }
+}
+
+fn login_window_label(platform: Platform) -> String {
+    format!("login-{}", platform.id())
+}
+
+/// 新窗口的 WebView2 environment 参数必须和主窗口**完全一致**。
+///
+/// WebView2 文档里写明：浏览器进程在多个 WebView 之间共享，若这次创建时给的
+/// environment options 与已在运行的 WebView 不同，会直接返回
+/// `HRESULT_FROM_WIN32(ERROR_INVALID_STATE)`（0x8007139F，"组或资源的状态不是
+/// 执行请求操作的正确状态"）。主窗口的参数在 `tauri.conf.json` 的
+/// `app.windows[0].additionalBrowserArgs` —— **改一处必须同步改另一处**。
+const LOGIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
+
+/// 打开一个独立的登录窗口。
+///
+/// 它和主窗口共用同一个 WebView2 用户数据目录，所以 cookie 是共享的：
+/// 用户在窗口里扫码或账号登录完，主窗口这边直接就能读到，不需要复制粘贴。
+#[tauri::command]
+async fn open_login_window(app: AppHandle, platform: String) -> Result<(), String> {
+    let platform = parse_platform(&platform)?;
+    let (url, title, _) = login_page(platform)
+        .ok_or_else(|| format!("{}暂不支持账号登录", platform.name()))?;
+    let label = login_window_label(platform);
+    // 重复打开时先关掉旧的，否则同 label 建窗会直接报错。
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.close();
+    }
+    let parsed: tauri::Url = url
+        .parse()
+        .map_err(|error| format!("登录地址无效：{error}"))?;
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::External(parsed))
+        .title(title)
+        .inner_size(520.0, 800.0)
+        .min_inner_size(400.0, 560.0)
+        .additional_browser_args(LOGIN_BROWSER_ARGS)
+        .center()
+        .build()
+        .map_err(|error| format!("打开登录窗口失败：{error}"))?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct LoginCapture {
+    user: LoginUser,
+    cookie: String,
+}
+
+/// 读 Cookie 时按名字判断字段是否存在（值里可能有 `=`，所以只切第一个）。
+fn cookie_has_field(cookie: &str, name: &str) -> bool {
+    cookie.split(';').any(|part| {
+        part.trim().split_once('=').is_some_and(|(key, value)| {
+            key.trim().eq_ignore_ascii_case(name) && !value.trim().is_empty()
+        })
+    })
+}
+
+fn cookie_field<'a>(cookie: &'a str, name: &str) -> Option<&'a str> {
+    cookie.split(';').find_map(|part| {
+        let (key, value) = part.trim().split_once('=')?;
+        (key.trim().eq_ignore_ascii_case(name) && !value.trim().is_empty()).then_some(value.trim())
+    })
+}
+
+/// 抖音/快手没有「当前用户」的免签名接口，只能按登录凭据是否存在来判断。
+/// 这一步只做提示，不拦人：Cookie 是否真的可用，取流或发弹幕时平台会给出答案。
+fn web_login_user(platform: Platform, cookie: &str) -> LoginUser {
+    let (fields, fallback_name): (&[&str], &str) = match platform {
+        Platform::Douyin => (&["sessionid", "sessionid_ss", "sid_guard"], "抖音账号"),
+        Platform::Kuaishou => (
+            &["userId", "kuaishou.live.web_st", "kuaishou.web.cp.api_st"],
+            "快手账号",
+        ),
+        Platform::Douyu => (&["acf_auth"], "斗鱼账号"),
+        Platform::Bilibili => (&["SESSDATA"], "B 站用户"),
+        Platform::Huya => (&[], "虎牙账号"),
+    };
+    let logged_in = fields
+        .iter()
+        .any(|field| cookie_has_field(cookie, field));
+    if !logged_in {
+        return LoginUser {
+            logged_in: false,
+            name: String::new(),
+            avatar: String::new(),
+            uid: String::new(),
+            message: if cookie.trim().is_empty() {
+                "登录窗口里还没有 Cookie，请先完成扫码或账号登录".to_string()
+            } else {
+                "没有检测到登录凭据，请确认窗口里已经登录成功（不是停在扫码页）".to_string()
+            },
+        };
+    }
+    // 快手 Cookie 里的 `userId` 就是账号的数字 ID，可以直接显示。
+    let uid = cookie_field(cookie, "userId")
+        .or_else(|| cookie_field(cookie, "DedeUserID"))
+        .unwrap_or("")
+        .to_string();
+    LoginUser {
+        logged_in: true,
+        name: fallback_name.to_string(),
+        avatar: String::new(),
+        uid,
+        message: format!("已读取登录 Cookie（{} 字符）", cookie.trim().len()),
+    }
+}
+
+/// 从登录窗口（没开就用主窗口）读出该平台的 Cookie。
+///
+/// 两个窗口共享同一份 cookie 存储，所以即使用户已经关掉登录窗口也读得到。
+#[tauri::command]
+async fn capture_login(app: AppHandle, platform: String) -> Result<LoginCapture, String> {
+    let platform = parse_platform(&platform)?;
+    let (_, _, cookie_url) =
+        login_page(platform).ok_or_else(|| format!("{}暂不支持账号登录", platform.name()))?;
+    let label = login_window_label(platform);
+    let window = app
+        .get_webview_window(&label)
+        .or_else(|| app.get_webview_window("main"))
+        .ok_or_else(|| "找不到可以读取 Cookie 的窗口".to_string())?;
+    let url: tauri::Url = cookie_url
+        .parse()
+        .map_err(|error| format!("读取地址无效：{error}"))?;
+    let cookies = window
+        .cookies_for_url(url)
+        .map_err(|error| format!("读取 Cookie 失败：{error}"))?;
+    let cookie = cookies
+        .iter()
+        .map(|item| format!("{}={}", item.name(), item.value()))
+        // Cookie 值里理论上不该有换行；有的话会破坏 HTTP 头，直接剔除。
+        .filter(|pair| !pair.contains(['\r', '\n']))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let user = if platform == Platform::Bilibili && !cookie.is_empty() {
+        // B 站有 nav 接口，能顺便把昵称和头像带出来。
+        tauri::async_runtime::spawn_blocking({
+            let cookie = cookie.clone();
+            move || bili_user(&cookie)
+        })
+        .await
+        .map_err(|error| format!("验证登录态失败：{error}"))?
+        .unwrap_or_else(|_| web_login_user(platform, &cookie))
+    } else {
+        web_login_user(platform, &cookie)
+    };
+    if user.logged_in {
+        // 登录成功后把窗口收掉，免得用户以为还要在里面停留。
+        let _ = window.close();
+    }
+    Ok(LoginCapture { user, cookie })
+}
+
 fn bili_user(cookie: &str) -> Result<LoginUser, String> {
     let http = HttpSession::new().with_cookie(cookie);
     let value = http
@@ -1342,6 +1624,7 @@ async fn login_status(platform: String, cookie: String) -> Result<LoginUser, Str
                 },
             })
         }
+        Platform::Douyin | Platform::Kuaishou => Ok(web_login_user(platform, &cookie)),
         _ => Ok(LoginUser {
             logged_in: false,
             name: String::new(),
@@ -1815,8 +2098,10 @@ fn main() {
     apply_gpu_sandbox_workaround();
     let (proxy_port, proxy_targets) = start_proxy();
     // 在进入 async 运行时之前创建 blocking HTTP client。
+    // 必须按 Platform::ALL 建：漏掉哪个平台，取核心时就会 panic，
+    // 而 panic 在 async 任务里不会变成前端可见的 reject，界面会一直卡在加载中。
     let mut cores = HashMap::new();
-    for platform in [Platform::Bilibili, Platform::Douyu, Platform::Huya] {
+    for platform in Platform::ALL {
         cores.insert(platform, Arc::new(LiveCore::new()));
     }
     tauri::Builder::default()
@@ -1860,10 +2145,13 @@ fn main() {
             play,
             start_danmaku,
             stop_danmaku,
+            send_danmaku,
             copy_text,
             open_url,
             set_cookie,
             clear_cookie,
+            open_login_window,
+            capture_login,
             login_status,
             bili_qr_generate,
             bili_qr_poll,

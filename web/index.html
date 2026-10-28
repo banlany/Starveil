@@ -82,6 +82,8 @@
   <div id="toast-root" class="toast-root"></div>
 
   <script src="vendor/mpegts.js"></script>
+  <!-- HLS 线路：hls.js 走 MSE；iOS/WKWebView 上它会自己不可用，退回原生 HLS -->
+  <script src="vendor/hls.js"></script>
   <script src="vendor/fly-barrage.js"></script>
   <script src="vendor/cryptojs.js"></script>
   <script src="vendor/qrcode.js"></script>

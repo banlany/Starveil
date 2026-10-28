@@ -56,6 +56,10 @@ pub fn parse(input: &str) -> Option<ParsedUrl> {
         "b23.tv" => (Platform::Bilibili, true),
         "douyu.com" => (Platform::Douyu, false),
         "huya.com" => (Platform::Huya, false),
+        "live.douyin.com" => (Platform::Douyin, false),
+        "v.douyin.com" => (Platform::Douyin, true),
+        "live.kuaishou.com" => (Platform::Kuaishou, false),
+        "v.kuaishou.com" => (Platform::Kuaishou, true),
         _ => return None,
     };
 
@@ -68,15 +72,22 @@ pub fn parse(input: &str) -> Option<ParsedUrl> {
         });
     }
 
-    // B 站还有 /blanc/12345、/p/... 这类前缀，取最后一段纯房间号。
-    let room_id = if platform == Platform::Bilibili {
-        path.split(['/', '?', '#'])
+    // B 站还有 /blanc/12345、/p/... 这类前缀，取最后一段纯房间号；
+    // 快手的房间地址是 /u/{主播ID}，要把路径里的 `u` 这类固定段跳过去。
+    let room_id = match platform {
+        Platform::Bilibili => path
+            .split(['/', '?', '#'])
             .filter(|segment| is_room_id(segment))
             .next_back()
             .unwrap_or("")
-            .to_string()
-    } else {
-        first_segment
+            .to_string(),
+        Platform::Kuaishou => path
+            .split(['/', '?', '#'])
+            .filter(|segment| !matches!(*segment, "u" | "live" | "profile" | "fw"))
+            .find(|segment| is_room_id(segment))
+            .unwrap_or("")
+            .to_string(),
+        _ => first_segment,
     };
 
     if !is_room_id(&room_id) {
@@ -147,5 +158,20 @@ mod tests {
     #[test]
     fn 裸房间号不算链接() {
         assert!(parse("21452505").is_none());
+    }
+
+    #[test]
+    fn 解析抖音与快手房间链接() {
+        let douyin = parse("https://live.douyin.com/524557724459").unwrap();
+        assert_eq!(douyin.platform, Platform::Douyin);
+        assert_eq!(douyin.room_id, "524557724459");
+
+        let kuaishou = parse("https://live.kuaishou.com/u/3xrtyiaanrmtd5c").unwrap();
+        assert_eq!(kuaishou.platform, Platform::Kuaishou);
+        assert_eq!(kuaishou.room_id, "3xrtyiaanrmtd5c");
+
+        // 分享短链要先跟随跳转，这里只标记出来。
+        assert!(parse("https://v.douyin.com/iRxk8Qm/").unwrap().is_short_link);
+        assert!(parse("https://v.kuaishou.com/abcd").unwrap().is_short_link);
     }
 }

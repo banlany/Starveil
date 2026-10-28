@@ -167,6 +167,17 @@ impl HttpSession {
         Ok(response.text()?)
     }
 
+    /// GET，只要响应头（抖音需要从 `Set-Cookie` 里取匿名 ttwid）。
+    pub fn head_headers(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HeaderMap, LiveError> {
+        let request = self.client.get(url).headers(self.headers(headers)?);
+        let response = self.send(request)?;
+        Ok(response.headers().clone())
+    }
+
     /// POST 表单（斗鱼 `getH5Play` 走这个）。
     pub fn post_form(
         &self,

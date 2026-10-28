@@ -92,14 +92,60 @@ impl DanmakuMessage {
 /// 一次弹幕会话。丢到后台线程跑，UI 侧定时 `drain()`。
 pub struct DanmakuSession {
     rx: Receiver<DanmakuMessage>,
+    status_rx: Receiver<DanmakuStatus>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     platform: Platform,
 }
 
+/// 弹幕连接状态。和 `DanmakuMessage::system` 的区别：
+/// 系统消息是一次性的聊天行，会被后面的弹幕顶走；状态是「当前这一刻」的结论，
+/// 界面据此在聊天栏顶部常驻一条横幅（连接中 / 已连接 / 失败原因 / 本平台不支持）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DanmakuStatus {
+    /// `connecting` / `connected` / `failed` / `unsupported`
+    pub state: String,
+    pub reason: String,
+}
+
+impl DanmakuStatus {
+    pub fn new(state: &str, reason: impl Into<String>) -> Self {
+        Self {
+            state: state.to_string(),
+            reason: reason.into(),
+        }
+    }
+}
+
+/// 给各平台实现用的状态出口。
+#[derive(Clone)]
+pub struct StatusSink {
+    tx: Sender<DanmakuStatus>,
+}
+
+impl StatusSink {
+    pub fn connecting(&self, reason: impl Into<String>) {
+        let _ = self.tx.send(DanmakuStatus::new("connecting", reason));
+    }
+
+    pub fn connected(&self, reason: impl Into<String>) {
+        let _ = self.tx.send(DanmakuStatus::new("connected", reason));
+    }
+
+    pub fn failed(&self, reason: impl Into<String>) {
+        let _ = self.tx.send(DanmakuStatus::new("failed", reason));
+    }
+
+    pub fn unsupported(&self, reason: impl Into<String>) {
+        let _ = self.tx.send(DanmakuStatus::new("unsupported", reason));
+    }
+}
+
 impl DanmakuSession {
     pub fn start(platform: Platform, extra: &RoomExtra) -> Result<Self, LiveError> {
         let (tx, rx) = channel();
+        let (status_tx, status_rx) = channel();
+        let sink = StatusSink { tx: status_tx };
         let stop = Arc::new(AtomicBool::new(false));
 
         let thread_stop = stop.clone();
@@ -107,14 +153,17 @@ impl DanmakuSession {
         let thread = thread::Builder::new()
             .name("danmaku".to_string())
             .spawn(move || match platform {
-                Platform::Bilibili => run_bilibili(&extra, &tx, &thread_stop),
-                Platform::Douyu => run_douyu(&extra, &tx, &thread_stop),
-                Platform::Huya => run_huya(&extra, &tx, &thread_stop),
+                Platform::Bilibili => run_bilibili(&extra, &tx, &sink, &thread_stop),
+                Platform::Douyu => run_douyu(&extra, &tx, &sink, &thread_stop),
+                Platform::Huya => run_huya(&extra, &tx, &sink, &thread_stop),
+                Platform::Douyin => crate::douyin_im::run(&extra, &tx, &sink, &thread_stop),
+                Platform::Kuaishou => run_kuaishou(&extra, &tx, &sink, &thread_stop),
             })
             .map_err(|error| LiveError::network(format!("启动弹幕线程失败：{error}")))?;
 
         Ok(Self {
             rx,
+            status_rx,
             stop,
             thread: Some(thread),
             platform,
@@ -129,6 +178,12 @@ impl DanmakuSession {
     pub fn drain(&self) -> Vec<DanmakuMessage> {
         self.rx.try_iter().collect()
     }
+
+    /// 取走已产生的状态变化（非阻塞）。
+    pub fn drain_status(&self) -> Vec<DanmakuStatus> {
+        self.status_rx.try_iter().collect()
+    }
+
 
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -148,7 +203,7 @@ impl Drop for DanmakuSession {
 }
 
 /// tungstenite 的 rustls 没带默认 CryptoProvider，进程内装一次即可。
-fn ensure_crypto_provider() {
+pub(crate) fn ensure_crypto_provider() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -156,7 +211,7 @@ fn ensure_crypto_provider() {
     });
 }
 
-fn sleep_while(stop: &AtomicBool, duration: Duration) -> bool {
+pub(crate) fn sleep_while(stop: &AtomicBool, duration: Duration) -> bool {
     let step = Duration::from_millis(100);
     let mut left = duration;
     while left > Duration::ZERO {
@@ -170,19 +225,19 @@ fn sleep_while(stop: &AtomicBool, duration: Duration) -> bool {
 }
 
 /// 断线重连的起始间隔。
-const RECONNECT_MIN: Duration = Duration::from_secs(3);
+pub(crate) const RECONNECT_MIN: Duration = Duration::from_secs(3);
 /// 连续失败时的退避上限。
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
 /// 0.4.5 之前是「整个会话累计 3 次就退出」，挂机时间一长（睡眠唤醒、切网、
 /// CDN 踢线）弹幕线程就直接结束，界面既不报错也没有重连按钮，只能重进房。
 /// 现在改成无限重连：连上过一次就把退避拉回最短，连续失败逐次翻倍封顶。
-fn next_backoff(current: Duration) -> Duration {
+pub(crate) fn next_backoff(current: Duration) -> Duration {
     (current * 2).min(RECONNECT_MAX)
 }
 
 /// 失败提示的节流：前两次都提示，之后每 10 次提示一次，避免挂机时刷屏。
-fn should_report(failures: u32) -> bool {
+pub(crate) fn should_report(failures: u32) -> bool {
     failures <= 2 || failures % 10 == 0
 }
 
@@ -191,7 +246,7 @@ fn should_report(failures: u32) -> bool {
 ///
 /// 目前三站都用 rustls（B 站/虎牙 wss，斗鱼自己包 native-tls），所以正常路径
 /// 一定命中 `Rustls`。剩下的分支打个日志，免得哪天换 TLS 后端后静默失效。
-fn set_read_timeout(
+pub(crate) fn set_read_timeout(
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
 ) {
     const TIMEOUT: Option<Duration> = Some(Duration::from_millis(600));
@@ -208,7 +263,7 @@ fn set_read_timeout(
 
 // ---------------------------------------------------------------- 哔哩哔哩
 
-fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
+fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, status: &StatusSink, stop: &AtomicBool) {
     ensure_crypto_provider();
     let RoomExtra::Bilibili {
         token,
@@ -221,21 +276,22 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
         ..
     } = extra
     else {
-        let _ = tx.send(DanmakuMessage::system("B 站弹幕参数缺失，已跳过弹幕"));
+        status.unsupported("B 站弹幕参数缺失，已跳过弹幕");
         return;
     };
     if token.is_empty() {
-        let _ = tx.send(DanmakuMessage::system("未取到 B 站弹幕 token，弹幕不可用"));
+        status.unsupported("未取到 B 站弹幕 token，弹幕不可用");
         return;
     }
     let Some(room_id) = bilibili_room_id(extra) else {
-        let _ = tx.send(DanmakuMessage::system("B 站弹幕房间号缺失，弹幕不可用"));
+        status.unsupported("B 站弹幕房间号缺失，弹幕不可用");
         return;
     };
 
     let url = format!("wss://{host}/sub");
     let mut backoff = RECONNECT_MIN;
     let mut failures = 0u32;
+    status.connecting("正在连接 B 站弹幕服务器…");
     while !stop.load(Ordering::Relaxed) {
         // B 站弹幕服务器会校验 Origin，并可能根据 buvid 下发不同的房间流。
         let mut request = match url.as_str().into_client_request() {
@@ -264,6 +320,7 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
                 backoff = RECONNECT_MIN;
                 failures = 0;
                 set_read_timeout(&mut socket);
+                status.connected("B 站弹幕已连接");
                 if let Err(error) = socket.send(tungstenite::Message::Binary(
                     bilibili_packet(7, bilibili_join_body(&room_id, token, buvid3, *uid)).into(),
                 )) {
@@ -302,15 +359,13 @@ fn run_bilibili(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBoo
                 // 连上之后又断了：提示一次（后续静默重试，别刷屏）。
                 failures += 1;
                 if !stop.load(Ordering::Relaxed) && failures == 1 {
-                    let _ = tx.send(DanmakuMessage::system("B 站弹幕已断开，正在重连…"));
+                    status.connecting("B 站弹幕已断开，正在重连…");
                 }
             }
             Err(error) => {
                 failures += 1;
                 if should_report(failures) {
-                    let _ = tx.send(DanmakuMessage::system(format!(
-                        "B 站弹幕连接失败：{error}"
-                    )));
+                    status.failed(format!("B 站弹幕连接失败：{error}"));
                 }
             }
         }
@@ -663,10 +718,10 @@ fn bilibili_extract_color(info: &[serde_json::Value]) -> Option<u32> {
 
 // ---------------------------------------------------------------- 斗鱼
 
-fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
+fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, status: &StatusSink, stop: &AtomicBool) {
     ensure_crypto_provider();
     let RoomExtra::Douyu { rid } = extra else {
-        let _ = tx.send(DanmakuMessage::system("斗鱼弹幕参数缺失，已跳过弹幕"));
+        status.unsupported("斗鱼弹幕参数缺失，已跳过弹幕");
         return;
     };
     let host = "danmuproxy.douyu.com";
@@ -674,6 +729,7 @@ fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) 
     let mut attempt = 0u16;
     let mut backoff = RECONNECT_MIN;
     let mut failures = 0u32;
+    status.connecting("正在连接斗鱼弹幕服务器…");
     while !stop.load(Ordering::Relaxed) {
         let port = 8501 + attempt % 6;
         attempt = attempt.wrapping_add(1);
@@ -681,6 +737,7 @@ fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) 
             Ok(mut socket) => {
                 backoff = RECONNECT_MIN;
                 failures = 0;
+                status.connected("斗鱼弹幕已连接");
                 let _ = socket.send(tungstenite::Message::Binary(
                     douyu_packet(&format!("type@=loginreq/roomid@={rid}/")).into(),
                 ));
@@ -715,15 +772,13 @@ fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) 
                 }
                 failures += 1;
                 if !stop.load(Ordering::Relaxed) && failures == 1 {
-                    let _ = tx.send(DanmakuMessage::system("斗鱼弹幕已断开，正在重连…"));
+                    status.connecting("斗鱼弹幕已断开，正在重连…");
                 }
             }
             Err(error) => {
                 failures += 1;
                 if should_report(failures) {
-                    let _ = tx.send(DanmakuMessage::system(format!(
-                        "斗鱼弹幕连接失败：{error}"
-                    )));
+                    status.failed(format!("斗鱼弹幕连接失败：{error}"));
                 }
             }
         }
@@ -1143,7 +1198,7 @@ fn huya_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
     }
 }
 
-fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
+fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, status: &StatusSink, stop: &AtomicBool) {
     ensure_crypto_provider();
     let RoomExtra::Huya {
         presenter_uid,
@@ -1154,7 +1209,7 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
         return;
     };
     if *presenter_uid == 0 {
-        let _ = tx.send(DanmakuMessage::system("虎牙弹幕参数缺失"));
+        status.unsupported("虎牙弹幕参数缺失");
         return;
     }
     let top_sid = *presenter_uid;
@@ -1165,12 +1220,14 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
     let url = "wss://cdnws.api.huya.com";
     let mut backoff = RECONNECT_MIN;
     let mut failures = 0u32;
+    status.connecting("正在连接虎牙弹幕服务器…");
     while !stop.load(Ordering::Relaxed) {
         match tungstenite::connect(url) {
             Ok((mut socket, _)) => {
                 backoff = RECONNECT_MIN;
                 failures = 0;
                 set_read_timeout(&mut socket);
+                status.connected("虎牙弹幕已连接");
                 // 进房包发不出去说明这条连接已经废了：照常进读取循环，
                 // 第一次 read 就会报错退出，交给外层统一退避。
                 // （这里不能用 continue —— 会跳过下面的 sleep，变成紧循环狂连。）
@@ -1203,15 +1260,13 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
                 }
                 failures += 1;
                 if !stop.load(Ordering::Relaxed) && failures == 1 {
-                    let _ = tx.send(DanmakuMessage::system("虎牙弹幕已断开，正在重连…"));
+                    status.connecting("虎牙弹幕已断开，正在重连…");
                 }
             }
             Err(error) => {
                 failures += 1;
                 if should_report(failures) {
-                    let _ = tx.send(DanmakuMessage::system(format!(
-                        "虎牙弹幕连接失败：{error}"
-                    )));
+                    status.failed(format!("虎牙弹幕连接失败：{error}"));
                 }
             }
         }
@@ -1220,4 +1275,12 @@ fn run_huya(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, stop: &AtomicBool) {
         }
         backoff = next_backoff(backoff);
     }
+}
+
+// 快手弹幕：`live_api/liveroom/websocketinfo` 下发接入地址，之后是自研 protobuf
+// + 页面 token，和另外四站都不通用，这一版还没接。
+// 聊天栏会明确显示「本平台暂不支持弹幕」，而不是空着一片让人以为卡住。
+fn run_kuaishou(_extra: &RoomExtra, _tx: &Sender<DanmakuMessage>, status: &StatusSink, _stop: &AtomicBool) {
+    // 只推状态：聊天栏顶部那条横幅已经写清原因了，再塞一条系统消息是重复的。
+    status.unsupported("快手弹幕暂未接入（协议为自研 protobuf + 页面 token）");
 }
