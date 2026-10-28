@@ -66,5 +66,4 @@ ToDo.md
 # 平台协议速查（含签名细节，只留本地，不入库）
 docs/platform-protocols.md
 docs/reference-spec.md
-# 隐藏功能/实验开关的开启方式（不想让普通用户直接看到）
 docs/hidden-features.md
