@@ -5,6 +5,12 @@ description = "星幕直播 · Tauri 桌面客户端"
 edition = "2024"
 rust-version = "1.95"
 
+# Tauri 2 的移动端（Android/iOS）以库的形式接入原生工程：
+# `staticlib`/`cdylib` 给 Android 与 iOS，`rlib` 给 `main.rs` 与测试。
+[lib]
+name = "starveil_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -12,9 +18,17 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls", "charset"] }
 url = "2"
 live_core = { path = "vendor/live_core" }
+
+# TLS 后端按平台分流：
+# - 桌面（Windows/macOS）用系统 TLS：Windows 走 SChannel，斗鱼弹幕服务器只接受它。
+# - Android/iOS 上 `native-tls` 会拉 openssl 链（Android 编不过），改用 rustls。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls", "charset"] }
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "charset"] }
 
 [profile.dev]
 opt-level = 1

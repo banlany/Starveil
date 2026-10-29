@@ -24,15 +24,30 @@ md5 = "0.7"
 percent-encoding = "2"
 rand = "0.8"
 regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tungstenite = { version = "0.24", features = ["handshake", "rustls-tls-webpki-roots"] }
+
+# TLS 后端按平台分流：
+# - 桌面用系统 TLS（Windows = SChannel）：斗鱼弹幕服务器只接受它，rustls 会被
+#   `HandshakeFailure` 拒绝。
+# - Android/iOS 上没有 SChannel，`native-tls` 会去拉 openssl（Android 编不过），
+#   所以切到 rustls；代价是斗鱼弹幕在移动端连不上（见 `danmaku.rs` 的说明）。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
     "json",
     "native-tls",
     "charset",
 ] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
 native-tls = "0.2"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-tungstenite = { version = "0.24", features = ["handshake", "rustls-tls-webpki-roots"] }
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls",
+    "charset",
+] }

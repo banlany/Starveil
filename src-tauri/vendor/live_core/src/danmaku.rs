@@ -791,6 +791,7 @@ fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, status: &StatusSink
 
 /// 斗鱼的弹幕服务器只接受系统 TLS（rustls 的套件协商会被拒），
 /// 所以这里用 Schannel / Secure Transport 自己包一层，再做 WebSocket 升级。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn douyu_connect(
     host: &str,
     port: u16,
@@ -812,6 +813,23 @@ fn douyu_connect(
     let (socket, _response) =
         tungstenite::client::client(format!("wss://{host}:{port}/"), tls)?;
     Ok(socket)
+}
+
+/// Android/iOS 没有 SChannel 这类系统 TLS 后端，而斗鱼服务器**拒绝 rustls**
+/// （0.6.0 阶段 0 在 AVD 与 MuMu 两个样本上实测均为 `HandshakeFailure`），
+/// 所以移动端只能如实失败，不做「假装连上再无限重连」的无效尝试。
+///
+/// 返回类型里用 `TcpStream` 只是为了让调用处的代码保持同一份（永不返回 `Ok`）。
+/// 要真正支持，只能走 JNI 用系统的 Conscrypt，或交叉编译 OpenSSL 给 native-tls。
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn douyu_connect(
+    _host: &str,
+    _port: u16,
+) -> Result<
+    tungstenite::WebSocket<std::net::TcpStream>,
+    Box<dyn std::error::Error>,
+> {
+    Err("斗鱼弹幕在移动端不可用：服务器只接受系统 TLS（rustls 会被拒绝）".into())
 }
 
 fn douyu_packet(body: &str) -> Vec<u8> {
