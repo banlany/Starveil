@@ -1853,7 +1853,8 @@ async fn bili_qr_poll(key: String) -> Result<QrPollResult, String> {
 // ---------------------------------------------------------------- 窗口与托盘
 
 /// WebView2 用户数据目录：放到 `%LOCALAPPDATA%\Starveil\WebView2`，
-/// 不再跟着 identifier 落在 `top.june6699.starveil\EBWebView`。
+/// 不跟着 identifier 走（`com.banlany.starveil` 默认会落在 `com.banlany.starveil\EBWebView`，
+/// 更早的版本还用过 `top.june6699.starveil`；两处都不该用来存用户数据）。
 fn webview_data_dir() -> PathBuf {
     match std::env::var("LOCALAPPDATA") {
         Ok(local) => Path::new(&local).join("Starveil").join("WebView2"),

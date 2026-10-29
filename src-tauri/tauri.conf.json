@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "星幕直播",
   "version": "0.5.0",
-  "identifier": "top.june6699.starveil",
+  "identifier": "com.banlany.starveil",
   "build": {
     "frontendDist": "../web"
   },
