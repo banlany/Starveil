@@ -1,6 +1,9 @@
 # Rust / Tauri
 /src-tauri/target/
-/src-tauri/gen/
+# gen/android 要入库：AndroidManifest、gradle 配置、res 资源都要手改，
+# 不入库的话每次重新 `cargo tauri android init` 会把这些改动冲掉。
+# 它自带的 .gitignore 已经排除 build/、.gradle/、jniLibs/*.so 等产物。
+/src-tauri/gen/schemas/
 /src-tauri/vendor/live_core/target/
 # live_core 是被 src-tauri 依赖的子 crate，依赖版本由上层 Cargo.lock 锁定，
 # 子 crate 自己的 lock 文件不入库。
@@ -14,6 +17,7 @@
 !/dist/README.txt
 
 # 临时文件
+/.tmp/
 *.bak
 *.tmp
 .DS_Store

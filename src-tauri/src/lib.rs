@@ -1410,6 +1410,7 @@ fn login_window_label(platform: Platform) -> String {
 /// `HRESULT_FROM_WIN32(ERROR_INVALID_STATE)`（0x8007139F，"组或资源的状态不是
 /// 执行请求操作的正确状态"）。主窗口的参数在 `tauri.conf.json` 的
 /// `app.windows[0].additionalBrowserArgs` —— **改一处必须同步改另一处**。
+#[cfg(desktop)]
 const LOGIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
 
 /// 打开一个独立的登录窗口。
@@ -1429,12 +1430,19 @@ async fn open_login_window(app: AppHandle, platform: String) -> Result<(), Strin
     let parsed: tauri::Url = url
         .parse()
         .map_err(|error| format!("登录地址无效：{error}"))?;
-    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::External(parsed))
-        .title(title)
-        .inner_size(520.0, 800.0)
-        .min_inner_size(400.0, 560.0)
-        .additional_browser_args(LOGIN_BROWSER_ARGS)
-        .center()
+    // `additional_browser_args` 与 `center` 只在桌面端存在（移动端窗口由系统管），
+    // 所以这两个调用单独按平台加。
+    #[allow(unused_mut)]
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::External(parsed))
+            .title(title)
+            .inner_size(520.0, 800.0)
+            .min_inner_size(400.0, 560.0);
+    #[cfg(desktop)]
+    {
+        builder = builder.additional_browser_args(LOGIN_BROWSER_ARGS).center();
+    }
+    builder
         .build()
         .map_err(|error| format!("打开登录窗口失败：{error}"))?;
     Ok(())
@@ -1990,6 +1998,7 @@ fn gpu_sandbox_broken_marker() -> PathBuf {
     starveil_data_dir().join("gpu-sandbox-broken.flag")
 }
 
+#[cfg(windows)]
 fn starveil_data_dir() -> PathBuf {
     match std::env::var("LOCALAPPDATA") {
         Ok(local) => Path::new(&local).join("Starveil"),
@@ -2030,11 +2039,6 @@ fn current_process_in_job() -> Option<bool> {
         }
         Some(in_job.value != 0)
     }
-}
-
-#[cfg(not(windows))]
-fn current_process_in_job() -> Option<bool> {
-    None
 }
 
 /// 按需给 WebView2 追加 `--disable-gpu-sandbox`。
