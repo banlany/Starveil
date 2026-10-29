@@ -219,6 +219,10 @@ export const api = {
   setScreenOrientation(mode) {
     return call('set_screen_orientation', { mode });
   },
+  /// 安卓系统栏配色：`color` 为 `#RRGGBB`，`light` 表示背景浅、图标用深色。桌面端空实现。
+  setSystemBar(color, light) {
+    return call('set_system_bar', { color, light });
+  },
   /// 安卓小窗（系统级画中画）。桌面端返回 false，前端会退回 HTML5 画中画。
   enterPictureInPicture() {
     return call('enter_picture_in_picture');

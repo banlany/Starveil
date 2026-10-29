@@ -635,6 +635,14 @@ body.is-resizing-chat .room-chat {
   gap: 7px;
   color: rgba(255, 255, 255, 0.48);
   font-size: 11px;
+  /* 聊天栏窄的时候（手机横屏只有 250px），这一行的每段文字都会被压成一字一行。
+     统一不换行、超出裁掉，宁可少显示也不要竖排。 */
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.chat-head-meta > * {
+  flex: none;
 }
 
 .chat-head-meta .platform-badge {

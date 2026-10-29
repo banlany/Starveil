@@ -2136,11 +2136,8 @@ export function renderRoom(ctx, params = {}) {
     } catch (error) {
       if (session.destroyed) return;
       session.failed = true;
-      const friendly = String(error).includes('斗鱼')
-        ? '斗鱼的取流签名脚本暂时不可用，当前版本先支持哔哩哔哩和虎牙的播放。可以先用浏览器观看这个房间。'
-        : `打不开这个直播间：${error}`;
       setHint({
-        text: friendly,
+        text: `打不开这个直播间：${error}`,
         actions: '<button class="btn" id="hint-back">返回</button><button class="btn" id="hint-browser">在浏览器打开</button><button class="btn primary" id="hint-retry">重试</button>',
       });
       hint.querySelector('#hint-back')?.addEventListener('click', () => ctx.back());

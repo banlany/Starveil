@@ -21,8 +21,10 @@ android {
         applicationId = "com.banlany.starveil"
         minSdk = 24
         targetSdk = 34
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        // `tauri.properties` 是 CLI 生成物（在 app/.gitignore 里），缺省值必须跟
+        // `tauri.conf.json` 的 version 对齐，否则安装信息会一直显示 1.0。
+        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "6000").toInt()
+        versionName = tauriProperties.getProperty("tauri.android.versionName", "0.6.0")
     }
     buildTypes {
         getByName("debug") {

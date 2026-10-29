@@ -1,12 +1,13 @@
 # 星幕直播 · Starveil
 
-用 **Tauri 2 + WebView2** 重写的聚合直播桌面客户端，支持哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手的  
+用 **Tauri 2 + WebView** 重写的聚合直播客户端，支持哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手的  
 推荐、搜索、直播间与播放；四站有分类浏览，抖音与前三站一样能看弹幕与聊天（快手弹幕尚未接入）。
 
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE）与  
 hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.5.0** · Windows 10/11 x64 · GPL-3.0 · **非官方第三方客户端，仅供学习交流**
+> 当前版本 **0.6.0**（安卓支持开发中）· Windows 10/11 x64 + Android 8.0+ ·
+> GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
 
@@ -25,12 +26,12 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 | --- | ---------------------------------- | ------------------------ |
 | 界面  | Flutter（GetX）                      | HTML / CSS / ES Modules  |
 | 播放  | media_kit（libmpv）                  | mpegts.js（FLV over MSE）  |
-| 平台  | Android / iOS / Windows / TV / CLI | Windows 桌面               |
-| 协议层 | `simple_live_core`（Dart）           | `live_core`（Rust，移植三站协议） |
+| 平台  | Android / iOS / Windows / TV / CLI | Windows 桌面 + Android     |
+| 协议层 | `simple_live_core`（Dart）           | `live_core`（Rust，移植五站协议） |
 | 数据  | Hive                               | localStorage             |
 
 布局、字号、间距、设置分组与直播间结构都对照原版逐页截图还原，  
-差异集中在播放内核与部分移动端专属能力（见「已知限制」）。
+差异集中在播放内核（用 MSE 而不是 libmpv）与还没覆盖的功能（见「已知限制」）。
 
 ## 截图
 
@@ -46,7 +47,7 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 | --- | --- |
 | ![搜索](docs/img/search.png) | ![设置](docs/img/setting.png) |
 
-| 自绘标题栏（深色） | 自绘标题栏（浅色） |
+| 桌面：自绘标题栏（深色） | 桌面：自绘标题栏（浅色） |
 | --- | --- |
 | ![标题栏深色](docs/img/titlebar-dark.png) | ![标题栏浅色](docs/img/titlebar-light.png) |
 
@@ -56,12 +57,21 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 
 **外壳与导航**
 
-- **自绘标题栏**：无边框窗口 + 自绘 38px 标题栏（图标、名称、最小化 / 最大化 / 关闭），
+- **桌面窗口**：无边框 + 自绘 38px 标题栏（图标、名称、最小化 / 最大化 / 关闭），
   拖动区交给系统，双击最大化，四边四角自带缩放热区；颜色跟主题走，关闭按钮悬停变红。
 - **关闭即退出**：点关闭 / Alt+F4 / 任务栏关闭都直接结束进程，不驻留后台、没有托盘图标；
   **可以多开**，多个窗口是互不影响的独立进程。
 - 左侧竖向图标栏（首页 / 关注 / 分类 / 设置）+ 顶部平台 Tab（哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手）。
 - 深浅色主题、8 色主题色板、界面密度、首次启动免责声明、全局提示、骨架屏与错误重试。
+
+**Android**
+
+- 竖屏是底部 TabBar，横屏回到左侧栏；状态栏与导航栏跟随当前主题。
+- 直播间竖屏改上下分栏（视频在上、聊天在下），控制条只留音量 / 弹幕 / 设置 / 全屏，
+  时间、清晰度、线路、画中画收进「更多」菜单。
+- 外观设置可锁定「自动 / 固定竖屏 / 固定横屏」；「更多 → 小窗播放」进入系统画中画，
+  小窗里只留视频并继续播放。
+- 链接走系统浏览器打开，复制链接 / 直播流走系统剪贴板。
 
 **首页 / 分类 / 搜索**
 
@@ -104,7 +114,7 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 
 | 层   | 选型                      | 说明                                |
 | --- | ----------------------- | --------------------------------- |
-| 外壳  | Tauri 2                 | Windows 原生窗口 + WebView2，产物约 16 MB |
+| 外壳  | Tauri 2                 | Windows 用 WebView2、Android 用系统 WebView |
 | 界面  | HTML / CSS / ES Modules | 无构建步骤，改完刷新即可                      |
 | 播放  | mpegts.js               | FLV over MSE，直播低延迟                |
 | 弹幕  | fly-barrage             | canvas + 虚拟轨道，避免叠字                |
@@ -116,8 +126,11 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 ```
 Starveil/
 ├─ src-tauri/
-│  ├─ src/main.rs           命令：推荐/搜索/分类/房间/取流/弹幕/登录/剪贴板
+│  ├─ src/lib.rs            命令层：推荐/搜索/分类/房间/取流/弹幕/登录/系统集成
+│  ├─ src/main.rs           桌面入口（安卓入口是 lib.rs 的 mobile_entry_point）
 │  ├─ src/webdav.rs         WebDAV 同步：PROPFIND 探活 / PUT / GET
+│  ├─ src/win32.rs          剪贴板与打开链接（Windows）
+│  ├─ gen/android/          Android 工程；MainActivity.kt 提供方向 / 小窗 / 系统栏 / 链接桥接
 │  ├─ capabilities/         Tauri 2 权限
 │  ├─ tauri.conf.json       窗口、构建与打包配置（版本号以这里为准）
 │  ├─ icons/                应用图标（tools/make_icon.py 生成）
@@ -127,8 +140,10 @@ Starveil/
 │  ├─ styles.css            设计变量、外壳、卡片、按钮、弹窗
 │  ├─ pages.css             首页 / 分类 / 关注 / 设置 / 搜索
 │  ├─ room.css              直播间、弹幕、聊天、播放器控制
+│  ├─ mobile.css            移动端外壳与竖屏布局（全部挂在 html.is-mobile 下）
 │  ├─ js/
 │  │  ├─ app.js             路由、导航、平台切换、首次启动
+│  │  ├─ platform.js        桌面 / Android 判定（IS_MOBILE）
 │  │  ├─ api.js             Tauri 命令封装 + 浏览器演示数据
 │  │  ├─ store.js           设置 / 关注 / 历史 / 观看统计 / 搜索历史持久化
 │  │  ├─ importer.js        导入 dart profile / 备份 / 中立同步包，构建同步包
@@ -154,7 +169,8 @@ Starveil/
 ## 运行与构建
 
 **环境要求**：Windows 10/11 x64、WebView2 运行时、Rust 1.95（`rust-toolchain.toml` 已固定）、  
-`cargo-tauri` 2.6+。
+`cargo-tauri` 2.6+。构建 Android 另需 Android SDK / NDK 与 JDK 17，
+并让 `ANDROID_HOME`、`NDK_HOME` 指向它们。
 
 **开发**（前端无构建步骤，资源和正式包一样直接嵌进 exe）：
 
@@ -164,6 +180,16 @@ cd src-tauri && cargo run        # 直接跑，不需要另外起静态服务
 
 debug 与 release 都不带 DevTools（`devtools` feature 已移除）：WebView2 不接受
 `--remote-debugging-port`，所以界面调试统一走下面的 Edge 预览。
+
+**Android**：
+
+```bash
+cargo tauri android build --apk --debug --target x86_64   # 模拟器
+cargo tauri android build --apk --target aarch64          # 真机 / 发布
+```
+
+产物在 `src-tauri/gen/android/app/build/outputs/apk/`。`gen/android` 已入库；
+**改包名后必须删掉重新 `cargo tauri android init`**（CLI 不迁移包名）。
 
 调试界面用 DevTools 协议（同一个端口在 Edge 上是可用的）：
 
@@ -181,8 +207,10 @@ cargo tauri build --no-bundle
 # 产物：src-tauri/target/release/starveil.exe（会把 web/ 嵌入二进制）
 ```
 
-**数据位置**：设置、关注、观看记录与登录 Cookie 存在  
-`%LOCALAPPDATA%\Starveil\WebView2`；删除该目录会同时清掉设置与登录态。
+**数据位置**：桌面端把设置、关注、观看记录与登录 Cookie 存在  
+`%LOCALAPPDATA%\Starveil\WebView2`，删除该目录会同时清掉设置与登录态；  
+Android 端在同一套 localStorage 键名下，位于应用私有目录（`/data/data/com.banlany.starveil`），
+卸载即清空。
 
 ## 后端命令
 
@@ -205,6 +233,9 @@ cargo tauri build --no-bundle
 | `douyu_qualities(key, signedArgs)` / `douyu_play(key, index, signedArgs)` | 斗鱼 WebView 签名后的清晰度 / 直链       |
 | `webdav_test(url, username, password, allowInsecureTls)`                  | 探测 WebDAV：认证、目标文件是否存在            |
 | `webdav_upload(...)` / `webdav_download(...)`                             | 上传 / 下载整包同步 JSON                |
+| `set_screen_orientation(mode)`                                            | 安卓屏幕方向：`auto` / `portrait` / `landscape` |
+| `enter_picture_in_picture()` / `in_picture_in_picture()`                  | 安卓小窗（系统画中画）的进入与状态查询            |
+| `set_system_bar(color, light)`                                            | 安卓状态栏 / 导航栏配色与图标明暗，跟随主题          |
 
 ## 已知限制
 
@@ -223,8 +254,11 @@ cargo tauri build --no-bundle
 - 贡献榜 / 亲密榜的数据源不接（需求已取消）。
 - 虎牙不支持登录；斗鱼未登录时最高画质约 10 分钟过期，过期后会触发自动重取流。
 - 自绘标题栏意味着窗口没有系统边框，**失去了 Windows 原生的「贴边吸附（Aero Snap）」**。
-- 关闭窗口即退出进程，**没有托盘常驻、不保留后台播放**（0.4.3 起取消；换来的是不会有
-  多个托盘图标，且可以随意多开）。
+- 关闭窗口即退出进程，**没有托盘常驻、不保留后台播放**；换来的是不会堆出多个托盘图标，
+  且可以随意多开。
+- **Android**：斗鱼弹幕连不上（服务端拒绝 rustls 握手，桌面走 WebView 签名不受影响）；
+  退到后台会暂停播放，没有做 MediaSession / 前台服务，所以**不支持后台听声**。
+  视频编解码由系统 WebView 提供，老机器上的表现取决于系统 WebView 版本。
 - 所有数据默认只在本机；只有自己在设置里配了 WebDAV 并手动触发（或显式打开自动拉取）时，
   才会把不含 Cookie 的同步包传到那台服务器。
 
@@ -234,7 +268,7 @@ cargo tauri build --no-bundle
   （GPU 进程起不来 → `GPU process isn't usable. Goodbye.`），表现为一片黑。
   根因是 Chromium 的 GPU 沙箱要给子进程创建「受限令牌 + 嵌套 Job Object」，
   而**父进程本身已经在某个 Job 里时**（Windows 桌面 Job、部分沙箱与容器环境）就建不出来。
-  0.4.1 起会在建窗前检测当前进程是否处于 Job 中，是则自动关闭 GPU 沙箱并记住结论
+  建窗前会检测当前进程是否处于 Job 中，是则自动关闭 GPU 沙箱并记住结论
   （`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`）；沙箱正常的机器不受影响。
   需要手动控制时：`STARVEIL_FORCE_GPU_SANDBOX=1` 强制保留，
   `STARVEIL_DISABLE_GPU_SANDBOX=1` 强制关闭。

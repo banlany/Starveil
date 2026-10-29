@@ -297,14 +297,19 @@ function initRail() {
       go(route, {}, { replace: true });
     });
   }
-  const themeButton = rail.querySelector('[data-action="theme"]');
-  themeButton.innerHTML = icon(themeIcon(state.settings.appearance?.theme || 'dark'), 20);
-  themeButton.addEventListener('click', () => {
-    const mode = toggleTheme();
-    themeButton.innerHTML = icon(themeIcon(mode), 20);
-    toast(mode === 'light' ? '已切换到浅色模式' : mode === 'system' ? '已跟随系统主题' : '已切换到深色模式');
-    if (state.page === 'settingsDetail') render({ keepScroll: false });
-  });
+  // 移动端不留快捷主题按钮：底栏/侧栏只放导航，主题在设置里改。
+  if (IS_MOBILE) {
+    rail.querySelector('.rail-bottom')?.remove();
+  } else {
+    const themeButton = rail.querySelector('[data-action="theme"]');
+    themeButton.innerHTML = icon(themeIcon(state.settings.appearance?.theme || 'dark'), 20);
+    themeButton.addEventListener('click', () => {
+      const mode = toggleTheme();
+      themeButton.innerHTML = icon(themeIcon(mode), 20);
+      toast(mode === 'light' ? '已切换到浅色模式' : mode === 'system' ? '已跟随系统主题' : '已切换到深色模式');
+      if (state.page === 'settingsDetail') render({ keepScroll: false });
+    });
+  }
   refreshThemeButton();
 }
 

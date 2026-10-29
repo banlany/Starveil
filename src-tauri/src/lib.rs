@@ -13,7 +13,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -28,6 +30,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 mod webdav;
+// 剪贴板与「用浏览器打开」在安卓上走 JNI（见 `MainActivity`），不需要这套 Win32 壳。
+#[cfg(not(target_os = "android"))]
 mod win32;
 
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -945,6 +949,25 @@ fn in_picture_in_picture(app: AppHandle) -> bool {
     }
 }
 
+/// 系统栏配色（安卓）。
+///
+/// 主题资源里写的是固定的深色，浅色主题下状态栏就一直是黑的；
+/// 这里让前端在切换主题时把当前背景色推过来，顺带切换图标明暗。
+#[tauri::command]
+fn set_system_bar(app: AppHandle, color: String, light: bool) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        let argb = parse_argb(&color)?;
+        let light = i32::from(light);
+        run_on_main_activity(&app, move || call_activity_static("setSystemBar", &[argb, light]))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, color, light);
+        Ok(false)
+    }
+}
+
 /// 把一段 Android 调用投递到主线程执行并等结果。
 ///
 /// `setRequestedOrientation` / `enterPictureInPictureMode` 都要求在主线程上跑，
@@ -976,15 +999,65 @@ where
 /// 不是 Activity——直接对它调 `setRequestedOrientation` 会抛 NoSuchMethodError，
 /// 而 jni crate 在有待处理异常时再取 class 会 panic，表现就是「设置横屏后应用直接消失」。
 /// 所以要从 Application 的 ClassLoader 里捞出 MainActivity，再调它自己的静态方法。
+///
+/// 方法名与签名和 Kotlin 侧一一对应，改一处必须改另一处。
 #[cfg(target_os = "android")]
 fn call_activity_static(name: &str, args: &[i32]) -> Result<bool, String> {
+    with_jvm(|env| {
+        let class = activity_class(env)?;
+        let values: Vec<jni::objects::JValue> = args
+            .iter()
+            .map(|value| jni::objects::JValue::Int(*value))
+            .collect();
+        let signature = format!("({})Z", "I".repeat(args.len()));
+        env.call_static_method(class, name, &signature, &values)
+            .map_err(|error| format!("调用 MainActivity.{name} 失败：{error}"))?
+            .z()
+            .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))
+    })
+}
+
+/// 同上，但参数是一个 Java String（打开链接、写剪贴板这类需要文本的桥接）。
+#[cfg(target_os = "android")]
+fn call_activity_static_str(name: &str, value: &str) -> Result<bool, String> {
+    with_jvm(|env| {
+        let class = activity_class(env)?;
+        let argument = env
+            .new_string(value)
+            .map_err(|error| format!("构造字符串参数失败：{error}"))?;
+        env.call_static_method(
+            class,
+            name,
+            "(Ljava/lang/String;)Z",
+            &[jni::objects::JValue::Object(&argument)],
+        )
+        .map_err(|error| format!("调用 MainActivity.{name} 失败：{error}"))?
+        .z()
+        .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))
+    })
+}
+
+/// 附加到当前线程的 JVM 并执行一段 JNI 操作，返回后自动 detach。
+#[cfg(target_os = "android")]
+fn with_jvm<T>(
+    task: impl FnOnce(&mut jni::JNIEnv<'_>) -> Result<T, String>,
+) -> Result<T, String> {
     let context = ndk_context::android_context();
-    // SAFETY: `context()`/`vm()` 由 JNI_OnLoad 阶段写入，进程存活期间一直有效。
+    // SAFETY: `vm()` 由 JNI_OnLoad 阶段写入，进程存活期间一直有效。
     let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) }
         .map_err(|error| format!("获取 JavaVM 失败：{error}"))?;
     let mut env = vm
         .attach_current_thread()
         .map_err(|error| format!("附加到 JVM 失败：{error}"))?;
+    task(&mut env)
+}
+
+#[cfg(target_os = "android")]
+fn activity_class<'local>(
+    env: &mut jni::JNIEnv<'local>,
+) -> Result<jni::objects::JClass<'local>, String> {
+    let context = ndk_context::android_context();
+    // SAFETY: `context()` 由 JNI_OnLoad 阶段写入，进程存活期间一直有效。
     let app = unsafe { jni::objects::JObject::from_raw(context.context().cast()) };
     let loader = env
         .call_method(&app, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
@@ -1004,16 +1077,7 @@ fn call_activity_static(name: &str, args: &[i32]) -> Result<bool, String> {
         .map_err(|error| format!("加载 MainActivity 失败：{error}"))?
         .l()
         .map_err(|error| format!("MainActivity 不是类：{error}"))?;
-    let values: Vec<jni::objects::JValue> = args
-        .iter()
-        .map(|value| jni::objects::JValue::Int(*value))
-        .collect();
-    let signature = format!("({})Z", "I".repeat(args.len()));
-    let class = jni::objects::JClass::from(class);
-    env.call_static_method(class, name, &signature, &values)
-        .map_err(|error| format!("调用 MainActivity.{name} 失败：{error}"))?
-        .z()
-        .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))
+    Ok(jni::objects::JClass::from(class))
 }
 
 #[cfg(not(target_os = "android"))]
@@ -1021,6 +1085,22 @@ fn apply_screen_orientation(_app: &AppHandle, _mode: &str) -> Result<(), String>
     // 桌面窗口没有「竖屏/横屏」的概念（窗口尺寸由用户拖动决定），静默忽略，
     // 这样同一份前端代码在两端都能调，不必到处判断平台。
     Ok(())
+}
+
+/// `#RRGGBB` / `#AARRGGBB` → Android 的 ARGB int（按 i32 传给 JNI）。
+#[cfg(target_os = "android")]
+fn parse_argb(value: &str) -> Result<i32, String> {
+    let hex = value.trim().trim_start_matches('#');
+    let (alpha, rgb) = match hex.len() {
+        6 => (0xFFu32, hex),
+        8 => (
+            u32::from_str_radix(&hex[..2], 16).map_err(|_| format!("颜色格式不对：{value}"))?,
+            &hex[2..],
+        ),
+        _ => return Err(format!("颜色格式不对：{value}")),
+    };
+    let rgb = u32::from_str_radix(rgb, 16).map_err(|_| format!("颜色格式不对：{value}"))?;
+    Ok(((alpha << 24) | rgb) as i32)
 }
 
 // ---------------------------------------------------------------- 直播间
@@ -1476,27 +1556,54 @@ fn stop_danmaku_inner(state: &State<'_, AppState>) {
 /// 走 Win32 剪贴板 API（见 `win32` 模块），不再 fork `cmd /C clip`，
 /// 所以不会闪终端窗口，也不会因为等待子进程退出而卡住界面。
 #[tauri::command]
-fn copy_text(text: String) -> Result<(), String> {
-    win32::copy_to_clipboard(&text)
+fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let copied = run_on_main_activity(&app, move || call_activity_static_str("copyText", &text))?;
+        if copied {
+            Ok(())
+        } else {
+            Err("写入剪贴板失败".to_string())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        win32::copy_to_clipboard(&text)
+    }
 }
 
 /// 用系统默认浏览器打开链接。
 ///
-/// 同样不再走 `cmd /C start`：它会弹终端，而且对带引号的 URL 处理并不可靠。
+/// 桌面走 `ShellExecuteW`（不再用 `cmd /C start`：会弹终端，且对带引号的 URL 不可靠）；
+/// 安卓没有 Win32，转给 MainActivity 用 `Intent.ACTION_VIEW` 拉起外部浏览器。
 #[tauri::command]
-fn open_url(url: String) -> Result<(), String> {
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     let url = url.trim().to_string();
     if url.is_empty() {
         return Err("链接为空".to_string());
     }
     // 只放行 http/https。这个命令 WebView 可以直接调，不校验的话
-    // `file:///...exe`、UNC 路径都会被 ShellExecuteW 当成可执行目标。
+    // `file:///...exe`、UNC 路径都会被当成可执行目标。
     let lower = url.get(..8).map(str::to_ascii_lowercase).unwrap_or_default();
     let is_http = lower.starts_with("https://") || lower.starts_with("http://");
     if !is_http {
         return Err("只支持打开 http/https 链接".to_string());
     }
-    win32::open_in_browser(&url)
+    #[cfg(target_os = "android")]
+    {
+        let opened = run_on_main_activity(&app, move || call_activity_static_str("openUrl", &url))?;
+        if opened {
+            Ok(())
+        } else {
+            Err("没有可以打开链接的浏览器".to_string())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        win32::open_in_browser(&url)
+    }
 }
 
 // ---------------------------------------------------------------- 账号登录
@@ -2330,6 +2437,7 @@ pub fn run() {
             set_screen_orientation,
             enter_picture_in_picture,
             in_picture_in_picture,
+            set_system_bar,
             open_room,
             douyu_qualities,
             douyu_play,

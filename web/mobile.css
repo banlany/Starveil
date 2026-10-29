@@ -5,16 +5,21 @@
    platform.js 会再确认一次）。桌面浏览器 / 桌面客户端不带这个类，
    所以下面的规则一条都不会命中，桌面外观与行为完全不变。
 
-   三件事：
+   四件事：
    1. 去掉 Windows 那套自绘标题栏与边缘缩放热区；
-   2. 左侧 rail 改成底部 TabBar（拇指可达），顶部留状态栏、底部留手势条；
-   3. 直播间竖屏改上下分栏（视频在上、聊天在下），横屏保持左右分栏。
+   2. rail 竖屏在底部（拇指可达）、横屏回左侧（与桌面一致），
+      顶部留状态栏、底部留手势条；
+   3. 直播间竖屏改上下分栏（视频在上、聊天在下），横屏保持左右分栏；
+   4. 状态栏/导航栏的颜色由 `store.js` 的 `applyTheme` 推给原生，这里只负责留白。
    ============================================================ */
 
 html.is-mobile {
-  /* 系统状态栏 / 手势条的留白；viewport-fit=cover 已在 index.html 打开。 */
+  /* 系统状态栏 / 手势条的留白；viewport-fit=cover 已在 index.html 打开。
+     横屏时刘海在侧边，所以左右也要留。 */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --topbar-height: 54px;
   --rail-width: 0px;
 }
@@ -62,14 +67,6 @@ html.is-mobile .rail {
 }
 
 html.is-mobile .rail-top {
-  flex: 4 1 auto;
-  flex-direction: row;
-  align-items: center;
-  justify-content: stretch;
-  gap: 0;
-}
-
-html.is-mobile .rail-bottom {
   flex: 1 1 auto;
   flex-direction: row;
   align-items: center;
@@ -79,7 +76,7 @@ html.is-mobile .rail-bottom {
 
 html.is-mobile .rail-btn {
   /* 触控热区不小于 44px（Android 无障碍下限），图标本身保持原尺寸。
-     flex 均分让 5 个按钮等宽，不会出现「设置」和「月亮」之间空一截。 */
+     flex 均分让四个按钮等宽，不会在右侧空出一截。 */
   width: auto;
   height: 48px;
   min-width: 44px;
@@ -92,10 +89,42 @@ html.is-mobile .rail-btn .ico {
   height: 24px;
 }
 
-html.is-mobile .rail-mini {
-  width: auto;
-  height: 46px;
-  flex: 1 1 0;
+/* 横屏：屏幕够宽，侧栏回到左边（与桌面一致），别横在底部占掉一行高度。 */
+@media (orientation: landscape) {
+  html.is-mobile .app {
+    flex-direction: row;
+  }
+
+  html.is-mobile .main {
+    order: 2;
+  }
+
+  html.is-mobile .rail {
+    order: 1;
+    width: 76px;
+    height: auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    /* 横屏刘海在侧边，用 safe-left 而不是 safe-bottom。 */
+    padding: calc(var(--safe-top) + 10px) 0 12px var(--safe-left);
+    border-top: none;
+    border-right: 1px solid var(--line);
+  }
+
+  html.is-mobile .rail-top {
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  html.is-mobile .rail-btn {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 auto;
+  }
 }
 
 /* 触屏没有 hover，用 :active 给按下反馈。 */

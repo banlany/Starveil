@@ -256,7 +256,8 @@ img {
   bottom: 0;
   height: 2px;
   border-radius: 2px;
-  background: var(--fg);
+  /* 跟随强调色，而不是用 --fg：否则除了默认粉色，其余主题下都是黑白下划线。 */
+  background: var(--accent);
 }
 
 .platform-tab.is-disabled {

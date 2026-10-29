@@ -1,5 +1,6 @@
 // 本地状态与持久化：设置、关注、观看记录、搜索历史。
-import { ALL_PLATFORMS, canonicalImage, roomUrl } from './api.js';
+import { ALL_PLATFORMS, api, canonicalImage, roomUrl } from './api.js';
+import { IS_MOBILE } from './platform.js';
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
@@ -8,8 +9,8 @@ const SEARCH_KEY = 'simple-live.search.v2';
 const STATS_KEY = 'simple-live.stats.v2';
 const LOGIN_PREFIX = 'simple-live.login.v1.';
 
-/// 观看记录上限。0.4.4 从 1000 提到 2000：导入 dart 的 profile 时
-/// 单机历史常常超过一千条，旧上限会静默截掉一大半。
+/// 观看记录上限。导入 dart 的 profile 时单机历史常常超过一千条，
+/// 上限太小会静默截掉一大半。
 export const HISTORY_LIMIT = 2000;
 
 export function loadLogin(platform) {
@@ -216,9 +217,8 @@ export function loadSettings() {
     stored = {};
   }
   const settings = merge(clone(DEFAULT_SETTINGS), stored);
-  // 兼容 0.3 时代的顶层 theme/accent：只有新结构里缺这一项时才回退。
-  // 以前是无条件覆盖，而 saveSettings 又会把旧镜像一并写出去，
-  // 结果「设置里改成浅色 → 重启又变回深色」。
+  // 早期版本把 theme/accent 放在顶层。只在 `appearance` 缺这一项时才回退，
+  // 否则落盘的镜像值会把用户刚改好的主题又盖回去。
   if (stored.theme && !stored.appearance?.theme) {
     settings.appearance.theme = stored.theme;
   }
@@ -229,8 +229,7 @@ export function loadSettings() {
 }
 
 export function saveSettings() {
-  // 顶层 theme/accent 是早期键，现在只当镜像：每次落盘都从 appearance 回填，
-  // 保证两条路径写出去的值一致，loadSettings 的兼容分支不会再拿旧值覆盖新值。
+  // 顶层 theme/accent 只当镜像：每次落盘从 appearance 回填，保证两条路径一致。
   const appearance = state.settings?.appearance;
   if (appearance) {
     state.settings.theme = appearance.theme;
@@ -284,7 +283,24 @@ export function applyTheme() {
   document.documentElement.style.setProperty('--accent-soft', hexToAlpha(state.settings.appearance?.accent || '#fb7299', 0.16));
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', effective === 'light' ? '#ffffff' : '#101014');
+  syncSystemBar(effective);
   window.dispatchEvent(new CustomEvent('simple-live:theme'));
+}
+
+/// 安卓系统栏跟着主题走。
+///
+/// 取的是 `--bg` 的实际值（深色 #101014 / 浅色 #f5f5f8），与页面背景严丝合缝；
+/// 不改的话浅色主题下会顶着一条黑边。只在移动端调，桌面窗口没有系统栏。
+const SYSTEM_BAR_COLORS = { dark: '#101014', light: '#f5f5f8' };
+let lastSystemBar = '';
+
+function syncSystemBar(effective) {
+  if (!IS_MOBILE) return;
+  const color = SYSTEM_BAR_COLORS[effective] || SYSTEM_BAR_COLORS.dark;
+  const key = `${effective}:${color}`;
+  if (key === lastSystemBar) return;
+  lastSystemBar = key;
+  api.setSystemBar(color, effective === 'light').catch(() => {});
 }
 
 export function toggleTheme() {
