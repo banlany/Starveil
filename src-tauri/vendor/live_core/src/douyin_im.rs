@@ -6,6 +6,8 @@
 //! 的 `signature` 字段），这里只负责「拿签名 → 连 → 解 protobuf」。
 //!
 //! 协议要点（与 dart_simple_live 的 `douyin_danmaku.dart` 对齐）：
+//! 来源 `dart_simple_live/simple_live_core/lib/src/danmaku/douyin_danmaku.dart`
+//! （GPL-3.0，上游 xiaoyaocz/dart_simple_live），许可声明见根目录 `THANKS.md`。
 //! - 传输单元是 `PushFrame`，其 `payload` 字段是 **gzip 压缩的 `Response`**；
 //! - 进房后要按时发 `payloadType="hb"` 的空帧保活，服务端 `needAck` 时要回
 //!   `payloadType="ack"` 且把 `internalExt` 原样塞进 payload；

@@ -53,6 +53,7 @@
   - **虎牙不提供 HLS 线路**：页面里虽然有 `sHlsUrl` / `sHlsAntiCode`，但按同一套算法拼出来的
     m3u8 在多个房间、带不带 Referer 都是 403，说明 HLS 侧还有额外要求；与其给一条必失败的线路，
     不如只交 FLV（实现与注释里都写明了原因）。
+  - **斗鱼没有稳定的 HLS 出口**，这一版不接入（与其凑一条时好时坏的线路，不如只交 FLV）。
   - 取流时重新拉一次签名地址：抖音 CDN 对过期或并发重复使用的签名直接回 403
     （播放器报 `HttpStatusCodeInvalid`），所以每次 `play` 都重新进房换新 `stream_url`，
     失败才退回进房时缓存的那份；本地代理对上游非 2xx 也补一次 300ms 重试。
@@ -94,6 +95,12 @@
 
 - **许可与致谢**：新增根目录 `THANKS.md`（协议层来源、开源库、素材与商标、免责声明），
   设置页「关于」里增加「许可与致谢」入口，内容与 `THANKS.md` 对应。
+  协议层的来源逐条写明：`xiaoyaocz/dart_simple_live` 与 `simple_live_core`（GPL-3.0，主来源）、
+  `AllLive`（早期思路）、`xuanxuan123xuan/simple-live-kuaishou`（快手协议）；
+  抖音 `a_bogus` / webmssdk 签名脚本单独标注「仅供学习交流、禁止商业与违法使用」；
+  抖音游戏分类素材（App Store / Steam / FLATICON 等）标注「仅限非商业使用、下游 fork 保留来源」，
+  不并入 GPL 授权。`douyin.rs`、`kuaishou.rs`、`douyin_im.rs` 的文档头都写明了对应的 dart 来源文件
+  与上游许可，避免将来重写时丢掉署名。
 
 ### 优化增强
 

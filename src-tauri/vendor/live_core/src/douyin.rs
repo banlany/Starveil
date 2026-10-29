@@ -1,5 +1,9 @@
 //! 抖音直播。
 //!
+//! 来源：`dart_simple_live/simple_live_core/lib/src/douyin_site.dart`（GPL-3.0，
+//! 上游 xiaoyaocz/dart_simple_live）与 `danmaku/douyin_danmaku.dart`，本文件是
+//! 按 Rust 重写而非逐行翻译；许可与素材声明见根目录 `THANKS.md`。
+//!
 //! 抖音的取流接口（`webcast/room/web/enter` 与 `webcast/room/reflow/info`）
 //! 在只带匿名 `ttwid` 的情况下就能返回完整数据，不需要 `a_bogus` 签名；
 //! 因此这里不移植那套 600 KB 的 webmssdk，只做「拿 Cookie → 请求 → 解析」。

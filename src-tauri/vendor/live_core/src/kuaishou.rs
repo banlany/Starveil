@@ -1,5 +1,9 @@
 //! 快手直播。
 //!
+//! 来源：`dart_simple_live/simple_live_core/lib/src/kuaishou_site.dart`（GPL-3.0，
+//! 上游 xiaoyaocz/dart_simple_live），快手协议的完整支持还参考了
+//! `xuanxuan123xuan/simple-live-kuaishou`；许可与素材声明见根目录 `THANKS.md`。
+//!
 //! 快手网页版的接口相对宽松：首页推荐、分类、分区、搜索都是普通 JSON 接口，
 //! 不需要签名；房间详情页则把整份数据塞在 `window.__INITIAL_STATE__` 里，
 //! 连播放地址（`liveStream.playUrls`）都一起给了，所以取流也不必再请求一次。
