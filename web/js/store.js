@@ -133,6 +133,9 @@ export const DEFAULT_SETTINGS = {
   timer: {
     enabled: false,
     minutes: 60,
+    // 到点退出后是否顺手把定时关闭关掉。
+    // 关着 = 每次启动应用都会重新计时（老行为），开着 = 只生效一次。
+    once: false,
   },
   sync: {
     // WebDAV 局域网同步。密码明文存在本机 localStorage（设置页有风险提示），

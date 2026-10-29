@@ -174,6 +174,11 @@ export function renderRoom(ctx, params = {}) {
     lastVolume: 0.8,
     reconnectAttempts: 0,
     lineFailures: 0,
+    // 直播流「一直没有进展」时连续自动重试的次数。主播下播后画面会永久停住，
+    // 不设上限的话卡顿检测会每隔几秒重取一次流、弹一次 toast，永远停不下来。
+    stallRetries: 0,
+    // 自动重连已经放弃（下播/流彻底没了）。用户手动刷新时清掉。
+    streamDead: false,
     playStartedAt: 0,
     stallTimer: 0,
     lastProgressTime: 0,
@@ -212,7 +217,7 @@ export function renderRoom(ctx, params = {}) {
   $('footer-share').addEventListener('click', shareRoom);
   $('footer-copy-link').addEventListener('click', copyRoomLink);
   $('footer-copy-stream').addEventListener('click', copyStream);
-  $('footer-refresh').addEventListener('click', () => refreshStream());
+  $('footer-refresh').addEventListener('click', () => manualRefreshStream());
   $('room-more').addEventListener('click', showMoreMenu);
   $('chat-collapse').addEventListener('click', () => setChatCollapsed(true));
   $('chat-expand').addEventListener('click', () => setChatCollapsed(false));
@@ -541,6 +546,26 @@ export function renderRoom(ctx, params = {}) {
     return box;
   }
 
+  /// 聊天栏为空时的占位文案，必须跟着弹幕连接状态走。
+  /// 以前只在渲染那一刻读一次状态：连上之后如果一直没人发弹幕，
+  /// 占位就一直停在「正在连接弹幕服务器…」，看起来像卡在连接中。
+  function chatPlaceholderText() {
+    const state_ = session.danmakuStatus?.state;
+    if (state_ === 'unsupported') return '本平台暂不支持弹幕';
+    if (state_ === 'failed') return '弹幕未连接，原因见上方提示';
+    if (state_ === 'connected') return '已连接弹幕服务器，还没有人发弹幕';
+    return '正在连接弹幕服务器…';
+  }
+
+  /// 状态变化时就地改占位文案（不整页重绘，免得把滚动位置和输入框弄乱）。
+  function refreshChatPlaceholder() {
+    if (session.tab !== 'chat' || session.messages.length) return;
+    const label = chatList.querySelector('.chat-placeholder > div');
+    if (!label) return;
+    const text = chatPlaceholderText();
+    if (label.textContent !== text) label.textContent = text;
+  }
+
   async function refreshRoomFollowStatus() {
     if (session.followRefreshing) return;
     const list = loadFollow();
@@ -582,14 +607,7 @@ export function renderRoom(ctx, params = {}) {
     chatToBottom.classList.remove('is-shown');
     if (session.tab === 'chat') {
       if (!session.messages.length) {
-        const status = session.danmakuStatus;
-        const text =
-          status?.state === 'unsupported'
-            ? '本平台暂不支持弹幕'
-            : status?.state === 'failed'
-              ? '弹幕未连接，原因见上方提示'
-              : '正在连接弹幕服务器…';
-        chatList.appendChild(placeholder(text, 'danmaku'));
+        chatList.appendChild(placeholder(chatPlaceholderText(), 'danmaku'));
         return;
       }
       for (const message of session.messages) appendChatLine(message);
@@ -1225,8 +1243,12 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     session.lineIndex = index;
+    // 换线路 = 重新开一轮尝试，之前「已放弃自动重连」的结论作废。
+    session.streamDead = false;
     setQualityLabel();
-    danmaku?.reset();
+    // 这里**不要**再 `danmaku.reset()`。换线 / 重取流跟弹幕没关系，
+    // 但每次清空整层，在下播后自动重连的循环里会表现为「弹幕一直在闪」或者
+    // 「弹幕层不动了」——而聊天栏还在正常刷新，看着就像弹幕流和直播流绑死了。
     setHint({ spinner: true, text: '正在连接视频流…' });
     destroyPlayer();
     if (line.protocol === 'hls') {
@@ -1279,8 +1301,16 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  /// 用户主动刷新：先把「自动重连已放弃」的标记清掉，再重新取流。
+  /// 卡顿检测自己调的 `refreshStream()` 不走这里，否则计数永远清零、重试停不下来。
+  function manualRefreshStream() {
+    session.stallRetries = 0;
+    session.streamDead = false;
+    refreshStream();
+  }
+
   function bindHintActions() {
-    hint.querySelector('#hint-retry')?.addEventListener('click', () => refreshStream());
+    hint.querySelector('#hint-retry')?.addEventListener('click', () => manualRefreshStream());
     hint.querySelector('#hint-switch')?.addEventListener('click', () => {
       if (session.lines.length > 1) playLine((session.lineIndex + 1) % session.lines.length);
       else toast('当前没有其他线路');
@@ -1541,7 +1571,7 @@ export function renderRoom(ctx, params = {}) {
 
   function showMoreMenu() {
     openMenu($('room-more'), [
-      { label: '刷新直播流', icon: 'refresh', onClick: () => refreshStream() },
+      { label: '刷新直播流', icon: 'refresh', onClick: () => manualRefreshStream() },
       { label: '在浏览器打开', icon: 'link', onClick: () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)) },
       { label: '复制直播流', icon: 'copy', onClick: copyStream },
       { label: '复制直播间链接', icon: 'copy', onClick: copyRoomLink },
@@ -1677,7 +1707,7 @@ export function renderRoom(ctx, params = {}) {
         },
       },
       { label: '播放器设置', icon: 'player', onClick: () => toast('完整播放设置请到 设置 → 播放页设置') },
-      { label: '刷新直播流', icon: 'refresh', onClick: () => refreshStream() },
+      { label: '刷新直播流', icon: 'refresh', onClick: () => manualRefreshStream() },
       { separator: true },
       { label: '复制直播流', icon: 'copy', onClick: copyStream },
       { label: '打开网页版', icon: 'link', onClick: () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)) },
@@ -1745,6 +1775,9 @@ export function renderRoom(ctx, params = {}) {
         bar.hidden = true;
       }, 4000);
     }
+    // 横幅会自己收起，占位文案得接住「已连接」这个状态，
+    // 否则没人发弹幕时聊天栏永远写着「正在连接弹幕服务器…」。
+    refreshChatPlaceholder();
   }
 
   /// 抖音需要先算握手签名，其余平台直接连。
@@ -1754,7 +1787,10 @@ export function renderRoom(ctx, params = {}) {
     // 顺手兼容一次「已经摊平」的形状，免得两边改来改去对不上。
     const extra = session.detail?.extra || {};
     const roomInnerId = extra?.Douyin?.room_id || extra?.room_id || '';
-    if (!roomInnerId) throw new Error('缺少抖音房间号，无法生成弹幕签名');
+    if (!roomInnerId) {
+      // 未开播的抖音房间往往还没下发 19 位房间号，签名算不出来。
+      throw new Error('没拿到抖音房间号（未开播时连不了弹幕），开播后重进试试');
+    }
     const { signature, userId } = await signDouyinDanmaku(roomInnerId);
     return { signature, userId };
   }
@@ -1844,11 +1880,17 @@ export function renderRoom(ctx, params = {}) {
       touchFollowVisit(detailPlatform, session.roomId);
       setChatTab('chat');
       setQualityLabel();
+      // 弹幕流和直播流是两条独立连接：**先连弹幕，再去取流**。
+      // 以前弹幕挂在取流成功之后，于是没开播 / 没取到流源的房间永远不连弹幕——
+      // 明明有人发弹幕，聊天栏却一直空着。这里不等它返回，两件事并行做。
+      startDanmaku();
       if (!payload.detail.live || !session.qualities.length) {
         // 未开播也要保留房间头、关注/取关和主播信息，只是不取流。
         $('ctrl-quality').disabled = true;
         $('ctrl-line').disabled = true;
         setHint({
+          // 弹幕有没有连上，聊天栏顶部与占位文案会说得更准（各平台情况不同），
+          // 这里只交代直播流的事，别抢那句话。
           text: payload.detail.live ? '当前没有可用的直播流' : '主播当前未开播，开播后可以刷新进入',
           actions: '<button class="btn primary" id="hint-reopen">刷新房间</button>',
         });
@@ -1859,7 +1901,6 @@ export function renderRoom(ctx, params = {}) {
         return;
       }
       await refreshStream();
-      await startDanmaku();
       if (state.settings.player.muteOnStart) {
         video.muted = true;
         updateVolumeIcon();
@@ -1876,7 +1917,7 @@ export function renderRoom(ctx, params = {}) {
       session.lastProgressTime = video.currentTime;
       session.lastProgressAt = Date.now();
       session.stallTimer = setInterval(() => {
-        if (session.destroyed || video.paused || video.readyState < 2) return;
+        if (session.destroyed || session.streamDead || video.paused || video.readyState < 2) return;
         const now = Date.now();
         // 延迟兜底。关掉 liveBufferLatencyChasing 后，任何一次卡顿（窗口被切走、
         // 网络抖一下、解码跟不上）都会让播放点永久落后：之后收到的数据只会继续
@@ -1896,12 +1937,32 @@ export function renderRoom(ctx, params = {}) {
         if (Math.abs(video.currentTime - session.lastProgressTime) > 0.4) {
           session.lastProgressTime = video.currentTime;
           session.lastProgressAt = now;
+          // 画面在动了，说明流是好的，把「连续失败」计数清掉。
+          session.stallRetries = 0;
           return;
         }
         if (now - session.lastProgressAt < 6000) return;
         session.lastProgressAt = now;
         if (!state.settings.player.autoRefresh) {
           setHint({ text: '直播流已停止，可以刷新继续观看', actions: '<button class="btn primary" id="hint-retry">刷新</button>' });
+          bindHintActions();
+          return;
+        }
+        // 连续几次重连都没有进展，多半是主播下播了（画面会永久停住）。
+        // 再自动重试下去只会每隔几秒弹一次 toast，停掉循环、把选择权交回用户。
+        // 弹幕是另一条连接，不受影响，这里不碰它。
+        session.stallRetries += 1;
+        if (session.stallRetries > 3) {
+          session.stallRetries = 0;
+          session.streamDead = true;
+          // 弹幕是另一条连接，直播流停了不代表它停了——按实际状态说话，不要瞎猜。
+          const danmakuAlive = session.danmakuStatus?.state === 'connected';
+          setHint({
+            text: danmakuAlive
+              ? '直播流已停止（主播可能已下播），弹幕仍在接收；稍后可以刷新重试'
+              : '直播流已停止（主播可能已下播），稍后可以刷新重试',
+            actions: '<button class="btn primary" id="hint-retry">刷新</button>',
+          });
           bindHintActions();
           return;
         }

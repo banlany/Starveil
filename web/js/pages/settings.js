@@ -538,10 +538,21 @@ function detailSections(key, ctx, repaint) {
           label: '定时关闭',
           rows: [
             { type: 'switch', key: 'timer.enabled', title: '启用定时关闭', onChange: () => ctx.restartTimer?.() },
-            { type: 'number', key: 'timer.minutes', title: '自动关闭时间', desc: '从进入直播间开始倒计时', min: 5, max: 720, step: 5, unit: ' 分钟', onChange: () => ctx.restartTimer?.() },
+            { type: 'number', key: 'timer.minutes', title: '自动关闭时间', desc: '从应用启动开始倒计时', min: 5, max: 720, step: 5, unit: ' 分钟', onChange: () => ctx.restartTimer?.() },
+            { type: 'switch', key: 'timer.once', title: '只生效一次', desc: '计时结束退出应用后自动关闭定时关闭；不打开则每次启动应用都会重新计时' },
           ],
         },
-        { label: '', rows: [{ type: 'info', title: '当前状态', desc: getSetting('timer.enabled') ? `已开启，${getSetting('timer.minutes')} 分钟后自动退出应用` : '未开启', value: getSetting('timer.enabled') ? '计时中' : '关闭' }] },
+        {
+          label: '',
+          rows: [{
+            type: 'info',
+            title: '当前状态',
+            desc: getSetting('timer.enabled')
+              ? `已开启，${getSetting('timer.minutes')} 分钟后自动退出应用${getSetting('timer.once') ? '，退出后自动关闭' : '，每次启动都会重新计时'}`
+              : '未开启',
+            value: getSetting('timer.enabled') ? '计时中' : '关闭',
+          }],
+        },
       ];
     case 'other':
       return [

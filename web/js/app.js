@@ -353,7 +353,14 @@ function restartTimer() {
   if (!state.settings.timer.enabled) return;
   const minutes = Math.max(1, Number(state.settings.timer.minutes) || 60);
   timerHandle = setTimeout(() => {
-    toast('定时关闭时间到，正在退出…');
+    const once = Boolean(state.settings.timer.once);
+    if (once) {
+      // 「只生效一次」：先把开关落盘再退出，否则下次启动又会重新计时，
+      // 表现就是「开了定时关闭以后每次用都被自动关掉」。
+      state.settings.timer.enabled = false;
+      saveSettings();
+    }
+    toast(once ? '定时关闭已生效，正在退出（下次启动不会再自动计时）' : '定时关闭时间到，正在退出…');
     setTimeout(() => api.quitApp().catch(() => window.close()), 900);
   }, minutes * 60 * 1000);
 }
