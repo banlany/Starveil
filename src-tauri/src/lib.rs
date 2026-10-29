@@ -866,6 +866,163 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+// ---------------------------------------------------------------- 平台与屏幕方向
+
+/// 前端要知道自己跑在哪：桌面用自绘标题栏与可拖拽窗口，移动端没有这些概念。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformInfo {
+    /// `windows` / `macos` / `linux` / `android` / `ios`
+    os: &'static str,
+    mobile: bool,
+}
+
+#[tauri::command]
+fn app_platform() -> PlatformInfo {
+    PlatformInfo {
+        os: std::env::consts::OS,
+        mobile: cfg!(any(target_os = "android", target_os = "ios")),
+    }
+}
+
+/// 屏幕方向：`auto` 跟随重力、`portrait` 锁定竖屏、`landscape` 锁定横屏。
+///
+/// Android 靠 `Activity.setRequestedOrientation` 实现；manifest 里已声明
+/// `configChanges` 含 `orientation|screenSize`，所以旋转不会重建 Activity，
+/// WebView 只会收到一次 resize，前端按新尺寸重排即可。
+#[tauri::command]
+fn set_screen_orientation(app: AppHandle, mode: String) -> Result<(), String> {
+    let mode = mode.trim().to_ascii_lowercase();
+    if !matches!(mode.as_str(), "auto" | "portrait" | "landscape") {
+        return Err(format!("未知的屏幕方向：{mode}"));
+    }
+    apply_screen_orientation(&app, &mode)
+}
+
+#[cfg(target_os = "android")]
+fn apply_screen_orientation(app: &AppHandle, mode: &str) -> Result<(), String> {
+    // android.content.pm.ActivityInfo 的常量：
+    // SCREEN_ORIENTATION_LANDSCAPE = 0、PORTRAIT = 1、UNSPECIFIED = -1。
+    // 用 LANDSCAPE/PORTRAIT 而不是 SENSOR_* 是为了契合「固定」的语义：
+    // 用户选了竖屏就不该因为手机横过来而跟着转。
+    let requested = match mode {
+        "landscape" => 0i32,
+        "portrait" => 1i32,
+        _ => -1i32,
+    };
+    run_on_main_activity(app, move || call_activity_static("setOrientation", &[requested]).map(|_| ()))
+}
+
+/// 安卓小窗（画中画）。
+///
+/// WebView 里 `video.requestPictureInPicture()` 在 Android WebView 上不生效，
+/// 只能走系统的 Activity 级 PiP：把整个应用缩成小窗浮在别的应用上面。
+#[tauri::command]
+fn enter_picture_in_picture(app: AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        run_on_main_activity(&app, || call_activity_static("enterPip", &[]))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(false)
+    }
+}
+
+/// 查询是否正在小窗里。前端靠它判断什么时候收起「小窗专用布局」——
+/// 退出小窗后端不会再给一次通知，只能问系统。
+#[tauri::command]
+fn in_picture_in_picture(app: AppHandle) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        run_on_main_activity(&app, || call_activity_static("isInPip", &[])).unwrap_or(false)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        false
+    }
+}
+
+/// 把一段 Android 调用投递到主线程执行并等结果。
+///
+/// `setRequestedOrientation` / `enterPictureInPictureMode` 都要求在主线程上跑，
+/// 而 tauri 命令本身在 tokio 线程；超时兜底避免前端一直转圈。
+#[cfg(target_os = "android")]
+fn run_on_main_activity<T, F>(app: &AppHandle, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.clone()
+        .run_on_main_thread(move || {
+            // JNI 出错时 jni crate 里会 panic，跨 FFI 的 panic 会直接把进程 abort，
+            // 所以这里必须自己接住，转成普通错误交给前端。
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task))
+                .unwrap_or_else(|_| Err("调用 Android 接口时发生内部错误".to_string()));
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("投递到主线程失败：{error}"))?;
+    receiver
+        .recv_timeout(Duration::from_secs(4))
+        .map_err(|_| "等待主线程执行超时".to_string())?
+}
+
+/// 在主线程上调用 `MainActivity` 的静态桥接方法（见 `android/app/src/main/java/.../MainActivity.kt`）。
+///
+/// 这里有个坑：`ndk_context::android_context().context()` 拿到的是 **Application**，
+/// 不是 Activity——直接对它调 `setRequestedOrientation` 会抛 NoSuchMethodError，
+/// 而 jni crate 在有待处理异常时再取 class 会 panic，表现就是「设置横屏后应用直接消失」。
+/// 所以要从 Application 的 ClassLoader 里捞出 MainActivity，再调它自己的静态方法。
+#[cfg(target_os = "android")]
+fn call_activity_static(name: &str, args: &[i32]) -> Result<bool, String> {
+    let context = ndk_context::android_context();
+    // SAFETY: `context()`/`vm()` 由 JNI_OnLoad 阶段写入，进程存活期间一直有效。
+    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) }
+        .map_err(|error| format!("获取 JavaVM 失败：{error}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("附加到 JVM 失败：{error}"))?;
+    let app = unsafe { jni::objects::JObject::from_raw(context.context().cast()) };
+    let loader = env
+        .call_method(&app, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .map_err(|error| format!("获取 ClassLoader 失败：{error}"))?
+        .l()
+        .map_err(|error| format!("ClassLoader 不是对象：{error}"))?;
+    let class_name = env
+        .new_string("com.banlany.starveil.MainActivity")
+        .map_err(|error| format!("构造类名失败：{error}"))?;
+    let class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[jni::objects::JValue::Object(&class_name)],
+        )
+        .map_err(|error| format!("加载 MainActivity 失败：{error}"))?
+        .l()
+        .map_err(|error| format!("MainActivity 不是类：{error}"))?;
+    let values: Vec<jni::objects::JValue> = args
+        .iter()
+        .map(|value| jni::objects::JValue::Int(*value))
+        .collect();
+    let signature = format!("({})Z", "I".repeat(args.len()));
+    let class = jni::objects::JClass::from(class);
+    env.call_static_method(class, name, &signature, &values)
+        .map_err(|error| format!("调用 MainActivity.{name} 失败：{error}"))?
+        .z()
+        .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))
+}
+
+#[cfg(not(target_os = "android"))]
+fn apply_screen_orientation(_app: &AppHandle, _mode: &str) -> Result<(), String> {
+    // 桌面窗口没有「竖屏/横屏」的概念（窗口尺寸由用户拖动决定），静默忽略，
+    // 这样同一份前端代码在两端都能调，不必到处判断平台。
+    Ok(())
+}
+
 // ---------------------------------------------------------------- 直播间
 
 #[tauri::command]
@@ -2169,6 +2326,10 @@ pub fn run() {
             category_rooms,
             resolve_input,
             quit_app,
+            app_platform,
+            set_screen_orientation,
+            enter_picture_in_picture,
+            in_picture_in_picture,
             open_room,
             douyu_qualities,
             douyu_play,

@@ -1,6 +1,12 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.starveil" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!-- 系统栏跟随前端深色底，别用 MaterialComponents 默认的紫色。 -->
+        <item name="android:statusBarColor">@color/starveil_status_bar</item>
+        <item name="android:navigationBarColor">@color/starveil_status_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
+        <!-- 竖屏直播间要顶到状态栏下面，由前端用 safe-area 留白。 -->
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 </resources>

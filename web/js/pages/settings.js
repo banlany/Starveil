@@ -24,6 +24,8 @@ import { buildBundle, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
 // 改档位定义时只改 danmaku.js 一处。
 import { FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
+// 移动端专属设置项（屏幕方向）要按平台显示。
+import { IS_MOBILE } from '../platform.js';
 import {
   avatarHtml,
   bindImageFallback,
@@ -390,6 +392,26 @@ function detailSections(key, ctx, repaint) {
           ],
         },
         { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' }, onChange: (value) => { document.body.dataset.density = value; } }] },
+        // 屏幕方向只有移动端有意义：桌面窗口的尺寸方向由用户自己拖。
+        ...(IS_MOBILE
+          ? [{
+            label: '屏幕方向',
+            rows: [
+              {
+                type: 'radioGroup',
+                key: 'appearance.orientation',
+                options: [
+                  { label: '自动', value: 'auto', desc: '跟随设备重力方向旋转' },
+                  { label: '固定竖屏', value: 'portrait', desc: '手机转成横向时也保持竖屏' },
+                  { label: '固定横屏', value: 'landscape', desc: '适合看直播，画面更大' },
+                ],
+                onChange: (value) => {
+                  api.setScreenOrientation(value).catch((error) => console.warn('设置屏幕方向失败', error));
+                },
+              },
+            ],
+          }]
+          : []),
       ];
     case 'home':
       return [
@@ -411,6 +433,30 @@ function detailSections(key, ctx, repaint) {
           rows: [
             { type: 'switch', key: 'player.hardwareDecode', title: '硬件解码', desc: '由 WebView2 / 系统解码器处理视频；播放异常时可尝试关闭' },
             { type: 'switch', key: 'player.rememberQuality', title: '记住清晰度', desc: '同一平台下次进入直播间时沿用上次选择' },
+            {
+              type: 'select',
+              key: 'player.defaultQuality',
+              title: '默认清晰度',
+              desc: '没有记住的清晰度时按这里选；平台没提供对应档位时退回平台默认档',
+              valueMap: {
+                auto: '跟随平台',
+                highest: '最高清晰度',
+                // 键名不能写成纯数字：JS 对象会把整数样式的键按数值排到最前面，
+                // 菜单顺序就乱了（会变成 480/720/1080 打头）。
+                fullhd: '1080P 优先',
+                hd: '720P 优先',
+                sd: '480P 优先',
+                smooth: '流畅优先',
+              },
+              onChange: () => {
+                // 「记住清晰度」优先于默认清晰度，改了默认值就得把各平台记住的档位清掉，
+                // 否则新设置看起来「没生效」。键名前缀与 room.js 的 QUALITY_KEY 一致。
+                for (const key of Object.keys(localStorage)) {
+                  if (key.startsWith('simple-live.quality.')) localStorage.removeItem(key);
+                }
+                toast('默认清晰度已更新，进入直播间时生效');
+              },
+            },
             { type: 'switch', key: 'player.autoSwitchLine', title: '播放失败自动换线', desc: '当前线路连续失败时自动尝试下一条' },
             { type: 'switch', key: 'player.autoRefresh', title: '直播流自动刷新', desc: '长时间播放后重新获取直链，避免地址过期' },
             { type: 'switch', key: 'player.forceHttps', title: '强制 HTTPS', desc: '把平台下发的 http 链接改为 https（部分 CDN 不支持时请关闭）' },
@@ -532,13 +578,15 @@ function detailSections(key, ctx, repaint) {
           ],
         },
       ];
-    case 'timer':
+    case 'timer': {
+      const info = ctx.sleepTimer?.() || { enabled: false, minutes: getSetting('timer.minutes'), remaining: 0 };
+      const remainingMinutes = info.enabled ? Math.max(1, Math.ceil(info.remaining / 60000)) : 0;
       return [
         {
           label: '定时关闭',
           rows: [
-            { type: 'switch', key: 'timer.enabled', title: '启用定时关闭', onChange: () => ctx.restartTimer?.() },
-            { type: 'number', key: 'timer.minutes', title: '自动关闭时间', desc: '从应用启动开始倒计时', min: 5, max: 720, step: 5, unit: ' 分钟', onChange: () => ctx.restartTimer?.() },
+            { type: 'switch', key: 'timer.enabled', title: '启用定时关闭', desc: '直播间「更多 → 定时关闭」也是同一个开关，两边同步', onChange: () => ctx.restartTimer?.() },
+            { type: 'number', key: 'timer.minutes', title: '自动关闭时间', desc: '从开启那一刻开始倒计时', min: 5, max: 720, step: 5, unit: ' 分钟', onChange: () => ctx.restartTimer?.() },
             { type: 'switch', key: 'timer.once', title: '只生效一次', desc: '计时结束退出应用后自动关闭定时关闭；不打开则每次启动应用都会重新计时' },
           ],
         },
@@ -547,13 +595,14 @@ function detailSections(key, ctx, repaint) {
           rows: [{
             type: 'info',
             title: '当前状态',
-            desc: getSetting('timer.enabled')
-              ? `已开启，${getSetting('timer.minutes')} 分钟后自动退出应用${getSetting('timer.once') ? '，退出后自动关闭' : '，每次启动都会重新计时'}`
-              : '未开启',
-            value: getSetting('timer.enabled') ? '计时中' : '关闭',
+            desc: info.enabled
+              ? `约 ${remainingMinutes} 分钟后自动退出应用${getSetting('timer.once') ? '，退出后自动关闭' : '，每次启动都会重新计时'}`
+              : '未开启，可以在直播间「更多」里直接开',
+            value: info.enabled ? '计时中' : '关闭',
           }],
         },
       ];
+    }
     case 'other':
       return [
         {

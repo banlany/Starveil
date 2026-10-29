@@ -215,6 +215,18 @@ export const api = {
   quitApp() {
     return call('quit_app');
   },
+  /// 屏幕方向：`auto` / `portrait` / `landscape`。桌面端是空实现，不报错。
+  setScreenOrientation(mode) {
+    return call('set_screen_orientation', { mode });
+  },
+  /// 安卓小窗（系统级画中画）。桌面端返回 false，前端会退回 HTML5 画中画。
+  enterPictureInPicture() {
+    return call('enter_picture_in_picture');
+  },
+  /// 是否正在小窗里；退出小窗没有系统通知，前端轮询这个来判断。
+  inPictureInPicture() {
+    return call('in_picture_in_picture');
+  },
   setCookie(platform, cookie) {
     return call('set_cookie', { platform, cookie });
   },

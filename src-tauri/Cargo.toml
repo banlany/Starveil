@@ -30,6 +30,12 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "charset"] }
 
+# 屏幕方向要调 Activity.setRequestedOrientation，只能走 JNI；
+# `ndk-context` 由 Tauri 的 Android 启动流程初始化，拿得到 JavaVM 与 Activity。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+
 [profile.dev]
 opt-level = 1
 

@@ -1,0 +1,331 @@
+/* ============================================================
+   移动端布局（Android / iOS）
+   ------------------------------------------------------------
+   由 `<html class="is-mobile">` 激活（index.html 的 head 内联脚本在首帧前打标，
+   platform.js 会再确认一次）。桌面浏览器 / 桌面客户端不带这个类，
+   所以下面的规则一条都不会命中，桌面外观与行为完全不变。
+
+   三件事：
+   1. 去掉 Windows 那套自绘标题栏与边缘缩放热区；
+   2. 左侧 rail 改成底部 TabBar（拇指可达），顶部留状态栏、底部留手势条；
+   3. 直播间竖屏改上下分栏（视频在上、聊天在下），横屏保持左右分栏。
+   ============================================================ */
+
+html.is-mobile {
+  /* 系统状态栏 / 手势条的留白；viewport-fit=cover 已在 index.html 打开。 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --topbar-height: 54px;
+  --rail-width: 0px;
+}
+
+/* ------------------------------------------------------------ 桌面专属的窗口装饰 */
+
+html.is-mobile .titlebar,
+html.is-mobile .resize-handle {
+  display: none;
+}
+
+/* 移动端不需要「无边框窗口」那套 margin/padding 补偿。 */
+html.is-mobile body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  /* 触屏设备没有 hover，去掉悬停时的背景残留。 */
+  text-size-adjust: 100%;
+}
+
+/* ------------------------------------------------------------ 外壳：rail → 底部 TabBar */
+
+/* 用 order 而不是 column-reverse：body 里还有 overlay-root / toast-root，
+   反转整个 body 会把它们挪到上面去。 */
+html.is-mobile .app {
+  flex-direction: column;
+}
+
+html.is-mobile .main {
+  order: 1;
+  width: 100%;
+}
+
+html.is-mobile .rail {
+  order: 2;
+  width: 100%;
+  height: calc(58px + var(--safe-bottom));
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 0 6px var(--safe-bottom);
+  border-top: 1px solid var(--line);
+  background: var(--bg-elev);
+}
+
+html.is-mobile .rail-top {
+  flex: 4 1 auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: stretch;
+  gap: 0;
+}
+
+html.is-mobile .rail-bottom {
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: stretch;
+  gap: 0;
+}
+
+html.is-mobile .rail-btn {
+  /* 触控热区不小于 44px（Android 无障碍下限），图标本身保持原尺寸。
+     flex 均分让 5 个按钮等宽，不会出现「设置」和「月亮」之间空一截。 */
+  width: auto;
+  height: 48px;
+  min-width: 44px;
+  flex: 1 1 0;
+  border-radius: var(--radius);
+}
+
+html.is-mobile .rail-btn .ico {
+  width: 24px;
+  height: 24px;
+}
+
+html.is-mobile .rail-mini {
+  width: auto;
+  height: 46px;
+  flex: 1 1 0;
+}
+
+/* 触屏没有 hover，用 :active 给按下反馈。 */
+@media (hover: none) {
+  html.is-mobile .rail-btn:hover {
+    background: transparent;
+    color: var(--muted);
+  }
+
+  html.is-mobile .rail-btn.active:hover {
+    background: var(--surface-3);
+    color: var(--fg);
+  }
+}
+
+/* ------------------------------------------------------------ 顶栏 */
+
+html.is-mobile .topbar {
+  padding-top: var(--safe-top);
+  height: calc(var(--topbar-height) + var(--safe-top));
+  padding-left: 12px;
+  padding-right: 12px;
+  /* 五个平台的标签在 360px 宽的竖屏上放不下：让标签条自己横向滚动，
+     而不是被居中布局挤到两边溢出（右侧的搜索按钮是绝对定位，留出它的位置）。 */
+  justify-content: flex-start;
+  padding-right: 96px;
+}
+
+html.is-mobile .platform-tabs {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  /* 右侧渐隐，避免标签在搜索按钮前面被硬生生切断。 */
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+}
+
+html.is-mobile .platform-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+html.is-mobile .platform-tab {
+  padding: 0 10px;
+  font-size: 14px;
+  scroll-snap-align: center;
+}
+
+html.is-mobile .platform-tab.active::after {
+  left: 10px;
+  right: 10px;
+}
+
+html.is-mobile .icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
+/* ------------------------------------------------------------ 列表与卡片 */
+
+html.is-mobile .page-pad,
+html.is-mobile .settings-page,
+html.is-mobile .category-page,
+html.is-mobile .search-body,
+html.is-mobile .follow-toolbar,
+html.is-mobile .follow-grid,
+html.is-mobile .subpage-body {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+html.is-mobile .page-pad {
+  padding-bottom: calc(24px + var(--safe-bottom));
+}
+
+html.is-mobile .room-grid {
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 14px 10px;
+}
+
+html.is-mobile .settings-item,
+html.is-mobile .setting-row {
+  min-height: 52px;
+}
+
+html.is-mobile .setting-row.clickable:active {
+  background: var(--surface-2);
+}
+
+/* 弹层在窄屏上占满宽度，别再留 40px 边。 */
+html.is-mobile .modal,
+html.is-mobile .dialog {
+  max-width: calc(100vw - 24px);
+}
+
+/* ------------------------------------------------------------ 直播间 */
+
+html.is-mobile .room-page {
+  /* 状态栏区域铺黑，避免视频上方露白。 */
+  padding-top: var(--safe-top);
+}
+
+/* 横屏（平板/手机横过来）：底部 TabBar 会占掉一行，视频区让出空间即可，
+   其余保持桌面那套左右分栏。 */
+html.is-mobile .chat-resizer {
+  display: none;
+}
+
+@media (orientation: portrait) {
+  /* 竖屏：视频在上、聊天在下。16:9 的视频固定高度后，剩余空间全部给弹幕与聊天。 */
+  html.is-mobile .room-main {
+    flex-direction: column;
+  }
+
+  html.is-mobile .stage {
+    flex: 0 0 auto;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    /* 竖屏直播（9:16）时也留出足够的视频高度，不让画面缩成一条。 */
+    max-height: 52vh;
+  }
+
+  html.is-mobile .room-chat {
+    width: 100%;
+    flex: 1 1 auto;
+    border-left: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  /* 竖屏下顶部信息压一行，别把视频挤下去。 */
+  html.is-mobile .room-topbar {
+    min-height: 56px;
+    padding: 8px 12px 14px;
+    gap: 8px;
+  }
+
+  html.is-mobile .room-heading h1 {
+    font-size: 13.5px;
+  }
+
+  html.is-mobile .room-heading .room-sub {
+    font-size: 11.5px;
+  }
+
+  html.is-mobile .room-footer {
+    padding-bottom: var(--safe-bottom);
+    height: calc(46px + var(--safe-bottom));
+  }
+
+  /* 竖屏控制条放不下：画质、线路、时间、画中画都收进「更多」菜单
+     （room.js 的 showMoreMenu 用同一个判据决定菜单项，改这里要同步改那边）。 */
+  html.is-mobile .room-page #player-clock,
+  html.is-mobile .room-page #ctrl-quality,
+  html.is-mobile .room-page #ctrl-line,
+  html.is-mobile .room-page #ctrl-pip {
+    display: none;
+  }
+
+  html.is-mobile .room-page .player-controls {
+    gap: 2px;
+    padding: 6px 10px 8px;
+  }
+
+  html.is-mobile .room-page .player-controls .ctrl {
+    width: 40px;
+    height: 40px;
+  }
+
+  /* 音量条在窄屏上收窄，给其余按钮留位置。 */
+  html.is-mobile .room-page .volume-wrap input[type='range'] {
+    max-width: 64px;
+  }
+}
+
+/* 竖屏视频（9:16 这类直播）：视频按剩余空间自适应，不被 16:9 死锁。
+   由 room.js 在 playing 时按 videoWidth/videoHeight 打上 is-portrait-video。 */
+@media (orientation: portrait) {
+  html.is-mobile .room-page.is-portrait-video .stage {
+    aspect-ratio: auto;
+    height: 42vh;
+  }
+}
+
+/* 横屏（手机横过来）：屏幕很宽，列表页/设置页别把每行拉成一米长，
+   限宽居中后读起来才正常。直播间是左右分栏，不受影响。 */
+@media (orientation: landscape) {
+  html.is-mobile .page-pad,
+  html.is-mobile .settings-page,
+  html.is-mobile .settings-content,
+  html.is-mobile .subpage-body,
+  html.is-mobile .search-body,
+  html.is-mobile .follow-grid {
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/* ------------------------------------------------------------ 小窗（Android PiP） */
+/* 小窗里视口只有一两百像素：只留视频，其余 UI 全部收起。 */
+html.is-pip.is-mobile .rail,
+html.is-pip .room-footer,
+html.is-pip .room-chat,
+html.is-pip .room-topbar,
+html.is-pip .player-controls,
+html.is-pip .chat-expand,
+html.is-pip .stage-hint {
+  display: none !important;
+}
+
+html.is-pip .room-main,
+html.is-pip .room-page,
+html.is-pip .view,
+html.is-pip .app,
+html.is-pip .app-shell {
+  display: block !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+html.is-pip .stage {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  aspect-ratio: auto !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+}

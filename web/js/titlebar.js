@@ -4,6 +4,8 @@
 // 代价是 Windows 不再给 WS_THICKFRAME，所以四边和四角要自己放缩放热区。
 // 另外无边框窗口拿不到系统的贴边吸附（Aero Snap），需要吸附得自己实现。
 
+import { IS_MOBILE } from './platform.js';
+
 const windowApi = () => window.__TAURI__?.window;
 
 let appWindow = null;
@@ -11,7 +13,15 @@ let maximized = false;
 let wired = false;
 
 /// 浏览器演示模式（没有 Tauri）时，保留浏览器自己的窗口，不显示自绘标题栏。
+///
+/// 移动端（Android / iOS）也不注册：那边窗口由系统全屏管理，
+/// 最小化 / 最大化 / 关闭 / 边缘缩放都不存在，标题栏本身由 `<html class="is-mobile">`
+/// 在 CSS 里隐藏，这里提前返回还能省掉八块 resize 热区的事件绑定。
 export function initTitlebar() {
+  if (IS_MOBILE) {
+    document.body.classList.add('no-titlebar');
+    return;
+  }
   const api = windowApi();
   if (!api?.getCurrentWindow) {
     // 浏览器里没有窗口 API，默认隐藏标题栏；加 ?titlebar=1 可以只做视觉预览。

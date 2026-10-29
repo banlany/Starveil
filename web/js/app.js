@@ -22,6 +22,7 @@ import { renderSettings, renderSettingsDetail } from './pages/settings.js';
 import { renderRoom } from './pages/room.js';
 import { importData } from './importer.js';
 import { initTitlebar } from './titlebar.js';
+import { applyPlatformFlags, IS_MOBILE } from './platform.js';
 
 const view = document.getElementById('view');
 const rail = document.getElementById('rail');
@@ -53,6 +54,9 @@ let cleanup = null;
 let currentKey = '';
 const scrollPositions = new Map();
 let timerHandle = 0;
+// 定时关闭的到点时刻。房间「更多 → 定时关闭」要显示还剩多少分钟，
+// 只靠 setTimeout 拿不到剩余量，所以单独记一份；只在内存里，重启后重新计时。
+let timerDeadline = 0;
 // 首页把「刷新推荐」的动作注册到这里，顶栏那个按钮只负责触发。
 let homeRefreshHandler = null;
 
@@ -69,6 +73,8 @@ const ctx = {
   isFollowing: (platform, roomId) => isFollowing(platform, roomId),
   followFromCard,
   restartTimer,
+  sleepTimer: sleepTimerState,
+  setSleepTimer,
   setHomeRefresh(handler) {
     homeRefreshHandler = typeof handler === 'function' ? handler : null;
   },
@@ -350,8 +356,12 @@ function showDisclaimer() {
 function restartTimer() {
   clearTimeout(timerHandle);
   timerHandle = 0;
-  if (!state.settings.timer.enabled) return;
   const minutes = Math.max(1, Number(state.settings.timer.minutes) || 60);
+  if (!state.settings.timer.enabled) {
+    timerDeadline = 0;
+    return;
+  }
+  timerDeadline = Date.now() + minutes * 60 * 1000;
   timerHandle = setTimeout(() => {
     const once = Boolean(state.settings.timer.once);
     if (once) {
@@ -360,9 +370,29 @@ function restartTimer() {
       state.settings.timer.enabled = false;
       saveSettings();
     }
+    timerDeadline = 0;
     toast(once ? '定时关闭已生效，正在退出（下次启动不会再自动计时）' : '定时关闭时间到，正在退出…');
     setTimeout(() => api.quitApp().catch(() => window.close()), 900);
   }, minutes * 60 * 1000);
+}
+
+/// 定时关闭的实时状态。设置页与直播间「更多」菜单都读这一份，
+/// 两边的开关、分钟数、剩余时间永远是同一个数。
+function sleepTimerState() {
+  const minutes = Math.max(1, Number(state.settings.timer.minutes) || 60);
+  const remaining = timerDeadline > 0 ? Math.max(0, timerDeadline - Date.now()) : 0;
+  return { enabled: Boolean(state.settings.timer.enabled) && remaining > 0, minutes, remaining };
+}
+
+/// 设置/取消定时关闭（分钟；0 表示取消）。写的是同一份 settings，
+/// 所以设置页里的「启用定时关闭 / 自动关闭时间」会跟着变。
+function setSleepTimer(minutes) {
+  const value = Math.round(Number(minutes) || 0);
+  state.settings.timer.enabled = value > 0;
+  if (value > 0) state.settings.timer.minutes = Math.max(1, Math.min(720, value));
+  saveSettings();
+  restartTimer();
+  return sleepTimerState();
 }
 
 function initGlobalShortcuts() {
@@ -493,7 +523,16 @@ function debounceWindowSave() {
   windowSaveTimer = setTimeout(saveWindowState, 400);
 }
 
+/// 应用设置里的屏幕方向（`auto` / `portrait` / `landscape`）。
+/// 桌面端这个命令是空实现，所以两端共用同一份调用，不必到处判平台。
+function applyScreenOrientation() {
+  const mode = state.settings.appearance?.orientation || 'auto';
+  api.setScreenOrientation(mode).catch((error) => console.warn('设置屏幕方向失败', error));
+}
+
 async function setupWindowState() {
+  // 移动端窗口由系统全屏管理，记住尺寸没有意义（也没法恢复）。
+  if (IS_MOBILE) return;
   const tauri = window.__TAURI__?.window;
   if (!tauri?.getCurrentWindow) return;
   await restoreWindowState();
@@ -530,10 +569,15 @@ async function autoPullSync() {
 }
 
 function init() {
+  // 平台标记要在任何渲染之前落定：移动端隐藏自绘标题栏、侧栏改底部 TabBar
+  // 全靠 `<html class="is-mobile">` 这类选择器。
+  applyPlatformFlags();
   // 禁用 WebView 默认右键菜单，避免露出浏览器菜单/刷新等开发项。
   document.addEventListener('contextmenu', (event) => event.preventDefault());
   applyTheme();
   initTitlebar();
+  // 尽早应用上次选择的屏幕方向，减少启动时先按系统方向渲染再转过来的观感。
+  applyScreenOrientation();
   // 写一行运行日志，便于确认页面真的执行了（出问题时看 starveil.log）。
   window.__TAURI__?.core
     ?.invoke('frontend_log', { message: '页面已初始化，rail=' + document.querySelectorAll('.rail-btn').length })

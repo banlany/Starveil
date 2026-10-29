@@ -3,6 +3,7 @@ import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '.
 import { createDanmakuLayer, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
 import { signDouyinDanmaku } from '../douyin-sign.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
+import { IS_MOBILE } from '../platform.js';
 import {
   addWatchTime,
   DEFAULT_SETTINGS,
@@ -167,6 +168,8 @@ export function renderRoom(ctx, params = {}) {
     recentBlocked: 0,
     wakeBound: false,
     destroyed: false,
+    // 小窗（PiP）期间的退出探测定时器，见 setPipMode。
+    pipWatch: 0,
     danmakuEnabled: state.settings.danmaku.enabled !== false,
     follow: false,
     playerReady: false,
@@ -191,6 +194,12 @@ export function renderRoom(ctx, params = {}) {
     watchTimer: 0,
   };
   state.room = session;
+
+  // 竖屏（手机上竖着拿）控制条放不下：画质、线路、时间、画中画都收进「更多」。
+  // 这里只管「菜单里要不要出现这些项」，把它们从控制条上藏起来是 mobile.css 的事，
+  // 两边判据必须一致（都是「移动端 + 竖屏」）。
+  const portraitQuery = window.matchMedia('(orientation: portrait)');
+  const compactControls = () => IS_MOBILE && portraitQuery.matches;
 
   // ------------------------------------------------------------ 基础 UI
 
@@ -1047,26 +1056,26 @@ export function renderRoom(ctx, params = {}) {
     $('ctrl-line').innerHTML = `线路 ${session.lineIndex + 1}${suffix} ${icon('chevronUp', 13)}`;
   }
 
-  function showQualityMenu() {
+  function showQualityMenu(anchor = $('ctrl-quality'), placement = 'top') {
     if (!session.qualities.length) return;
-    openMenu($('ctrl-quality'), session.qualities.map((name, index) => ({
+    openMenu(anchor, session.qualities.map((name, index) => ({
       label: name,
       active: index === session.qualityIndex,
       onClick: () => selectQuality(index),
-    })), { align: 'end', placement: 'top' });
+    })), { align: 'end', placement });
   }
 
-  function showLineMenu() {
+  function showLineMenu(anchor = $('ctrl-line'), placement = 'top') {
     if (session.lines.length <= 1) {
       toast('当前只有一条线路');
       return;
     }
-    openMenu($('ctrl-line'), session.lines.map((line, index) => ({
+    openMenu(anchor, session.lines.map((line, index) => ({
       label: line.protocol === 'hls' ? `线路 ${index + 1} · HLS` : `线路 ${index + 1}`,
       value: line.url.includes('127.0.0.1') ? '' : shortHost(line.url),
       active: index === session.lineIndex,
       onClick: () => playLine(index),
-    })), { align: 'end', placement: 'top' });
+    })), { align: 'end', placement });
   }
 
   function shortHost(url) {
@@ -1084,6 +1093,31 @@ export function renderRoom(ctx, params = {}) {
     }
     setQualityLabel();
     refreshStream(false);
+  }
+
+  /// 设置里的「默认清晰度」落到当前平台的清晰度列表上。
+  ///
+  /// 各平台档位名字不统一（B 站 原画/蓝光/超清/高清/流畅，虎牙 蓝光20M/蓝光4M/超清…），
+  /// 所以按关键词从高到低匹配；匹配不到就退回平台默认档，而不是硬选最低档——
+  /// 用户选了「1080P 优先」，平台没这个叫法时给出平台默认的观感更合理。
+  function pickDefaultQuality(platform, huyaDefault) {
+    const fallback = platform === 'huya' && huyaDefault >= 0 ? huyaDefault : 0;
+    const mode = state.settings.player?.defaultQuality || 'auto';
+    const list = session.qualities;
+    if (!list.length) return 0;
+    if (mode === 'auto') return fallback;
+    if (mode === 'highest') return 0;
+    if (mode === 'lowest') return list.length - 1;
+    const keywords = {
+      // 键名与设置页的 valueMap 保持一致（不能是纯数字，见那边的注释）。
+      fullhd: ['1080', '超清', '蓝光', '原画'],
+      hd: ['720', '高清'],
+      sd: ['480', '标清', '流畅'],
+      smooth: ['流畅', '极速', '标清'],
+    }[mode];
+    if (!keywords) return fallback;
+    const index = list.findIndex((name) => keywords.some((word) => String(name).includes(word)));
+    return index >= 0 ? index : fallback;
   }
 
   function destroyPlayer() {
@@ -1394,6 +1428,24 @@ export function renderRoom(ctx, params = {}) {
   }
 
   async function togglePip() {
+    if (IS_MOBILE) {
+      // Android WebView 不实现 HTML5 画中画（requestPictureInPicture 直接 reject），
+      // 只能让系统把小窗浮起来：Activity 级 PiP，整个应用缩成小窗。
+      try {
+        const entered = await api.enterPictureInPicture();
+        if (entered) {
+          setPipMode(true);
+          // 小窗里视频要接着放：系统暂停过一次的话这里补一次 play。
+          video.play().catch(() => {});
+          toast('已进入小窗，返回键可退出', 'info', 3000);
+        } else {
+          toast('当前系统不支持小窗播放（需要 Android 8.0 及以上）');
+        }
+      } catch (error) {
+        toast(`小窗播放失败：${error}`);
+      }
+      return;
+    }
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
@@ -1405,6 +1457,32 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  /// 小窗（PiP）模式：整个应用被缩成一个小窗口，聊天栏、底栏、控制条统统收起，
+  /// 只留视频铺满——否则 192×108 的窗口里全是零碎的 UI。
+  ///
+  /// 退出小窗时系统不会再通知一次（WebView 一直是「可见」的），所以每秒问一次
+  /// 系统还进不进去；退出后把布局还原，播放不受影响。
+  function setPipMode(active) {
+    document.documentElement.classList.toggle('is-pip', active);
+    page.classList.toggle('is-pip', active);
+    clearInterval(session.pipWatch);
+    session.pipWatch = 0;
+    if (!active) return;
+    session.pipWatch = setInterval(async () => {
+      if (session.destroyed) {
+        clearInterval(session.pipWatch);
+        session.pipWatch = 0;
+        return;
+      }
+      try {
+        const stillPip = await api.inPictureInPicture();
+        if (!stillPip) setPipMode(false);
+      } catch {
+        /* 查询失败就保持现状，下一轮再试 */
+      }
+    }, 1000);
+  }
+
   video.addEventListener('playing', () => {
     setHint(null);
     updatePlayIcon();
@@ -1412,6 +1490,9 @@ export function renderRoom(ctx, params = {}) {
     session.playStartedAt = Date.now();
     session.lastProgressTime = video.currentTime;
     session.lastProgressAt = Date.now();
+    // 竖屏直播（9:16）和横屏直播的容器高度不一样：竖屏让视频区更高一些，
+    // 横屏保持 16:9，避免宽画面上下留出两条大黑边。
+    page.classList.toggle('is-portrait-video', video.videoHeight > video.videoWidth);
     // 真正出画了才开始计观看时长。
     startWatchClock();
     setTimeout(() => {
@@ -1569,8 +1650,77 @@ export function renderRoom(ctx, params = {}) {
     copyText(url, '直播流地址已复制');
   }
 
+  /// 定时关闭在菜单上的文案：开关状态跟「设置 → 定时关闭」是同一份数据，
+  /// 所以这里读的是 app.js 那套计时器的实时剩余量，不是另存一份。
+  function sleepTimerItem() {
+    const info = ctx.sleepTimer?.() || { enabled: false, minutes: 0, remaining: 0 };
+    const minutes = Math.ceil(info.remaining / 60000);
+    return {
+      label: '定时关闭',
+      icon: 'timer',
+      value: info.enabled ? `${minutes} 分钟后退出` : '',
+      active: info.enabled,
+      onClick: () => showSleepTimerMenu(),
+    };
+  }
+
+  function showSleepTimerMenu() {
+    const anchor = $('room-more');
+    const info = ctx.sleepTimer?.() || { enabled: false, minutes: 60, remaining: 0 };
+    const remaining = Math.ceil(info.remaining / 60000);
+    const items = [15, 30, 60, 120].map((minutes) => {
+      const active = info.enabled && info.minutes === minutes;
+      return {
+        label: `${minutes} 分钟后关闭`,
+        active,
+        value: active ? `剩 ${remaining} 分钟` : '',
+        onClick: () => applySleepTimer(minutes),
+      };
+    });
+    if (info.enabled) {
+      items.push({ separator: true });
+      items.push({ label: '取消定时关闭', icon: 'close', onClick: () => applySleepTimer(0) });
+    }
+    items.push({ separator: true });
+    items.push({ label: '与「设置 → 定时关闭」同步', icon: 'info' });
+    openMenu(anchor, items, { align: 'end', placement: 'bottom' });
+  }
+
+  function applySleepTimer(minutes) {
+    ctx.setSleepTimer?.(minutes);
+    if (minutes > 0) {
+      toast(`将在 ${minutes} 分钟后关闭应用`, 'info', 4000);
+    } else {
+      toast('已取消定时关闭');
+    }
+  }
+
   function showMoreMenu() {
-    openMenu($('room-more'), [
+    const anchor = $('room-more');
+    const items = [];
+    // 竖屏下控制条上不放画质/线路/时间/画中画，改从这里进。
+    if (compactControls()) {
+      const quality = session.qualities[session.qualityIndex];
+      items.push({
+        label: '清晰度',
+        icon: 'signal',
+        value: quality || '',
+        onClick: () => showQualityMenu(anchor, 'bottom'),
+      });
+      if (session.lines.length > 1) {
+        items.push({
+          label: '线路',
+          icon: 'sync',
+          value: `${session.lineIndex + 1} / ${session.lines.length}`,
+          onClick: () => showLineMenu(anchor, 'bottom'),
+        });
+      }
+      items.push({ label: '小窗播放', icon: 'screen', onClick: togglePip });
+      items.push({ separator: true });
+    }
+    items.push(
+      sleepTimerItem(),
+      { separator: true },
       { label: '刷新直播流', icon: 'refresh', onClick: () => manualRefreshStream() },
       { label: '在浏览器打开', icon: 'link', onClick: () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)) },
       { label: '复制直播流', icon: 'copy', onClick: copyStream },
@@ -1578,7 +1728,8 @@ export function renderRoom(ctx, params = {}) {
       { separator: true },
       { label: '房间信息', icon: 'info', onClick: showRoomInfo },
       { label: '播放统计', icon: 'signal', onClick: showPlaybackStats },
-    ]);
+    );
+    openMenu(anchor, items);
   }
 
   /// 播放统计：清晰度 / 线路 / 分辨率、缓冲与播放状态、已解码与丢帧。
@@ -1662,6 +1813,9 @@ export function renderRoom(ctx, params = {}) {
   function showRoomInfo() {
     const detail = session.detail;
     if (!detail) return;
+    // 竖屏下左下角的直播时长会被收起来，所以这里也补一行，信息不至于找不着。
+    const startedAt = Number(detail.live_start_time) > 0 ? Number(detail.live_start_time) * 1000 : 0;
+    const liveDuration = startedAt ? formatDuration(Date.now() - startedAt) : '未提供';
     openModal({
       title: '房间信息',
       width: 520,
@@ -1673,6 +1827,7 @@ export function renderRoom(ctx, params = {}) {
           <div><span>分区</span><b>${escapeHtml(detail.area || '未提供')}</b></div>
           <div><span>人气</span><b>${formatOnline(detail.online)}</b></div>
           <div><span>状态</span><b>${detail.live ? '直播中' : '未开播'}</b></div>
+          <div><span>已直播</span><b>${escapeHtml(liveDuration)}</b></div>
           <div><span>直播流</span><b>${session.lines.length} 条线路 / ${session.qualities.length} 档清晰度</b></div>
         </div>`,
       actions: [{ label: '关闭', kind: 'primary' }],
@@ -1857,7 +2012,7 @@ export function renderRoom(ctx, params = {}) {
       const remembered = Number(localStorage.getItem(`${QUALITY_KEY}${detailPlatform}`));
       // 虎牙 4K/20M 对带宽要求高，首次进入默认选蓝光4M，避免一上来就频繁缓冲。
       const huyaDefault = session.qualities.findIndex((name) => name.includes('4M'));
-      const defaultQuality = detailPlatform === 'huya' && huyaDefault >= 0 ? huyaDefault : 0;
+      const defaultQuality = pickDefaultQuality(detailPlatform, huyaDefault);
       session.qualityIndex =
         state.settings.player.rememberQuality &&
         Number.isInteger(remembered) &&
@@ -2068,6 +2223,12 @@ export function renderRoom(ctx, params = {}) {
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
     clearInterval(session.scSweep);
+    if (session.pipWatch) {
+      clearInterval(session.pipWatch);
+      session.pipWatch = 0;
+    }
+    document.documentElement.classList.remove('is-pip');
+    page.classList.remove('is-pip');
     danmaku?.destroy();
     session.resizerCleanup?.();
     session.resizerCleanup = null;

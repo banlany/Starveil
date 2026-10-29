@@ -2,14 +2,32 @@
 <html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="referrer" content="no-referrer" />
   <meta name="color-scheme" content="dark light" />
   <title>星幕直播 · Starveil</title>
   <link rel="icon" href="assets/logo.png" />
+  <!-- 首帧前先判定平台：移动端没有自绘标题栏、侧栏要挪到底部，
+       等 app.js 执行再切会先闪一下桌面布局。 -->
+  <script>
+    (function () {
+      var ua = navigator.userAgent || '';
+      var android = /Android/i.test(ua);
+      var ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+      var root = document.documentElement;
+      if (android || ios) {
+        root.classList.add('is-mobile');
+        root.dataset.platform = android ? 'android' : 'ios';
+      } else {
+        root.dataset.platform = 'desktop';
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="pages.css" />
   <link rel="stylesheet" href="room.css" />
+  <!-- 移动端覆盖层：只在 <html class="is-mobile"> 下生效，桌面不受影响 -->
+  <link rel="stylesheet" href="mobile.css" />
 </head>
 <body>
   <!-- 自绘标题栏：跟随主题色，关闭按钮悬停变红；拖动区交给系统处理窗口移动

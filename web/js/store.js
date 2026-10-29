@@ -70,10 +70,15 @@ export const DEFAULT_SETTINGS = {
     accent: '#fb7299',
     dynamicColor: false,
     density: 'comfortable',
+    // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
+    orientation: 'auto',
   },
   player: {
     autoFullscreen: false,
     rememberQuality: true,
+    // 没记住清晰度时用哪一档：auto 跟随平台、highest 最高、也可按 1080/720/480/流畅 优先。
+    // 「记住清晰度」开着时以记住的为准（那才是用户上一次的真实选择）。
+    defaultQuality: 'auto',
     hardwareDecode: true,
     muteOnStart: false,
     autoSwitchLine: true,

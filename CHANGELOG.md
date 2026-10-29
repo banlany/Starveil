@@ -7,6 +7,52 @@
 
 ---
 
+## 0.6.0（开发中，分支 `android`）
+
+目标是把桌面版搬到安卓手机与平板。已完成的阶段 0（可行性验证）结论见 `a_test/REPORT.md`：
+**播放器不用换**，mpegts.js 播 FLV、hls.js 播 m3u8 在 Android WebView 101/133 上都能出画。
+本版目前完成的是「能装能跑 + 移动端外壳与竖屏布局」。
+
+### 功能新增
+
+- **安卓工程**：`cargo tauri android init` 生成的工程入库（`src-tauri/gen/android`），
+  包名 `com.banlany.starveil`、minSdk 24、compileSdk 34。
+  `main.rs` 拆成 `lib.rs`（`run()` + `mobile_entry_point`），TLS 后端按平台分流
+  （桌面 native-tls、移动 rustls），WebView2 相关代码全部 `#[cfg(windows)]`。
+- **移动端布局**（`web/mobile.css`，全部挂在 `html.is-mobile` 下）：
+  去掉自绘标题栏与缩放热区、左侧 rail 改底部 TabBar（44px 热区）、竖屏直播间改上下分栏、
+  顶栏平台标签改为横向滚动（带右侧渐隐）、横屏列表页限宽居中、安全区留白。
+- **屏幕方向设置**：外观设置里新增「自动 / 固定竖屏 / 固定横屏」，
+  走 `set_screen_orientation` 命令，Android 侧由 `MainActivity` 的 `setOrientation` 桥接
+  （`requestedOrientation`），桌面是空实现。
+- **小窗播放（Android PiP）**：直播间「更多 → 小窗播放」把应用缩成系统小窗。
+  WebView 不实现 HTML5 画中画，所以走 Activity 级 PiP；进小窗后页面会自动切成
+  「只留视频」的布局，退出时轮询 `in_picture_in_picture` 还原。
+- **直播间「更多」菜单**扩展：竖屏下清晰度、线路、小窗播放都收进这个菜单
+  （控制条上只留音量、弹幕、设置、全屏）；所有平台都加了**定时关闭**
+  （15/30/60/120 分钟，可取消），与「设置 → 定时关闭」是同一份开关和计时。
+- **默认清晰度**：播放页设置新增「跟随平台 / 最高 / 1080P / 720P / 480P / 流畅」，
+  按关键词匹配各平台的档位名（B 站 原画/蓝光/超清/高清/流畅，虎牙 蓝光20M/蓝光4M…），
+  匹配不到就回到平台默认档。改这个设置会清掉各平台「记住的清晰度」，否则新设置看起来没生效。
+- 播放统计里补了「已直播」时长（竖屏下左下角的时钟被收进「更多」，信息不至于找不着）。
+
+### 缺陷修复
+
+- **Android 上切换「固定横屏」会直接退出应用**：`ndk_context::android_context().context()`
+  给的是 **Application**，对它调 `setRequestedOrientation` 抛 NoSuchMethodError，
+  jni crate 在有待处理异常时再取 class 就 panic，跨 FFI 的 panic 直接把进程 abort 掉。
+  现在改成从 Application 的 ClassLoader 里取出 `MainActivity`、调它自己的静态方法，
+  外面再套一层 `catch_unwind` 兜底。
+- **小窗里视频停住**：父类 `WryActivity.onPause()` 会调 `webView.onPause()`，把页面标成 hidden。
+  现在 `MainActivity.onPause()` 照常走完 super（否则抛 `SuperNotCalledException`），
+  再把视图树里找到的 WebView `onResume()` 回来。
+- **竖屏 16:9 直播上下留黑边**：原先靠 `min-aspect-ratio: 1/2` 给所有竖屏视频都用 42vh 高度，
+  横屏内容也被撑成方框。现在 `playing` 时按 `videoWidth/videoHeight` 打 `is-portrait-video`，
+  只有竖屏直播才用高容器。
+- 状态栏/导航栏颜色改为应用的深色底（`themes.xml` + `colors.xml`），不再露出 MaterialComponents 的紫色。
+
+---
+
 ## 0.5.0
 
 这一版按 ToDo 的四项推进：抖音/快手取流、弹幕发送、许可与致谢、HLS 线路；
