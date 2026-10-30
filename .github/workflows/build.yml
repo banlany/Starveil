@@ -155,23 +155,33 @@ jobs:
           path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
           key: ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
 
-      # 只负责装命令行工具、设 ANDROID_SDK_ROOT/ANDROID_HOME 并接受 license。
-      # **不要用它的 `packages` 入参**：那个参数是按空格切分的，写成多行会被当成
-      # 一个包名，报 `Failed to find package 'platform-tools\nplatforms;android-34…'`。
-      - name: 准备 Android 命令行工具
-        uses: android-actions/setup-android@v3
-
+      # 不用 android-actions/setup-android@v3：
+      #   1) 它 `packages` 的默认值就是 `tools`，而新 SDK 仓库里已经没有这个包，
+      #      什么都不传也会报 `Failed to find package 'tools'` 整步失败；
+      #   2) 传了的话它是按**空格**切分的，写成 YAML 多行会被当成一个包名。
+      # 镜像本来就带 cmdline-tools，直接找它的 sdkmanager 用，少一层依赖。
       - name: 安装 Android SDK 与 NDK
         run: |
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          if ! command -v sdkmanager >/dev/null 2>&1; then
-            echo "::error::sdkmanager 不在 PATH 里，setup-android 那步可能没生效"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+
+          # 目录名是版本号（最近成了 `16.0`，以前是 `latest`），挨个试比写死稳。
+          SDKMANAGER=""
+          for cand in "$SDK/cmdline-tools/latest/bin/sdkmanager" "$SDK"/cmdline-tools/*/bin/sdkmanager; do
+            if [ -x "$cand" ]; then SDKMANAGER="$cand"; fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::没找到 sdkmanager，SDK 目录内容："
+            ls -R "$SDK/cmdline-tools" || true
             exit 1
           fi
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "sdkmanager: $SDKMANAGER"
           # 包名按「一个参数一个包」传，别拼成字符串。
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install \
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
