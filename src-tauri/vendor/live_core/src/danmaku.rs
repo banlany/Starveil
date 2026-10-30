@@ -2,7 +2,7 @@
 //!
 //! 三站三套协议，这里把它们收敛成一个 `Receiver<DanmakuMessage>`：
 //! - 哔哩哔哩：WebSocket + 16 字节头，正文 JSON，ver=2 走 zlib、ver=3 走 brotli
-//! - 斗鱼：WebSocket + 12 字节头，正文是 STT 文本
+//! - 斗鱼：8601 明文 TCP（裸 STT，12 字节头）；桌面另有 wss 兜底
 //! - 虎牙：WebSocket + Tars 编码
 //!
 //! 只读不写：本项目不实现发送弹幕。
@@ -718,67 +718,78 @@ fn bilibili_extract_color(info: &[serde_json::Value]) -> Option<u32> {
 
 // ---------------------------------------------------------------- 斗鱼
 
+/// 斗鱼弹幕主机。8501~8506 是 wss，8601 是老式明文 STT。
+const DOUYU_HOST: &str = "danmuproxy.douyu.com";
+/// 明文 STT 端口。
+///
+/// 为什么优先走它：斗鱼的 wss **只支持静态 RSA 密钥交换**
+/// （`TLS_RSA_WITH_AES_256_GCM_SHA384`，实测只给 ECDHE 套件时服务端直接
+/// `handshake failure`），而 rustls 从设计上不实现静态 RSA（只做 ECDHE），
+/// 于是 Android / iOS 用 rustls 时握手必失败。桌面之所以一直能用，只是因为
+/// Windows 的 SChannel 支持静态 RSA。8601 是裸 TCP，三端一致，绕开这个死结。
+const DOUYU_PLAIN_PORT: u16 = 8601;
+/// 单个 STT 帧的上限。帧头是 4 字节长度，脏数据能声明到 4GB，
+/// 不设上限的话一个坏包就能把内存吃穿。
+const DOUYU_MAX_FRAME: usize = 256 * 1024;
+
 fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, status: &StatusSink, stop: &AtomicBool) {
     ensure_crypto_provider();
     let RoomExtra::Douyu { rid } = extra else {
         status.unsupported("斗鱼弹幕参数缺失，已跳过弹幕");
         return;
     };
-    let host = "danmuproxy.douyu.com";
-    // 端口 8501~8506 轮着试；退避与失败计数单独维护，连上就重置。
+    // wss 的端口轮换（8501~8506）单独维护；明文口只有一个。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let mut attempt = 0u16;
     let mut backoff = RECONNECT_MIN;
     let mut failures = 0u32;
     status.connecting("正在连接斗鱼弹幕服务器…");
     while !stop.load(Ordering::Relaxed) {
-        let port = 8501 + attempt % 6;
-        attempt = attempt.wrapping_add(1);
-        match douyu_connect(host, port) {
-            Ok(mut socket) => {
+        // 第一顺位：8601 明文 STT。
+        match douyu_plain_connect(DOUYU_HOST, DOUYU_PLAIN_PORT) {
+            Ok(socket) => {
                 backoff = RECONNECT_MIN;
                 failures = 0;
                 status.connected("斗鱼弹幕已连接");
-                let _ = socket.send(tungstenite::Message::Binary(
-                    douyu_packet(&format!("type@=loginreq/roomid@={rid}/")).into(),
-                ));
-                let _ = socket.send(tungstenite::Message::Binary(
-                    douyu_packet(&format!("type@=joingroup/rid@={rid}/gid@=-9999/")).into(),
-                ));
-
-                let mut last_heartbeat = std::time::Instant::now();
-                loop {
-                    if stop.load(Ordering::Relaxed) {
-                        let _ = socket.close(None);
-                        return;
-                    }
-                    if last_heartbeat.elapsed() >= Duration::from_secs(40) {
-                        let _ = socket.send(tungstenite::Message::Binary(
-                            douyu_packet("type@=mrkl/").into(),
-                        ));
-                        last_heartbeat = std::time::Instant::now();
-                    }
-
-                    match socket.read() {
-                        Ok(tungstenite::Message::Binary(data)) => douyu_handle(&data, tx),
-                        Ok(tungstenite::Message::Close(_)) => break,
-                        Ok(_) => {}
-                        Err(tungstenite::Error::Io(error))
-                            if matches!(
-                                error.kind(),
-                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                            ) => {}
-                        Err(_) => break,
-                    }
-                }
+                douyu_plain_session(socket, &rid, tx, stop);
                 failures += 1;
-                if !stop.load(Ordering::Relaxed) && failures == 1 {
+                if !stop.load(Ordering::Relaxed) {
                     status.connecting("斗鱼弹幕已断开，正在重连…");
                 }
             }
-            Err(error) => {
+            Err(plain_error) => {
                 failures += 1;
-                if should_report(failures) {
-                    status.failed(format!("斗鱼弹幕连接失败：{error}"));
+                // 第二顺位：wss。只有桌面能做——移动端没有支持静态 RSA 的 TLS 后端，
+                // 那条路在手机上永远握手失败，不如省下这六次无谓的尝试。
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    let port = 8501 + attempt % 6;
+                    attempt = attempt.wrapping_add(1);
+                    match douyu_connect(DOUYU_HOST, port) {
+                        Ok(socket) => {
+                            backoff = RECONNECT_MIN;
+                            failures = 0;
+                            status.connected("斗鱼弹幕已连接");
+                            douyu_ws_session(socket, &rid, tx, stop);
+                            failures += 1;
+                            if !stop.load(Ordering::Relaxed) {
+                                status.connecting("斗鱼弹幕已断开，正在重连…");
+                            }
+                        }
+                        Err(ws_error) => {
+                            if should_report(failures) {
+                                status.failed(format!(
+                                    "斗鱼弹幕连接失败：8601 明文口 {plain_error}；wss {port} 口 {ws_error}"
+                                ));
+                            }
+                        }
+                    }
+                }
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                {
+                    if should_report(failures) {
+                        status.failed(format!("斗鱼弹幕连接失败：{plain_error}"));
+                    }
                 }
             }
         }
@@ -789,7 +800,130 @@ fn run_douyu(extra: &RoomExtra, tx: &Sender<DanmakuMessage>, status: &StatusSink
     }
 }
 
-/// 斗鱼的弹幕服务器只接受系统 TLS（rustls 的套件协商会被拒），
+/// 8601 明文 STT：裸 TCP，只设读超时（让循环有机会看停止标志）。
+fn douyu_plain_connect(
+    host: &str,
+    port: u16,
+) -> Result<std::net::TcpStream, Box<dyn std::error::Error>> {
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let address = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or("无法解析斗鱼弹幕域名")?;
+    let tcp = TcpStream::connect(address)?;
+    tcp.set_read_timeout(Some(Duration::from_millis(600)))?;
+    tcp.set_nodelay(true).ok();
+    Ok(tcp)
+}
+
+/// 明文会话：登录 + 进房，然后按 4 字节长度前缀切帧。
+///
+/// 与 wss 那条路的区别只在传输层——帧内容、心跳、解析全部复用
+/// （`douyu_packet` / `douyu_handle`），所以两边的行为是一致的。
+fn douyu_plain_session(
+    mut socket: std::net::TcpStream,
+    rid: &str,
+    tx: &Sender<DanmakuMessage>,
+    stop: &AtomicBool,
+) {
+    use std::io::{Read, Write};
+
+    let _ = socket.write_all(&douyu_packet(&format!("type@=loginreq/roomid@={rid}/")));
+    let _ = socket.write_all(&douyu_packet(&format!("type@=joingroup/rid@={rid}/gid@=-9999/")));
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 4096];
+    let mut last_heartbeat = std::time::Instant::now();
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        if last_heartbeat.elapsed() >= Duration::from_secs(40) {
+            let _ = socket.write_all(&douyu_packet("type@=mrkl/"));
+            last_heartbeat = std::time::Instant::now();
+        }
+        match socket.read(&mut chunk) {
+            // 对端关闭
+            Ok(0) => return,
+            Ok(read) => {
+                buffer.extend_from_slice(&chunk[..read]);
+                douyu_drain_frames(&mut buffer, tx);
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return,
+        }
+    }
+}
+
+/// 从缓冲区里按「4 字节小端长度 + 帧体」切成一条条 STT 帧交给解析。
+///
+/// 长度字段声明的是「帧体 + 9」，所以整帧是 `declared + 4` 字节。
+/// 半包留在缓冲区等下次读，坏包（长度离谱）直接丢弃。
+fn douyu_drain_frames(buffer: &mut Vec<u8>, tx: &Sender<DanmakuMessage>) {
+    loop {
+        if buffer.len() < 4 {
+            return;
+        }
+        let declared = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        if declared < 9 || declared + 4 > DOUYU_MAX_FRAME {
+            buffer.clear();
+            return;
+        }
+        let total = declared + 4;
+        if buffer.len() < total {
+            return;
+        }
+        douyu_handle(&buffer[..total], tx);
+        buffer.drain(..total);
+    }
+}
+
+/// wss 会话（桌面兜底）。协议与明文那条完全一致，只是多了一层 WebSocket 消息边界。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn douyu_ws_session(
+    mut socket: tungstenite::WebSocket<native_tls::TlsStream<std::net::TcpStream>>,
+    rid: &str,
+    tx: &Sender<DanmakuMessage>,
+    stop: &AtomicBool,
+) {
+    let _ = socket.send(tungstenite::Message::Binary(
+        douyu_packet(&format!("type@=loginreq/roomid@={rid}/")).into(),
+    ));
+    let _ = socket.send(tungstenite::Message::Binary(
+        douyu_packet(&format!("type@=joingroup/rid@={rid}/gid@=-9999/")).into(),
+    ));
+
+    let mut last_heartbeat = std::time::Instant::now();
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            let _ = socket.close(None);
+            return;
+        }
+        if last_heartbeat.elapsed() >= Duration::from_secs(40) {
+            let _ = socket.send(tungstenite::Message::Binary(douyu_packet("type@=mrkl/").into()));
+            last_heartbeat = std::time::Instant::now();
+        }
+
+        match socket.read() {
+            Ok(tungstenite::Message::Binary(data)) => douyu_handle(&data, tx),
+            Ok(tungstenite::Message::Close(_)) => return,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return,
+        }
+    }
+}
+
+/// 桌面兜底用的 wss 连接：斗鱼只认系统 TLS（静态 RSA 套件），
 /// 所以这里用 Schannel / Secure Transport 自己包一层，再做 WebSocket 升级。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn douyu_connect(
@@ -813,23 +947,6 @@ fn douyu_connect(
     let (socket, _response) =
         tungstenite::client::client(format!("wss://{host}:{port}/"), tls)?;
     Ok(socket)
-}
-
-/// Android/iOS 没有 SChannel 这类系统 TLS 后端，而斗鱼服务器**拒绝 rustls**
-/// （0.6.0 阶段 0 在 AVD 与 MuMu 两个样本上实测均为 `HandshakeFailure`），
-/// 所以移动端只能如实失败，不做「假装连上再无限重连」的无效尝试。
-///
-/// 返回类型里用 `TcpStream` 只是为了让调用处的代码保持同一份（永不返回 `Ok`）。
-/// 要真正支持，只能走 JNI 用系统的 Conscrypt，或交叉编译 OpenSSL 给 native-tls。
-#[cfg(any(target_os = "android", target_os = "ios"))]
-fn douyu_connect(
-    _host: &str,
-    _port: u16,
-) -> Result<
-    tungstenite::WebSocket<std::net::TcpStream>,
-    Box<dyn std::error::Error>,
-> {
-    Err("斗鱼弹幕在移动端不可用：服务器只接受系统 TLS（rustls 会被拒绝）".into())
 }
 
 fn douyu_packet(body: &str) -> Vec<u8> {
@@ -998,6 +1115,50 @@ mod tests {
         assert_eq!(messages[0].user, "测试用户");
         assert_eq!(messages[0].text, "你好世界");
         assert_eq!(messages[0].color, Some(0xFF0000));
+    }
+
+    #[test]
+    fn 斗鱼明文流能按长度切出多条弹幕() {
+        // 8601 是连续字节流，一次 read 里可能躺着好几帧，得按 4 字节长度切开。
+        let mut stream = douyu_packet("type@=chatmsg/nn@=甲/txt@=第一条/");
+        stream.extend_from_slice(&douyu_packet("type@=chatmsg/nn@=乙/txt@=第二条/"));
+        stream.extend_from_slice(&douyu_packet("type@=loginres/userid@=0/"));
+
+        let (tx, rx) = channel();
+        let mut buffer = stream;
+        douyu_drain_frames(&mut buffer, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, "第一条");
+        assert_eq!(messages[1].user, "乙");
+        assert!(buffer.is_empty(), "整包喂进去应该被全部消费");
+    }
+
+    #[test]
+    fn 斗鱼明文流半包要等下一次读取() {
+        let frame = douyu_packet("type@=chatmsg/nn@=甲/txt@=半包/");
+        let cut = frame.len() / 2;
+        let (tx, rx) = channel();
+        let mut buffer = frame[..cut].to_vec();
+        douyu_drain_frames(&mut buffer, &tx);
+        assert_eq!(rx.try_iter().count(), 0, "不完整的帧不该被解析");
+
+        buffer.extend_from_slice(&frame[cut..]);
+        douyu_drain_frames(&mut buffer, &tx);
+        let messages: Vec<_> = rx.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "半包");
+    }
+
+    #[test]
+    fn 斗鱼明文流遇到坏长度丢包而不是崩() {
+        // 脏数据能把长度声明到 4GB，不设上限就会一直等一个永远读不满的帧。
+        let (tx, rx) = channel();
+        let mut buffer = 0xFFFF_FFFFu32.to_le_bytes().to_vec();
+        buffer.extend_from_slice(b"garbage");
+        douyu_drain_frames(&mut buffer, &tx);
+        assert!(buffer.is_empty(), "坏包应该被整块丢弃");
+        assert_eq!(rx.try_iter().count(), 0);
     }
 
     #[test]
