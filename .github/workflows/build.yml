@@ -174,8 +174,10 @@ jobs:
 
       # 用 npm 的预编译二进制：linux 上 `cargo install tauri-cli` 要现场编译好几分钟。
       # 命令名是 `tauri`（不是 `cargo tauri`），子命令完全相同。
+      # 版本钉死成本地验证过的 2.6.2：`@^2` 会装到最新版，而 gen/android 工程是
+      # 2.6.2 生成的，新版 CLI 有可能改 gradle 任务或参数名，本地能过、CI 报错最难查。
       - name: 安装 tauri-cli
-        run: npm install -g @tauri-apps/cli@^2
+        run: npm install -g @tauri-apps/cli@2.6.2
 
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
