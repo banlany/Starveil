@@ -35,9 +35,11 @@ jobs:
 
       # 直接从 crates.io 装 tauri-cli（它提供的命令就是 `cargo tauri`）。
       # 不用 taiki-e/install-action：它的 cargo-binstall 回退常被 GitHub API 限流而失败。
+      # 版本与安卓 job 一起钉在 2.6.2：`^2` 每次跑都可能装到不同的最新版，
+      # 出问题时没法判断是代码坏了还是 CLI 换了行为。
       - name: 安装 cargo-tauri
         shell: bash
-        run: cargo install tauri-cli --version "^2" --locked
+        run: cargo install tauri-cli --version "2.6.2" --locked
 
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
@@ -198,12 +200,28 @@ jobs:
           toolchain: "1.95.0"
           targets: aarch64-linux-android
 
-      # 用 npm 的预编译二进制：linux 上 `cargo install tauri-cli` 要现场编译好几分钟。
-      # 命令名是 `tauri`（不是 `cargo tauri`），子命令完全相同。
+      # 用 npm 的预编译二进制：linux 上 `cargo install tauri-cli` 要现场编译十几分钟。
       # 版本钉死成本地验证过的 2.6.2：`@^2` 会装到最新版，而 gen/android 工程是
       # 2.6.2 生成的，新版 CLI 有可能改 gradle 任务或参数名，本地能过、CI 报错最难查。
       - name: 安装 tauri-cli
         run: npm install -g @tauri-apps/cli@2.6.2
+
+      # gradle 的 `rustBuild<Abi><Profile>` 任务（buildSrc 的 BuildTask.kt）是写死
+      # `cargo tauri android android-studio-script` 的，靠它把 Rust 编出来并 symlink
+      # 到 jniLibs。而 npm 装的只有 `tauri` 这**一个**可执行文件，没有 cargo 子命令，
+      # 于是这一步报 `error: no such command: 'tauri'`，exit 101。
+      # 两条路：`cargo install tauri-cli`（现场编译十几分钟）或放个转发脚本。
+      # 选后者——npm 版与 cargo 版是同一个 CLI 的同一版本，转发过去行为一致；
+      # 而且不用为它再维护一份几百 MB 的构建缓存。
+      - name: 让 cargo 认得 tauri 子命令
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cargo-bin"
+          printf '#!/bin/sh\nexec tauri "$@"\n' > "$RUNNER_TEMP/cargo-bin/cargo-tauri"
+          chmod +x "$RUNNER_TEMP/cargo-bin/cargo-tauri"
+          echo "$RUNNER_TEMP/cargo-bin" >> "$GITHUB_PATH"
+          # GITHUB_PATH 只对后续步骤生效，这里临时挂上去当场验一遍
+          PATH="$RUNNER_TEMP/cargo-bin:$PATH" cargo tauri --version
 
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
