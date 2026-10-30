@@ -66,6 +66,11 @@ ToDo.md
 !docs/img/**
 !web/assets/**
 !src-tauri/icons/**
+# 安卓启动图标：AndroidManifest 里 `android:icon="@mipmap/ic_launcher"` 是硬引用，
+# 少了这几张图 aapt2 会在 `:app:processReleaseResources` 报
+# `resource mipmap/ic_launcher not found`（CI 全新检出就栽在这）。
+# 它们由 `tauri android init` 生成，`android build` 不会重建，所以必须入库。
+!/src-tauri/gen/android/app/src/main/res/mipmap-*/*.png
 
 # 平台协议速查（含签名细节，只留本地，不入库）
 docs/platform-protocols.md

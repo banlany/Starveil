@@ -265,6 +265,25 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "当前版本：$VERSION"
 
+      # 这几张启动图标是 `tauri android init` 生成的，`android build` 不会补；
+      # 仓库根 .gitignore 有条全局 `*.png`，当初就把它们一起挡在仓库外，
+      # CI 全新检出后 aapt2 报 `resource mipmap/ic_launcher not found`，
+      # 而且要等 Rust 编完（3 分钟）才炸。这里提前几秒说清楚。
+      - name: 检查安卓必需资源
+        run: |
+          set -euo pipefail
+          RES=src-tauri/gen/android/app/src/main/res
+          missing=0
+          for f in mipmap-mdpi/ic_launcher.png mipmap-hdpi/ic_launcher.png \
+                   mipmap-xhdpi/ic_launcher.png mipmap-xxhdpi/ic_launcher.png \
+                   mipmap-xxxhdpi/ic_launcher.png; do
+            if [ ! -f "$RES/$f" ]; then
+              echo "::error::缺少 $RES/$f（AndroidManifest 引用了 @mipmap/ic_launcher）"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
       # --ci 由 Actions 自带的 CI=true 触发，跳过所有交互提示。
       # 产物在 app/build/outputs/apk/universal/release/ 下（文件名由 productName 决定，
       # 中文会被过滤，所以下面统一改名成 ASCII）。
