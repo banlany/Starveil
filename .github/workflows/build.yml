@@ -155,14 +155,30 @@ jobs:
           path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
           key: ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
 
-      - name: 安装 Android SDK 与 NDK
+      # 只负责装命令行工具、设 ANDROID_SDK_ROOT/ANDROID_HOME 并接受 license。
+      # **不要用它的 `packages` 入参**：那个参数是按空格切分的，写成多行会被当成
+      # 一个包名，报 `Failed to find package 'platform-tools\nplatforms;android-34…'`。
+      - name: 准备 Android 命令行工具
         uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;${{ env.NDK_VERSION }}
+
+      - name: 安装 Android SDK 与 NDK
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if ! command -v sdkmanager >/dev/null 2>&1; then
+            echo "::error::sdkmanager 不在 PATH 里，setup-android 那步可能没生效"
+            exit 1
+          fi
+          # 包名按「一个参数一个包」传，别拼成字符串。
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;${NDK_VERSION}"
+          # NDK 装没装对决定后面 ring / C 代码能不能交叉编译，先确认再往下走。
+          test -d "${SDK}/ndk/${NDK_VERSION}"
+          echo "NDK: ${SDK}/ndk/${NDK_VERSION}"
 
       # 版本跟仓库的 rust-toolchain.toml 对齐（那里固定 1.95.0）。
       # 那个文件只列了 Windows 的 target，安卓 target 必须在这里显式加。

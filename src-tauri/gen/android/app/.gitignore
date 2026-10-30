@@ -1,6 +1,13 @@
 /src/main/java/com/banlany/starveil/generated
 /src/main/jniLibs/**/*.so
 /src/main/assets/tauri.conf.json
-/tauri.build.gradle.kts
-/proguard-tauri.pro
 /tauri.properties
+
+# 下面两个也是 CLI 生成的，但 `tauri android build` **不会**补，只有 `android init` 会：
+# ensure_init 只检查 identifier 目录、修 gradlew 的可执行位和 CRLF，不做模板渲染。
+# 而 build.gradle.kts 的 `apply(from = "tauri.build.gradle.kts")` 少了它会直接 configure 失败，
+# release 的 `fileTree("**/*.pro")` 少了 proguard-tauri.pro 则会让 R8 把
+# TauriActivity.getPluginManager 剥掉——包装得上，插件全废。所以这两份入库。
+# tauri 大版本升级后重跑一次 `tauri android init`，把这里的变化一起提交。
+!/tauri.build.gradle.kts
+!/proguard-tauri.pro
