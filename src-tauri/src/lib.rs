@@ -30,6 +30,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 mod webdav;
+// 局域网同步：UDP 广播发现 + 本机 HTTP 服务（同一 Wi-Fi 内直连收发同步包）。
+mod lan_sync;
 // 剪贴板与「用浏览器打开」在安卓上走 JNI（见 `MainActivity`），不需要这套 Win32 壳。
 #[cfg(not(target_os = "android"))]
 mod win32;
@@ -62,6 +64,8 @@ struct AppState {
     danmaku: Mutex<Option<DanmakuRuntime>>,
     proxy_port: u16,
     proxy_targets: Arc<Mutex<HashMap<String, ProxyTarget>>>,
+    /// 局域网同步（UDP 发现 + 本机 HTTP 服务）。只有打开「数据同步」页时才真的启动。
+    lan: Arc<lan_sync::LanSync>,
 }
 
 impl AppState {
@@ -968,6 +972,40 @@ fn set_system_bar(app: AppHandle, color: String, light: bool) -> Result<bool, St
     }
 }
 
+/// 沉浸式全屏（安卓）。
+///
+/// WebView 里 `document.documentElement.requestFullscreen()` 在 Android WebView 上
+/// 不会真的把界面铺满（没有实现 WebChromeClient 的全屏回调），
+/// 所以「全屏」在安卓上分两半：CSS 把视频铺满、系统栏交给这里藏起来。
+#[tauri::command]
+fn set_immersive(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        let enabled = i32::from(enabled);
+        run_on_main_activity(&app, move || call_activity_static("setImmersive", &[enabled]))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, enabled);
+        Ok(false)
+    }
+}
+
+/// 安卓上正常结束应用（`finishAffinity`），比 `app.exit(0)` 干净：
+/// 后者直接结束进程，任务栈里会留一个空任务。
+#[tauri::command]
+fn exit_app(app: AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        run_on_main_activity(&app, || call_activity_static("finishApp", &[]))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        app.exit(0);
+        Ok(true)
+    }
+}
+
 /// 把一段 Android 调用投递到主线程执行并等结果。
 ///
 /// `setRequestedOrientation` / `enterPictureInPictureMode` 都要求在主线程上跑，
@@ -1035,6 +1073,31 @@ fn call_activity_static_str(name: &str, value: &str) -> Result<bool, String> {
         .z()
         .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))
     })
+}
+
+/// 调用返回 Java String 的静态桥接方法（目前只有取设备机型用）。
+/// 拿不到就返回 `None`，调用方自己给一个兜底名字。
+#[cfg(target_os = "android")]
+fn call_activity_static_string(name: &str) -> Option<String> {
+    with_jvm(|env| {
+        let class = activity_class(env)?;
+        let value = env
+            .call_static_method(class, name, "()Ljava/lang/String;", &[])
+            .map_err(|error| format!("调用 MainActivity.{name} 失败：{error}"))?
+            .l()
+            .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))?;
+        if value.is_null() {
+            return Ok(String::new());
+        }
+        // 先绑成变量：`get_string` 借的是 JString 的局部引用，
+        // 直接内联写 `&JString::from(value)` 会在语句结束就把临时值释放掉（E0716）。
+        let text_ref = jni::objects::JString::from(value);
+        let text = env
+            .get_string(&text_ref)
+            .map_err(|error| format!("读取 MainActivity.{name} 返回的字符串失败：{error}"))?;
+        Ok(String::from(text))
+    })
+    .ok()
 }
 
 /// 附加到当前线程的 JVM 并执行一段 JNI 操作，返回后自动 detach。
@@ -2222,6 +2285,108 @@ async fn webdav_download(
     .map_err(|error| format!("同步任务异常：{error}"))?
 }
 
+// ---------------------------------------------------------------- 局域网同步
+
+/// 设备名：显示给对端的那一串。Windows 用计算机名（家里有两台就靠它区分），
+/// 安卓用机型（`Build.MODEL`，走 MainActivity 的静态桥接）。
+fn lan_device_name() -> String {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(name) = call_activity_static_string("deviceName") {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+        "Android 设备".to_string()
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(name) = std::env::var("COMPUTERNAME") {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+        if let Ok(name) = std::env::var("USERNAME") {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+        "Windows 电脑".to_string()
+    }
+    #[cfg(not(any(windows, target_os = "android")))]
+    {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "Starveil".to_string())
+    }
+}
+
+/// 启动局域网同步服务（UDP 发现 + 本机 HTTP）。已在运行就只回状态。
+#[tauri::command]
+async fn lan_sync_start(state: State<'_, AppState>) -> Result<lan_sync::Status, String> {
+    let lan = state.lan.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        lan.start()?;
+        Ok::<_, String>(lan.status())
+    })
+    .await
+    .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
+#[tauri::command]
+fn lan_sync_stop(state: State<'_, AppState>) -> lan_sync::Status {
+    state.lan.stop();
+    state.lan.status()
+}
+
+#[tauri::command]
+fn lan_sync_status(state: State<'_, AppState>) -> lan_sync::Status {
+    state.lan.status()
+}
+
+#[tauri::command]
+fn lan_sync_peers(state: State<'_, AppState>) -> Vec<lan_sync::Peer> {
+    state.lan.peers()
+}
+
+/// 把前端打好的同步包交给后端缓存，别的设备来拉时拿到的就是它。
+#[tauri::command]
+fn lan_sync_publish(state: State<'_, AppState>, content: String) -> Result<usize, String> {
+    state.lan.publish(content)
+}
+
+/// 取走对端推过来的包（取走即清空，前端确认后再决定要不要应用）。
+#[tauri::command]
+fn lan_sync_inbox(state: State<'_, AppState>) -> Vec<lan_sync::InboxItem> {
+    state.lan.take_inbox()
+}
+
+#[tauri::command]
+async fn lan_sync_pull(address: String, port: u16) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || lan_sync::pull(&address, port))
+        .await
+        .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
+#[tauri::command]
+async fn lan_sync_push(
+    address: String,
+    port: u16,
+    content: String,
+) -> Result<lan_sync::PushResult, String> {
+    tauri::async_runtime::spawn_blocking(move || lan_sync::push(&address, port, &content))
+        .await
+        .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
+#[tauri::command]
+async fn lan_sync_probe(address: String, port: u16) -> Result<lan_sync::Peer, String> {
+    tauri::async_runtime::spawn_blocking(move || lan_sync::probe(&address, port))
+        .await
+        .map_err(|error| format!("同步任务异常：{error}"))?
+}
+
 /// 准备 WebView2 的数据目录，并把目录通过环境变量交给 WebView2。
 ///
 /// 这里不用 `WebviewWindowBuilder::data_directory`——实践里由 Rust 手动建窗时
@@ -2406,6 +2571,10 @@ pub fn run() {
             danmaku: Mutex::new(None),
             proxy_port,
             proxy_targets,
+            lan: Arc::new(lan_sync::LanSync::new(
+                lan_device_name(),
+                std::env::consts::OS.to_string(),
+            )),
         })
         .setup(|app| {
             let handle = app.handle().clone();
@@ -2438,6 +2607,8 @@ pub fn run() {
             enter_picture_in_picture,
             in_picture_in_picture,
             set_system_bar,
+            set_immersive,
+            exit_app,
             open_room,
             douyu_qualities,
             douyu_play,
@@ -2457,7 +2628,16 @@ pub fn run() {
             frontend_log,
             webdav_test,
             webdav_upload,
-            webdav_download
+            webdav_download,
+            lan_sync_start,
+            lan_sync_stop,
+            lan_sync_status,
+            lan_sync_peers,
+            lan_sync_publish,
+            lan_sync_inbox,
+            lan_sync_pull,
+            lan_sync_push,
+            lan_sync_probe
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");

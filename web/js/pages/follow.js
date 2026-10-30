@@ -404,6 +404,8 @@ export function renderFollow(ctx) {
   }
 
   page.querySelector('#follow-refresh').addEventListener('click', refreshFollowStatus);
+  // 下拉刷新与顶栏那个刷新按钮是同一件事：重新拉一遍主播的直播状态。
+  ctx.setPullRefresh(refreshFollowStatus);
 
   // 顶栏吸顶：哨兵滚出可视区域就说明顶栏已经贴在顶部，这时才补分隔阴影，
   // 否则没滚动时也会有一条多余的横线。
@@ -435,6 +437,7 @@ export function renderFollow(ctx) {
   }
   return () => {
     alive = false;
+    ctx.setPullRefresh(null);
     stickyObserver?.disconnect();
   };
 }

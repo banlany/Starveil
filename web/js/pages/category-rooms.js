@@ -33,7 +33,7 @@ export function renderCategoryRooms(ctx, params) {
         <button class="icon-btn" id="cat-refresh" title="刷新">${icon('refresh', 18)}</button>
       </div>
     </header>
-    <div class="subpage-body" id="cat-body"></div>
+    <div class="subpage-body category-rooms-body" id="cat-body"></div>
     <button class="floating-refresh" id="cat-fab" title="刷新">${icon('refresh', 20)}</button>`;
   page.querySelector('.back-btn').addEventListener('click', () => ctx.back());
   const body = page.querySelector('#cat-body');
@@ -119,6 +119,8 @@ export function renderCategoryRooms(ctx, params) {
   }
   fab.addEventListener('click', refresh);
   refreshButton.addEventListener('click', refresh);
+  // 下拉刷新复用同一个动作（会 re-toast 一次，但数据确实重新拉了）。
+  ctx.setPullRefresh(() => load(true));
 
   document.getElementById('view').appendChild(page);
   load(false);
@@ -132,6 +134,7 @@ export function renderCategoryRooms(ctx, params) {
   view.addEventListener('scroll', onScroll, { passive: true });
 
   return () => {
+    ctx.setPullRefresh(null);
     view.removeEventListener('scroll', onScroll);
   };
 }

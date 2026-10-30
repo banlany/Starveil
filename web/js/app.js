@@ -59,6 +59,8 @@ let timerHandle = 0;
 let timerDeadline = 0;
 // 首页把「刷新推荐」的动作注册到这里，顶栏那个按钮只负责触发。
 let homeRefreshHandler = null;
+// 信息流页面注册的下拉刷新动作（首页 / 关注 / 分类列表各自提供）。
+let pullRefreshHandler = null;
 
 const ctx = {
   go,
@@ -80,6 +82,10 @@ const ctx = {
   },
   setHomeRefreshing(loading) {
     refreshButton?.classList.toggle('is-loading', Boolean(loading));
+  },
+  /// 注册/清除当前页面的下拉刷新动作（页面 cleanup 时传 null）。
+  setPullRefresh(handler) {
+    pullRefreshHandler = typeof handler === 'function' ? handler : null;
   },
 };
 
@@ -400,6 +406,45 @@ function setSleepTimer(minutes) {
   return sleepTimerState();
 }
 
+/// 安卓返回键。
+///
+/// Tauri 的 AppPlugin 只有在 JS 监听了 `back-button` 时才把按键事件交过来；
+/// 没人监听时它会自己 `webView.goBack()`（单页应用没有历史记录）然后结束 Activity，
+/// 表现就是「按一下直接退出」。
+///
+/// 顺序：关浮层 → 退全屏 → 出直播间 → 返回栈上一页 → 回首页 → 结束应用。
+function handleAndroidBack() {
+  const menu = document.querySelector('.menu-overlay');
+  if (menu) {
+    // 菜单的「点外面关闭」是监听在 document 上的 mousedown，这里补一个同样的事件。
+    menu.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    return;
+  }
+  const modal = document.querySelector('.modal-overlay');
+  if (modal) {
+    modal.querySelector('.modal-close')?.click();
+    return;
+  }
+  if (document.documentElement.classList.contains('is-theater')) {
+    window.dispatchEvent(new CustomEvent('simple-live:exit-theater'));
+    return;
+  }
+  if (state.page === 'room') {
+    exitRoom();
+    return;
+  }
+  if (backStack.length) {
+    back();
+    return;
+  }
+  if (state.page !== 'home') {
+    go('home', {}, { replace: true });
+    return;
+  }
+  // 退无可退：结束应用（安卓走 finishAffinity，任务栈不会留空壳）。
+  api.exitApp().catch(() => {});
+}
+
 function initGlobalShortcuts() {
   document.addEventListener('keydown', (event) => {
     const target = event.target;
@@ -422,9 +467,96 @@ function initGlobalShortcuts() {
     }
   });
   searchButton.addEventListener('click', () => go('search', {}));
+  // 安卓系统返回键：把处理函数挂到 window 上，给原生侧 MainActivity.onBackPressed 调用。
+  //
+  // 不能用 `__TAURI__.event.listen('back-button')`：AppPlugin 判断「有没有人监听」时
+  // 查的是插件自己的 listener 表（只有 `plugin:app|register_listener` 才会往里写），
+  // 而 event.listen 注册在核心事件系统里，那张表永远是空的 → 按键被当成没人处理，
+  // 直接结束 Activity，表现就是「按一下退回桌面」。原生侧改成 evaluateJavascript
+  // 直接调这个函数，见 MainActivity.kt。
+  if (IS_MOBILE) {
+    window.__starveilBack = () => {
+      try {
+        handleAndroidBack();
+      } catch (error) {
+        console.warn('返回键处理失败', error);
+      }
+    };
+  }
   window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
     if (state.settings.appearance?.theme === 'system') applyTheme();
   });
+}
+
+/// 下拉刷新（触摸手势）。
+///
+/// 只在列表已经滚到顶部时生效：手指往下拖，指示器跟着下移，越过阈值松手就调用
+/// 当前页注册的刷新动作（首页 / 关注 / 分类列表各自提供，见 ctx.setPullRefresh）。
+/// 没有触摸的设备不参与，桌面上继续用顶栏的刷新按钮。
+function initPullRefresh() {
+  const indicator = document.createElement('div');
+  indicator.className = 'pull-refresh';
+  indicator.innerHTML = '<span class="pull-arrow"></span><span class="pull-text">下拉刷新</span>';
+  document.body.appendChild(indicator);
+  const label = indicator.querySelector('.pull-text');
+
+  const THRESHOLD = 64;
+  const MAX = 96;
+  let startY = 0;
+  let pulling = false;
+  let distance = 0;
+
+  const reset = () => {
+    pulling = false;
+    distance = 0;
+    indicator.classList.remove('ready', 'loading');
+    indicator.style.transform = '';
+    label.textContent = '下拉刷新';
+  };
+
+  view.addEventListener('touchstart', (event) => {
+    if (!pullRefreshHandler || view.scrollTop > 0 || event.touches.length !== 1) return;
+    startY = event.touches[0].clientY;
+    pulling = true;
+    distance = 0;
+  }, { passive: true });
+
+  view.addEventListener('touchmove', (event) => {
+    if (!pulling) return;
+    const delta = event.touches[0].clientY - startY;
+    if (delta <= 0) {
+      reset();
+      return;
+    }
+    // 0.5 的阻尼：拖一屏只走半屏，手感接近原生下拉。
+    distance = Math.min(MAX, delta * 0.5);
+    indicator.style.transform = `translate(-50%, ${distance}px)`;
+    const ready = distance >= THRESHOLD;
+    indicator.classList.toggle('ready', ready);
+    label.textContent = ready ? '松开刷新' : '下拉刷新';
+  }, { passive: true });
+
+  view.addEventListener('touchend', async () => {
+    if (!pulling) return;
+    const trigger = distance >= THRESHOLD;
+    pulling = false;
+    if (!trigger) {
+      reset();
+      return;
+    }
+    indicator.classList.add('loading');
+    indicator.classList.remove('ready');
+    label.textContent = '正在刷新…';
+    indicator.style.transform = 'translate(-50%, 56px)';
+    try {
+      await pullRefreshHandler?.();
+    } catch {
+      /* 页面自己会把失败原因显示出来 */
+    }
+    reset();
+  }, { passive: true });
+
+  view.addEventListener('touchcancel', reset, { passive: true });
 }
 
 const WINDOW_STATE_KEY = 'starveil.window.v1';
@@ -594,6 +726,7 @@ function init() {
   window.addEventListener('simple-live:theme', refreshThemeButton);
   renderPlatformTabs();
   initGlobalShortcuts();
+  initPullRefresh();
   state.page = 'home';
   state.routeParams = {};
   render({ keepScroll: false });

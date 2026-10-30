@@ -30,6 +30,42 @@ import {
 
 const MAX_MESSAGES = 360;
 const QUALITY_KEY = 'simple-live.quality.';
+// 直播间标题 / 人气 / 看过 / 大航海的刷新周期。取 5 分钟：这几个数字变化不慢，
+// 太勤只会白白多打几次平台接口。
+const REFRESH_INFO_INTERVAL = 5 * 60 * 1000;
+
+// 直播间右侧「设置」页签里，原来用滑块和数字框的项全部改成预设值下拉。
+// 原因：面板只有两百多像素宽，滑块拖不准；数字框在手机上一聚焦就弹键盘，
+// 整个面板被顶上去，改完还得再收回来。设置页那边仍是滑块（宽屏下更自由），
+// 两边读写的是同一份配置，不会打架。
+const CS_PRESETS = {
+  opacity: [20, 30, 40, 50, 60, 70, 80, 90, 100],
+  area: [15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100],
+  lines: [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30],
+  font: [12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36, 40],
+  speed: [3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20],
+  strokeWidth: [0, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5],
+  safe: [0, 4, 8, 12, 16, 20, 24, 30, 40, 50, 60],
+  dedupeWindow: [1, 2, 3, 5, 8, 10, 15, 20, 30, 45, 60],
+  dedupeStep: [1, 2, 3, 4, 5, 6, 8, 10],
+};
+
+/// 生成预设值下拉框。当前值不在预设里（用户之前在设置页拖过滑块）时补一项，
+/// 否则下拉会自己显示成某个档位，看着像「设置被改了」。
+function presetOptions(values, current, format = (value) => String(value)) {
+  const list = [...values];
+  const value = Number(current);
+  if (Number.isFinite(value) && !list.includes(value)) {
+    list.push(value);
+    list.sort((a, b) => a - b);
+  }
+  return list
+    .map(
+      (item) =>
+        `<option value="${item}"${item === value ? ' selected' : ''}>${escapeHtml(format(item))}</option>`
+    )
+    .join('');
+}
 
 export function renderRoom(ctx, params = {}) {
   const platform = params.platform || state.platform;
@@ -155,6 +191,7 @@ export function renderRoom(ctx, params = {}) {
     idleTimer: 0,
     clockTimer: 0,
     statsTimer: 0,
+    infoTimer: 0,
     refreshTimer: 0,
     scMessages: [],
     scHistory: [],
@@ -195,11 +232,26 @@ export function renderRoom(ctx, params = {}) {
   };
   state.room = session;
 
-  // 竖屏（手机上竖着拿）控制条放不下：画质、线路、时间、画中画都收进「更多」。
-  // 这里只管「菜单里要不要出现这些项」，把它们从控制条上藏起来是 mobile.css 的事，
-  // 两边判据必须一致（都是「移动端 + 竖屏」）。
+  // 竖屏（手机上竖着拿）控制条放不下全部控件，但不是一刀切全藏起来：
+  // 按「线路 → 画质 → 时间」的优先级逐级收起，后面的越常用、越晚收。
+  // 收起来的项在「更多」菜单里始终有入口（showMoreMenu 无条件显示）。
   const portraitQuery = window.matchMedia('(orientation: portrait)');
-  const compactControls = () => IS_MOBILE && portraitQuery.matches;
+  const CONTROL_FADE = [
+    ['ctrl-hide-line', 'ctrl-line'],
+    ['ctrl-hide-quality', 'ctrl-quality'],
+    ['ctrl-hide-clock', 'player-clock'],
+  ];
+
+  function applyControlDensity() {
+    for (const [cls] of CONTROL_FADE) page.classList.remove(cls);
+    if (!IS_MOBILE || !playerControls.clientWidth) return;
+    // spacer 会先吃掉多余空间，真的塞不下时 scrollWidth 才会超出 clientWidth，
+    // 每收一项就重新量一次，刚好放得下就停手。
+    for (const [cls] of CONTROL_FADE) {
+      if (playerControls.scrollWidth <= playerControls.clientWidth + 1) break;
+      page.classList.add(cls);
+    }
+  }
 
   // ------------------------------------------------------------ 基础 UI
 
@@ -212,8 +264,10 @@ export function renderRoom(ctx, params = {}) {
     session.lastVolume = video.volume || 0.8;
     updateVolumeIcon();
   });
-  $('ctrl-quality').addEventListener('click', showQualityMenu);
-  $('ctrl-line').addEventListener('click', showLineMenu);
+  // 注意：这两个函数带默认参数（anchor = 控制条按钮），直接当监听器用会把 Event
+  // 当成 anchor 传进去，`anchor.getBoundingClientRect` 抛 TypeError，表现就是「点了没反应」。
+  $('ctrl-quality').addEventListener('click', () => showQualityMenu());
+  $('ctrl-line').addEventListener('click', () => showLineMenu());
   $('ctrl-danmaku').addEventListener('click', () => setDanmakuEnabled(!session.danmakuEnabled));
   $('ctrl-settings').addEventListener('click', openQuickSettings);
   $('ctrl-fullscreen').addEventListener('click', toggleFullscreen);
@@ -245,8 +299,12 @@ export function renderRoom(ctx, params = {}) {
     clearTimeout(session.idleTimer);
     if (session.destroyed) return;
     session.idleTimer = setTimeout(() => {
-      // 全屏时聊天栏已隐藏，即使视频正在缓冲也要让顶部浮层自动隐藏。
-      const canHide = document.fullscreenElement || (!video.paused && !session.chatCollapsed);
+      // 全屏（桌面 Fullscreen API / 安卓剧场模式）时聊天栏已隐藏，即使视频正在缓冲
+      // 也要让顶部浮层和底部控制条自动收起，不然暂停在广告画面上就是两块常驻黑条。
+      const canHide =
+        document.fullscreenElement ||
+        page.classList.contains('is-theater') ||
+        (!video.paused && !session.chatCollapsed);
       if (canHide && !document.querySelector('.menu-overlay')) {
         page.classList.add('ui-idle');
       }
@@ -350,6 +408,25 @@ export function renderRoom(ctx, params = {}) {
       top: sc.background_color || tier[1],
       bottom: sc.background_bottom_color || tier[2],
     };
+  }
+
+  /// 聊天区里的 SC 行：底色直接取 SC 面板那张卡片的档位色（同一套 palette），
+  /// 平铺一个颜色、不铺渐变；字色按底色明暗二选一，浅金/浅蓝那几档用深色字。
+  function paintScChatLine(line, sc) {
+    const { top } = scTierColors(sc);
+    line.style.backgroundColor = top;
+    line.style.color = isLightColor(top) ? '#2a1c0d' : '#ffffff';
+  }
+
+  /// 粗略亮度（sRGB 加权）：只用来在深/浅两种字色之间二选一，够用就好。
+  function isLightColor(color) {
+    const match = /^#?([0-9a-f]{6})$/i.exec(String(color ?? '').trim());
+    if (!match) return true;
+    const value = parseInt(match[1], 16);
+    const r = (value >> 16) & 0xff;
+    const g = (value >> 8) & 0xff;
+    const b = value & 0xff;
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150;
   }
 
   function clearScTimer(entry) {
@@ -522,6 +599,7 @@ export function renderRoom(ctx, params = {}) {
         text.className = 'text';
         fillChatText(text, message);
         line.append(tag, who, text);
+        paintScChatLine(line, message.sc);
       } else {
         const who = document.createElement('span');
         who.className = 'who';
@@ -737,18 +815,18 @@ export function renderRoom(ctx, params = {}) {
         <h4>弹幕设置</h4>
         <div class="chat-setting-row"><span>弹幕开关</span><button class="switch" id="cs-enabled" aria-checked="${session.danmakuEnabled}"></button></div>
         <div class="chat-setting-row"><span>弹幕表情</span><button class="switch" id="cs-emoji" aria-checked="${config.emoji !== false}"></button></div>
-        <div class="chat-setting-row"><span>不透明度</span><input type="range" id="cs-opacity" min="20" max="100" step="5" value="${config.opacity}" /><em>${config.opacity}%</em></div>
-        <div class="chat-setting-row"><span>显示区域</span><input type="range" id="cs-area" min="15" max="100" step="5" value="${config.area}" /><em>${config.area}%</em></div>
-        <div class="chat-setting-row"><span>显示行数</span><input type="number" class="chat-setting-input" id="cs-lines" min="1" max="30" step="1" value="${config.lines}" /><em></em></div>
-        <div class="chat-setting-row"><span>字体大小</span><input type="number" class="chat-setting-input" id="cs-font" min="12" max="40" step="1" value="${config.font}" /><em>px</em></div>
+        <div class="chat-setting-row"><span>不透明度</span><select class="chat-setting-select" id="cs-opacity">${presetOptions(CS_PRESETS.opacity, config.opacity, (value) => `${value}%`)}</select></div>
+        <div class="chat-setting-row"><span>显示区域</span><select class="chat-setting-select" id="cs-area">${presetOptions(CS_PRESETS.area, config.area, (value) => `${value}%`)}</select></div>
+        <div class="chat-setting-row"><span>显示行数</span><select class="chat-setting-select" id="cs-lines">${presetOptions(CS_PRESETS.lines, config.lines, (value) => `${value} 行`)}</select></div>
+        <div class="chat-setting-row"><span>字体大小</span><select class="chat-setting-select" id="cs-font">${presetOptions(CS_PRESETS.font, config.font, (value) => `${value} px`)}</select></div>
         <div class="chat-setting-row"><span>字体粗细</span><select class="chat-setting-select" id="cs-weight">
           ${[[300, '极细'], [400, '很细'], [500, '正常'], [600, '小粗'], [700, '偏粗'], [800, '很粗'], [900, '极粗']].map(([value, label]) => `<option value="${value}"${Number(config.weight) === value ? ' selected' : ''}>${label}</option>`).join('')}
         </select></div>
-        <div class="chat-setting-row"><span>滚动速度</span><input type="range" id="cs-speed" min="3" max="20" step="1" value="${config.speed}" /><em>${config.speed}s</em></div>
+        <div class="chat-setting-row"><span>滚动速度</span><select class="chat-setting-select" id="cs-speed">${presetOptions(CS_PRESETS.speed, config.speed, (value) => `${value} 秒`)}</select></div>
         <div class="chat-setting-row"><span>弹幕描边</span><button class="switch" id="cs-stroke" aria-checked="${config.stroke}"></button></div>
-        <div class="chat-setting-row"><span>描边宽度</span><input type="number" class="chat-setting-input" id="cs-stroke-width" min="0" max="5" step="0.5" value="${config.strokeWidth}" /><em>px</em></div>
-        <div class="chat-setting-row"><span>顶部边距</span><input type="number" class="chat-setting-input" id="cs-safe-top" min="0" max="60" step="1" value="${config.safeTop}" /><em>px</em></div>
-        <div class="chat-setting-row"><span>底部边距</span><input type="number" class="chat-setting-input" id="cs-safe-bottom" min="0" max="60" step="1" value="${config.safeBottom}" /><em>px</em></div>
+        <div class="chat-setting-row"><span>描边宽度</span><select class="chat-setting-select" id="cs-stroke-width">${presetOptions(CS_PRESETS.strokeWidth, config.strokeWidth, (value) => `${value} px`)}</select></div>
+        <div class="chat-setting-row"><span>顶部边距</span><select class="chat-setting-select" id="cs-safe-top">${presetOptions(CS_PRESETS.safe, config.safeTop, (value) => `${value} px`)}</select></div>
+        <div class="chat-setting-row"><span>底部边距</span><select class="chat-setting-select" id="cs-safe-bottom">${presetOptions(CS_PRESETS.safe, config.safeBottom, (value) => `${value} px`)}</select></div>
         <div class="chat-setting-row"><span>性能档位</span><select class="chat-setting-select" id="cs-perf">
           ${PERF_OPTIONS.map((option) => `<option value="${option.value}"${config.perf === option.value ? ' selected' : ''}>${option.label}</option>`).join('')}
         </select></div>
@@ -765,8 +843,8 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>过滤模式</span><select class="chat-setting-select" id="cs-dedupe-mode">
           ${[['content', '按内容'], ['user', '按用户'], ['strict', '刷屏严格']].map(([value, label]) => `<option value="${value}"${config.dedupeMode === value ? ' selected' : ''}>${label}</option>`).join('')}
         </select></div>
-        <div class="chat-setting-row"><span>过滤窗口</span><input type="number" class="chat-setting-input" id="cs-dedupe-window" min="1" max="60" step="1" value="${config.dedupeWindow}" /><em>秒</em></div>
-        <div class="chat-setting-row"><span>过滤步长</span><input type="number" class="chat-setting-input" id="cs-dedupe-step" min="1" max="10" step="1" value="${config.dedupeStep}" /><em></em></div>
+        <div class="chat-setting-row"><span>过滤窗口</span><select class="chat-setting-select" id="cs-dedupe-window">${presetOptions(CS_PRESETS.dedupeWindow, config.dedupeWindow, (value) => `${value} 秒`)}</select></div>
+        <div class="chat-setting-row"><span>过滤步长</span><select class="chat-setting-select" id="cs-dedupe-step">${presetOptions(CS_PRESETS.dedupeStep, config.dedupeStep, (value) => `${value} 条`)}</select></div>
       </div>
       <div class="chat-settings-group">
         <h4>SC 设置</h4>
@@ -784,25 +862,6 @@ export function renderRoom(ctx, params = {}) {
         setConfig(key, value);
       });
     };
-    const bindRange = (id, key, format) => {
-      const input = wrap.querySelector(`#${id}`);
-      const label = input.nextElementSibling;
-      input.addEventListener('input', () => {
-        const value = Number(input.value);
-        setConfig(key, value);
-        label.textContent = format(value);
-      });
-    };
-    const bindNumber = (id, key, min, max) => {
-      const input = wrap.querySelector(`#${id}`);
-      input.addEventListener('change', () => {
-        let value = Number(input.value);
-        if (!Number.isFinite(value)) value = min;
-        value = Math.min(max, Math.max(min, value));
-        input.value = String(value);
-        setConfig(key, value);
-      });
-    };
     const bindSelect = (id, key, numeric = false) => {
       const select = wrap.querySelector(`#${id}`);
       select.addEventListener('change', () => setConfig(key, numeric ? Number(select.value) : select.value));
@@ -814,16 +873,16 @@ export function renderRoom(ctx, params = {}) {
 
     bindSwitch('cs-enabled', 'enabled');
     bindSwitch('cs-emoji', 'emoji');
-    bindRange('cs-opacity', 'opacity', (value) => `${value}%`);
-    bindRange('cs-area', 'area', (value) => `${value}%`);
-    bindNumber('cs-lines', 'lines', 1, 30);
-    bindNumber('cs-font', 'font', 12, 40);
+    bindSelect('cs-opacity', 'opacity', true);
+    bindSelect('cs-area', 'area', true);
+    bindSelect('cs-lines', 'lines', true);
+    bindSelect('cs-font', 'font', true);
     bindSelect('cs-weight', 'weight', true);
-    bindRange('cs-speed', 'speed', (value) => `${value}s`);
+    bindSelect('cs-speed', 'speed', true);
     bindSwitch('cs-stroke', 'stroke');
-    bindNumber('cs-stroke-width', 'strokeWidth', 0, 5);
-    bindNumber('cs-safe-top', 'safeTop', 0, 60);
-    bindNumber('cs-safe-bottom', 'safeBottom', 0, 60);
+    bindSelect('cs-stroke-width', 'strokeWidth', true);
+    bindSelect('cs-safe-top', 'safeTop', true);
+    bindSelect('cs-safe-bottom', 'safeBottom', true);
     bindSelect('cs-perf', 'perf');
     bindSelect('cs-fps', 'fps', true);
     bindSwitch('cs-block', 'block');
@@ -831,8 +890,8 @@ export function renderRoom(ctx, params = {}) {
     bindTextarea('cs-block-users', 'blockUsers');
     bindSwitch('cs-dedupe', 'dedupe');
     bindSelect('cs-dedupe-mode', 'dedupeMode');
-    bindNumber('cs-dedupe-window', 'dedupeWindow', 1, 60);
-    bindNumber('cs-dedupe-step', 'dedupeStep', 1, 10);
+    bindSelect('cs-dedupe-window', 'dedupeWindow', true);
+    bindSelect('cs-dedupe-step', 'dedupeStep', true);
     const bindPlayerSwitch = (id, key) => {
       const button = wrap.querySelector(`#${id}`);
       button.addEventListener('click', () => {
@@ -1407,7 +1466,30 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('is-paused', video.paused);
   }
 
+  /// 安卓的「全屏」。
+  ///
+  /// Android WebView 不实现 `requestFullscreen()`（没有 WebChromeClient 的全屏回调），
+  /// 点了只会报「全屏失败」。这里改成两半：CSS（`html.is-theater`）把视频铺满并收掉
+  /// 聊天区/底栏/侧栏，系统栏由 `set_immersive` 藏起来；顺手把方向掰到横屏，
+  /// 退出时恢复设置里的方向。
+  function setTheater(active) {
+    page.classList.toggle('is-theater', active);
+    document.documentElement.classList.toggle('is-theater', active);
+    $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
+    api.setImmersive(active).catch(() => {});
+    const setting = state.settings.appearance?.orientation || 'auto';
+    const target = active ? (setting === 'portrait' ? 'portrait' : 'landscape') : setting;
+    api.setScreenOrientation(target).catch(() => {});
+    page.classList.remove('ui-idle');
+    wake();
+    requestAnimationFrame(applyControlDensity);
+  }
+
   async function toggleFullscreen() {
+    if (IS_MOBILE) {
+      setTheater(!page.classList.contains('is-theater'));
+      return;
+    }
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
@@ -1555,13 +1637,37 @@ export function renderRoom(ctx, params = {}) {
     const guards = Number(detail.guard_count) || 0;
     const dataBits = [];
     if (viewers > 0) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(viewers)} 看过</span>`);
-    if (guards > 0) dataBits.push(`<span class="guard">${icon('spark', 11)}${guards} 大航海</span>`);
+    // 大航海自己占一行（`.chat-head-guard` 的 flex-basis 是 100%）：
+    // 它是「舰长数」，和看过人数挤在一起时窄一点就只剩半截，另起一行反而清爽。
+    const guardBit = guards > 0 ? `<span class="chat-head-guard">${icon('anchor', 11)}${guards} 大航海</span>` : '';
     $('chat-meta').innerHTML =
       `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
-      (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '');
+      (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '') +
+      guardBit;
     document.title = `${detail.title || '直播间'} · 星幕直播`;
     if (cover) {
       $('stage-bg').style.backgroundImage = `url("${cover}")`;
+    }
+  }
+
+  /// 定时刷新直播间数据（标题 / 人气 / 看过 / 大航海 / 是否在播）。
+  /// 只重画头部，不碰播放器：`open_room` 用 `平台:房间号` 当 key，
+  /// 重复调用只是把同一个会话的详情刷新一遍，正在播的流地址不受影响。
+  async function refreshRoomInfo() {
+    if (session.destroyed || document.hidden) return;
+    try {
+      const payload = await api.openRoom(session.platform, session.roomId);
+      if (session.destroyed) return;
+      session.detail = payload.detail;
+      if (payload.qualities?.length) {
+        session.qualities = payload.qualities;
+        // 平台中途下架了高档清晰度时，别让下标指到空档上。
+        session.qualityIndex = Math.min(session.qualityIndex, session.qualities.length - 1);
+      }
+      renderRoomHeader();
+      setQualityLabel();
+    } catch {
+      /* 刷新失败就保持原样，下一轮再试 */
     }
   }
 
@@ -1698,26 +1804,26 @@ export function renderRoom(ctx, params = {}) {
   function showMoreMenu() {
     const anchor = $('room-more');
     const items = [];
-    // 竖屏下控制条上不放画质/线路/时间/画中画，改从这里进。
-    if (compactControls()) {
-      const quality = session.qualities[session.qualityIndex];
-      items.push({
-        label: '清晰度',
-        icon: 'signal',
-        value: quality || '',
-        onClick: () => showQualityMenu(anchor, 'bottom'),
-      });
-      if (session.lines.length > 1) {
-        items.push({
-          label: '线路',
-          icon: 'sync',
-          value: `${session.lineIndex + 1} / ${session.lines.length}`,
-          onClick: () => showLineMenu(anchor, 'bottom'),
-        });
-      }
+    // 「更多」在两端都放全量入口：桌面控制条上虽然有画质/线路按钮，
+    // 但手机上横屏/竖屏都可能被自动收起（见 applyControlDensity），
+    // 这里必须始终能找到，不能只在竖屏出现。
+    const quality = session.qualities[session.qualityIndex];
+    items.push({
+      label: '清晰度',
+      icon: 'signal',
+      value: quality || '',
+      onClick: () => showQualityMenu(anchor, 'bottom'),
+    });
+    items.push({
+      label: '线路',
+      icon: 'sync',
+      value: session.lines.length ? `${session.lineIndex + 1} / ${session.lines.length}` : '未取到',
+      onClick: () => showLineMenu(anchor, 'bottom'),
+    });
+    if (IS_MOBILE) {
       items.push({ label: '小窗播放', icon: 'screen', onClick: togglePip });
-      items.push({ separator: true });
     }
+    items.push({ separator: true });
     items.push(
       sleepTimerItem(),
       { separator: true },
@@ -2001,6 +2107,9 @@ export function renderRoom(ctx, params = {}) {
     applyDanmakuStyle();
     setDanmakuEnabled(session.danmakuEnabled);
     setQualityLabel();
+    // 定时刷新直播间数据（标题 / 人气 / 看过 / 大航海）。
+    // 这些数字在平台侧一直在变，进房时抓一次就再也不动，看久了会明显对不上。
+    session.infoTimer = setInterval(refreshRoomInfo, REFRESH_INFO_INTERVAL);
     try {
       const payload = await api.openRoom(platform, roomId);
       if (session.destroyed) return;
@@ -2203,7 +2312,18 @@ export function renderRoom(ctx, params = {}) {
   video.style.objectFit = state.settings.player.scaleMode === 'cover' ? 'cover' : state.settings.player.scaleMode === 'fill' ? 'fill' : 'contain';
   updateVolumeIcon();
   updatePlayIcon();
+  // 控制条要等真正有了宽度才能量出放不放得下：插进 DOM 后按 rAF 量一次，
+  // 之后横竖屏切换、窗口缩放都重量一次。
+  const onControlResize = () => applyControlDensity();
+  window.addEventListener('resize', onControlResize);
+  portraitQuery.addEventListener?.('change', onControlResize);
+  // 安卓返回键退全屏（app.js 的 handleAndroidBack 统一处理按键，这里只负责收布局）。
+  const onExitTheater = () => {
+    if (page.classList.contains('is-theater')) setTheater(false);
+  };
+  window.addEventListener('simple-live:exit-theater', onExitTheater);
   document.getElementById('view').appendChild(page);
+  requestAnimationFrame(onControlResize);
   boot();
 
   return () => {
@@ -2216,6 +2336,7 @@ export function renderRoom(ctx, params = {}) {
     clearTimeout(session.idleTimer);
     clearInterval(session.clockTimer);
     clearInterval(session.statsTimer);
+    clearInterval(session.infoTimer);
     clearInterval(session.stallTimer);
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
@@ -2232,6 +2353,9 @@ export function renderRoom(ctx, params = {}) {
     video.removeEventListener('timeupdate', purgeExpiredSc);
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
+    window.removeEventListener('resize', onControlResize);
+    portraitQuery.removeEventListener?.('change', onControlResize);
+    window.removeEventListener('simple-live:exit-theater', onExitTheater);
     if (typeof state.unlistenDanmaku === 'function') state.unlistenDanmaku();
     state.unlistenDanmaku = null;
     if (typeof state.unlistenDanmakuStatus === 'function') state.unlistenDanmakuStatus();
@@ -2243,6 +2367,13 @@ export function renderRoom(ctx, params = {}) {
     api.stopDanmaku().catch(() => {});
     destroyPlayer();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    // 安卓的「全屏」是自己拼的，离开直播间必须还原：否则系统栏一直是隐藏的、
+    // 屏幕还锁在横屏，回到列表页会非常别扭。
+    if (document.documentElement.classList.contains('is-theater')) {
+      document.documentElement.classList.remove('is-theater');
+      api.setImmersive(false).catch(() => {});
+      api.setScreenOrientation(state.settings.appearance?.orientation || 'auto').catch(() => {});
+    }
     document.title = '星幕直播';
     state.room = null;
   };

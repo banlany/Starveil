@@ -6,7 +6,7 @@
 界面是纯 HTML / CSS / ES Modules（无前端框架），播放走 mpegts.js（FLV over MSE）与  
 hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_core)（已内嵌进本仓库）。
 
-> 当前版本 **0.6.0**（安卓支持开发中）· Windows 10/11 x64 + Android 8.0+ ·
+> 当前版本 **0.6.2** · Windows 10/11 x64 + Android 8.0+（arm64-v8a）·
 > GPL-3.0 · **非官方第三方客户端，仅供学习交流**
 
 ![首页](docs/img/home.png)
@@ -93,9 +93,15 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 
 - **观看记录**分「记录 / 统计」两个视图：统计按本周 / 本月 / 今年 / 全部聚合出总时长、观看次数、
   主播数与日均，并给出主播时长排行（点一行直达直播间）。只统计真正在播的时间。
-- **数据同步**三块：本机备份导出 / 导入；从 **dart_simple_live 导出的 `simple_live_profile`
-  直接迁移**（关注、观看记录、弹幕与播放设置、关键词屏蔽、B 站 / 斗鱼登录态）；
-  **WebDAV 局域网同步**（整包上传 / 下载、可选启动时自动拉取，同步包不含 Cookie）。
+- **数据同步**四块：本机备份导出 / 导入（设置、关注、记录、搜索历史、统计、登录态）；
+  从 **dart_simple_live 导出的 `simple_live_profile` 直接迁移**（关注、观看记录、弹幕与播放设置、
+  关键词屏蔽、B 站 / 斗鱼登录态）；**局域网同步**（同 Wi-Fi 设备自动互相发现，直接拉取 / 发送整包配置，
+  不经任何服务器）；**WebDAV 同步**（整包上传 / 下载、可选启动时自动拉取，跨网络可用）。
+- **同步包范围**（局域网与 WebDAV 打包的是同一份，定义见 `importer.js` 的 `bundleScope()`）：
+  含设置、关注、搜索历史、观看统计；**观看记录**与**登录 Cookie** 由「同步内容」卡片里的
+  两个开关决定（前者默认带、后者默认不带）。永远不同步的是 WebDAV 口令、
+  首次运行状态、窗口位置与聊天栏宽度、各平台记住的清晰度——后两类跟屏幕绑定。
+  本机备份导出的是磁盘上的 JSON，所以始终带上 Cookie 与 WebDAV 口令，换机导入即可恢复登录态。
 
 **直播间**
 
@@ -103,7 +109,9 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 - 弹幕层基于 [fly-barrage](https://github.com/feiafei27/fly-barrage)：canvas 渲染 + 虚拟轨道避让，
   支持颜色、字号、粗细、不透明度、描边、显示区域、行数、滚动速度、帧率上限、重复过滤与关键词/用户屏蔽；
   「性能档位」（平衡 / 流畅 / 极速）可一键关掉阴影与描边、降低画布精度，弹幕密集时更顺；
-  这两项也能在直播间右侧「设置」页签里直接改，不必退回设置页。
+  这两项也能在直播间右侧「设置」页签里直接改，不必退回设置页；那里的弹幕参数
+  统一用**预设值下拉**而不是滑块/数字框——面板窄，滑块拖不准，数字框在手机上还会弹键盘
+  把面板顶走。设置页保留滑块，宽屏下更自由，两边读写同一份配置。
 - 右侧聊天面板：主播信息 + 聊天 / SC / 关注 / 设置四个 Tab；SC 分「正在显示 / 历史」，到期自动归档。
 - 底部控制条：音量、直播时长、清晰度、线路、弹幕开关、设置、画中画、全屏（直播不提供暂停）；  
   底部动作栏：刷新、关注、标签、分享、复制链接、复制直播流。
@@ -129,6 +137,7 @@ Starveil/
 │  ├─ src/lib.rs            命令层：推荐/搜索/分类/房间/取流/弹幕/登录/系统集成
 │  ├─ src/main.rs           桌面入口（安卓入口是 lib.rs 的 mobile_entry_point）
 │  ├─ src/webdav.rs         WebDAV 同步：PROPFIND 探活 / PUT / GET
+│  ├─ src/lan_sync.rs       局域网同步：UDP 23245 发现 + HTTP 23244 收发同步包
 │  ├─ src/win32.rs          剪贴板与打开链接（Windows）
 │  ├─ gen/android/          Android 工程；MainActivity.kt 提供方向 / 小窗 / 系统栏 / 链接桥接
 │  ├─ capabilities/         Tauri 2 权限
@@ -162,7 +171,7 @@ Starveil/
 ├─ docs/
 │  ├─ fly-barrage-changes.md  弹幕库改造清单与重建步骤
 │  └─ img/                  界面截图（README 引用）
-├─ .github/workflows/       CI：Windows 构建 + Release（手动触发，出 NSIS 安装包 / 免安装 zip）
+├─ .github/workflows/       CI：Windows 与 Android 并行构建 + 同一个 Release（手动触发）
 └─ CHANGELOG.md             更新日志
 ```
 
@@ -190,6 +199,23 @@ cargo tauri android build --apk --target aarch64          # 真机 / 发布
 
 产物在 `src-tauri/gen/android/app/build/outputs/apk/`。`gen/android` 已入库；
 **改包名后必须删掉重新 `cargo tauri android init`**（CLI 不迁移包名）。
+
+`--target aarch64` 打的是 release 包，但 **tauri 不会替你签名**：产物是
+`app-universal-release-unsigned.apk`，直接装会被系统拒绝。要用 debug keystore 补签：
+
+```bash
+APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner*" ! -name "*.jar" | sort | tail -1)
+"$APKSIGNER" sign --ks ~/.android/debug.keystore --ks-pass pass:android \
+  --key-pass pass:android --ks-key-alias androiddebugkey \
+  --out Starveil_arm64.apk app-universal-release-unsigned.apk
+```
+
+release 包还有两个必须记住的坑（CI 已经处理，本地改构建配置时要一起带上）：
+默认禁止明文 HTTP，而 FLV 走的是本机流代理，所以 `res/xml/network_security_config.xml`
+只给 `127.0.0.1` / `localhost` 开了口子、并在 manifest 里引用；
+R8 会把 `MainActivity` 的静态方法改名，而 Rust 侧是按名字调的，
+`proguard-rules.pro` 里必须 `-keepclassmembers` 保住它们。
+CI 跑的也是这条命令，产物挂到 Release 的 `Starveil_<版本>_arm64.apk`。
 
 调试界面用 DevTools 协议（同一个端口在 Edge 上是可用的）：
 
@@ -233,6 +259,9 @@ Android 端在同一套 localStorage 键名下，位于应用私有目录（`/da
 | `douyu_qualities(key, signedArgs)` / `douyu_play(key, index, signedArgs)` | 斗鱼 WebView 签名后的清晰度 / 直链       |
 | `webdav_test(url, username, password, allowInsecureTls)`                  | 探测 WebDAV：认证、目标文件是否存在            |
 | `webdav_upload(...)` / `webdav_download(...)`                             | 上传 / 下载整包同步 JSON                |
+| `lan_sync_start()` / `lan_sync_stop()` / `lan_sync_status()`              | 局域网同步服务的启停与状态                |
+| `lan_sync_publish(content)` / `lan_sync_inbox()`                          | 发布本机同步包 / 取走对端推来的包            |
+| `lan_sync_pull(address, port)` / `lan_sync_push(...)` / `lan_sync_probe(...)` | 从对端拉取、推给对端、手动地址探活        |
 | `set_screen_orientation(mode)`                                            | 安卓屏幕方向：`auto` / `portrait` / `landscape` |
 | `enter_picture_in_picture()` / `in_picture_in_picture()`                  | 安卓小窗（系统画中画）的进入与状态查询            |
 | `set_system_bar(color, light)`                                            | 安卓状态栏 / 导航栏配色与图标明暗，跟随主题          |
@@ -259,8 +288,9 @@ Android 端在同一套 localStorage 键名下，位于应用私有目录（`/da
 - **Android**：斗鱼弹幕连不上（服务端拒绝 rustls 握手，桌面走 WebView 签名不受影响）；
   退到后台会暂停播放，没有做 MediaSession / 前台服务，所以**不支持后台听声**。
   视频编解码由系统 WebView 提供，老机器上的表现取决于系统 WebView 版本。
-- 所有数据默认只在本机；只有自己在设置里配了 WebDAV 并手动触发（或显式打开自动拉取）时，
-  才会把不含 Cookie 的同步包传到那台服务器。
+- 所有数据默认只在本机；只有自己配了 WebDAV 并手动触发（或显式打开自动拉取）时，
+  才会把不含 Cookie 的同步包传到那台服务器；局域网同步也只在打开「数据同步」页时启动，
+  数据点对点直传，收到的一方要确认才会覆盖。
 
 ## 已知问题与排查
 

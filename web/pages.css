@@ -1587,6 +1587,156 @@
 .pill-note .ico {
   color: var(--accent);
   margin-top: 1px;
+  flex: none;
+}
+
+/* 同步包范围清单：两段小列表，压紧间距，别把卡片撑太高 */
+.pill-note .bundle-scope {
+  margin: 2px 0 8px;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.pill-note .bundle-scope:last-child {
+  margin-bottom: 0;
+}
+
+.pill-note .bundle-scope li {
+  margin: 1px 0;
+}
+
+.pill-note b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 风险提示：开了「同步登录信息」才出现，得比普通说明显眼一点 */
+.pill-note.warn {
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+  color: var(--text);
+}
+
+.pill-note.warn .ico {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------ 局域网同步 */
+
+/* 本机信息：一行小字，告诉用户「别人要填哪个地址」 */
+.lan-self-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.lan-peers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lan-peer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.lan-peer-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.lan-peer-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lan-peer-desc {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lan-peer-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+/* 设备行底色就是 --surface-2，普通按钮默认也是这个色，会「消失」在行里，
+   这里换成 --surface 并补一条描边，让两个按钮都看得出是按钮。 */
+.lan-peer .btn {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.lan-peer .btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+/* 鼠标悬停仍然要有反馈（上面那条规则把默认 hover 色盖掉了）。 */
+.lan-peer .btn:hover {
+  background: var(--surface-3);
+}
+
+.lan-peer .btn.primary:hover {
+  background: var(--accent);
+  filter: brightness(1.06);
+}
+
+/* 窄屏（手机竖屏）把按钮挪到下一行，别把设备名挤成省略号 */
+@media (max-width: 520px) {
+  .lan-peer {
+    flex-wrap: wrap;
+  }
+
+  .lan-peer-actions {
+    width: 100%;
+  }
+
+  .lan-peer-actions .btn {
+    flex: 1;
+  }
+}
+
+.lan-empty {
+  padding: 14px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.lan-manual {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lan-manual .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.lan-manual .btn {
+  flex: none;
 }
 
 /* ------------------------------------------------------------ 详情页补充 */

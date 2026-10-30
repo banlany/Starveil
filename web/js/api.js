@@ -206,6 +206,37 @@ export const api = {
   webdavDownload(url, username, password, allowInsecureTls = false) {
     return call('webdav_download', { url, username, password, allowInsecureTls });
   },
+  // 局域网同步：后端起一个本机 HTTP 服务（默认 23244）并用 UDP 23245 广播发现对方。
+  // 数据在 Rust 侧只当中转，真正的打包/合并仍然由前端的 importer 做。
+  lanSyncStart() {
+    return call('lan_sync_start');
+  },
+  lanSyncStop() {
+    return call('lan_sync_stop');
+  },
+  lanSyncStatus() {
+    return call('lan_sync_status');
+  },
+  lanSyncPeers() {
+    return call('lan_sync_peers');
+  },
+  /// 把自己这一份数据交给后端缓存，别的设备来拉时拿到的就是它。
+  lanSyncPublish(content) {
+    return call('lan_sync_publish', { content });
+  },
+  /// 取走尚未处理的对端配置包（取走即清空，避免重复弹窗）。
+  lanSyncInbox() {
+    return call('lan_sync_inbox');
+  },
+  lanSyncPull(address, port) {
+    return call('lan_sync_pull', { address, port });
+  },
+  lanSyncPush(address, port, content) {
+    return call('lan_sync_push', { address, port, content });
+  },
+  lanSyncProbe(address, port) {
+    return call('lan_sync_probe', { address, port });
+  },
   openUrl(url) {
     return call('open_url', { url });
   },
@@ -215,6 +246,10 @@ export const api = {
   quitApp() {
     return call('quit_app');
   },
+  /// 结束应用：安卓走 `finishAffinity`（正常关栈），桌面等同 quitApp。
+  exitApp() {
+    return call('exit_app');
+  },
   /// 屏幕方向：`auto` / `portrait` / `landscape`。桌面端是空实现，不报错。
   setScreenOrientation(mode) {
     return call('set_screen_orientation', { mode });
@@ -222,6 +257,10 @@ export const api = {
   /// 安卓系统栏配色：`color` 为 `#RRGGBB`，`light` 表示背景浅、图标用深色。桌面端空实现。
   setSystemBar(color, light) {
     return call('set_system_bar', { color, light });
+  },
+  /// 安卓沉浸式全屏：藏起/恢复系统栏。桌面端空实现（用浏览器 Fullscreen API）。
+  setImmersive(enabled) {
+    return call('set_immersive', { enabled });
   },
   /// 安卓小窗（系统级画中画）。桌面端返回 false，前端会退回 HTML5 画中画。
   enterPictureInPicture() {

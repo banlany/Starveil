@@ -309,6 +309,9 @@
   color: rgba(255, 255, 255, 0.9);
   font-size: 12.5px;
   white-space: nowrap;
+  /* 不参与压缩：压缩会让按钮悄悄变窄，room.js 靠 scrollWidth 判断放不放得下，
+     一旦这里可缩就永远测不出溢出（spacer 之外的元素必须固定宽度）。 */
+  flex: none;
 }
 
 .player-controls .ctrl-text:hover {
@@ -321,6 +324,7 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex: none;
 }
 
 .volume-wrap {
@@ -513,6 +517,15 @@ input[type="range"]::-webkit-slider-thumb {
   transform: none;
 }
 
+/* 但安卓全屏（剧场模式）例外：暂停/缓冲时这两块也要收起来。
+   全屏里点一下画面就能唤回，没必要为了那颗「继续播放」让顶栏和底栏常驻黑条。 */
+html.is-theater .room-page.ui-idle .room-topbar,
+html.is-theater .room-page.ui-idle .player-controls {
+  opacity: 0;
+  pointer-events: none;
+  transform: none;
+}
+
 /* ------------------------------------------------------------ 聊天面板 */
 
 .room-chat {
@@ -608,6 +621,9 @@ body.is-resizing-chat .room-chat {
   font-weight: 400;
   color: var(--fg-subtle);
   white-space: nowrap;
+  /* 放不下时整体换到下一行（见 .chat-head-meta 的 wrap），
+     否则「看过 / 大航海」这两个数字会被裁掉一半。 */
+  flex: 0 1 auto;
 }
 
 .chat-head-data .online {
@@ -615,13 +631,6 @@ body.is-resizing-chat .room-chat {
   align-items: center;
   gap: 3px;
   color: var(--accent);
-}
-
-.chat-head-data .guard {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--warning);
 }
 
 .chat-head-data .sep {
@@ -632,17 +641,30 @@ body.is-resizing-chat .room-chat {
   margin-top: 5px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 4px 7px;
+  /* B 站这行有「平台 · 直播中 · 12.3万看过 · 456 大航海」四段，
+     聊天栏一窄就全被裁掉。允许换行，最多两行：状态一行、数据一行。 */
+  flex-wrap: wrap;
   color: rgba(255, 255, 255, 0.48);
   font-size: 11px;
-  /* 聊天栏窄的时候（手机横屏只有 250px），这一行的每段文字都会被压成一字一行。
-     统一不换行、超出裁掉，宁可少显示也不要竖排。 */
+  /* 每一段自己不许被压成一字一行。 */
   white-space: nowrap;
   overflow: hidden;
 }
 
 .chat-head-meta > * {
   flex: none;
+}
+
+/* 大航海：自己单独占一行，并且用蓝色（舰长是「付费身份」，和看过人数不是一类信息）。
+   `flex: 1 0 100%` 让它一定换行——聊天栏再宽也不和上一行挤在一起。 */
+.chat-head-meta .chat-head-guard {
+  flex: 1 0 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: #58a8ff;
 }
 
 .chat-head-meta .platform-badge {
@@ -925,12 +947,6 @@ body.is-resizing-chat .room-chat {
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
-}
-
-.chat-line.sc {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(251, 114, 153, 0.12);
 }
 
 .sc-tag {
@@ -1314,16 +1330,32 @@ body.is-resizing-chat .room-chat {
   color: var(--warning);
 }
 
+/* 聊天区里的 SC：底色由 room.js 按 SC 档位平铺（和「SC」面板那张卡片同一套配色），
+   这里只给兜底色。以前是一层粉红渐变 + 主题紫的用户名，跟 SC 面板对不上。 */
 .chat-line.sc {
   padding: 8px 10px;
   margin: 4px 0;
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(251, 114, 153, 0.2), rgba(251, 114, 153, 0.06));
-  border: 1px solid rgba(251, 114, 153, 0.25);
+  background: #ffe3ed;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: #2a1c0d;
+  text-shadow: none;
+}
+
+/* 用户名 / 正文 / 价格标签一律跟底色走（深色底时 room.js 会把 color 改成白色），
+   不再用主题色，否则浅金、浅蓝那几档底色上紫字会发灰。 */
+.chat-line.sc .who,
+.chat-line.sc .text,
+.chat-line.sc .sc-tag {
+  color: inherit;
 }
 
 .chat-line.sc .who {
-  color: var(--accent);
+  opacity: 0.66;
+}
+
+.chat-line.sc .sc-tag {
+  opacity: 0.9;
 }
 
 .chat-placeholder {
@@ -1374,19 +1406,6 @@ body.is-resizing-chat .room-chat {
   color: rgba(255, 255, 255, 0.9);
   font-size: 12.5px;
   font-weight: 600;
-}
-
-.chat-setting-input {
-  width: 62px;
-  height: 26px;
-  flex: none;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
-  text-align: center;
-  font-size: 11.5px;
-  outline: none;
 }
 
 .chat-setting-select {
@@ -1440,17 +1459,9 @@ body.is-resizing-chat .room-chat {
   flex: none;
 }
 
-.chat-setting-row input[type="range"] {
-  flex: 1;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.chat-setting-row input[type="range"]::-webkit-slider-thumb {
-  width: 12px;
-  height: 12px;
-  background: var(--accent);
-}
+/* 直播间设置面板全部改用下拉框（见 room.js 的 CS_PRESETS）：
+   窄面板里滑块拖不准、数字框在手机上弹键盘顶走面板。
+   这里不再有 range / number / 尾部数值标签，对应样式一并去掉。 */
 
 /* 直播间设置控件跟随主题色 */
 .chat-setting-row .switch[aria-checked="true"] {
@@ -1458,18 +1469,8 @@ body.is-resizing-chat .room-chat {
 }
 
 .chat-setting-select:focus,
-.chat-setting-input:focus,
 .chat-setting-textarea:focus {
   border-color: var(--accent);
-}
-
-.chat-setting-row em {
-  width: 40px;
-  flex: none;
-  text-align: right;
-  font-style: normal;
-  color: rgba(255, 255, 255, 0.42);
-  font-size: 11px;
 }
 
 .chat-setting-row .switch {
@@ -1688,25 +1689,11 @@ html[data-theme="light"] .chat-setting-field {
   color: #44444d;
 }
 
-html[data-theme="light"] .chat-setting-input,
 html[data-theme="light"] .chat-setting-select,
 html[data-theme="light"] .chat-setting-textarea {
   background: #ffffff;
   border-color: rgba(0, 0, 0, 0.13);
   color: #1b1b21;
-}
-
-html[data-theme="light"] .chat-setting-row em {
-  color: #6b6b76;
-}
-
-html[data-theme="light"] .chat-setting-row input[type="range"] {
-  background: rgba(0, 0, 0, 0.16);
-}
-
-html[data-theme="light"] .chat-setting-row input[type="range"]::-webkit-slider-thumb {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 html[data-theme="light"] .chat-setting-tip {

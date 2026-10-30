@@ -13,6 +13,8 @@ import {
   getSetting,
   loadFollow,
   loadLogin,
+  loadSearchHistory,
+  loadStats,
   resetSettings,
   saveLogin,
   setSetting,
@@ -20,7 +22,7 @@ import {
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 // 外部数据导入（starveil 备份 / dart profile / 中立同步包）与同步包构建。
-import { buildBundle, importData } from '../importer.js';
+import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
 // 改档位定义时只改 danmaku.js 一处。
 import { FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
@@ -43,7 +45,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.6.0';
+const FALLBACK_VERSION = '0.6.2';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -184,7 +186,9 @@ export function renderSettingsDetail(ctx, params = {}) {
 
   document.getElementById('view').appendChild(page);
   paint();
-  return () => {};
+  // 局域网同步的轮询要跟着页面生命周期走：离页必须停，否则定时器会一直
+  // 往已经移除的 DOM 上写，还会持续请求后端。
+  return () => stopSyncTimers();
 }
 
 // ---------------------------------------------------------------- 行构建
@@ -382,12 +386,8 @@ function detailSections(key, ctx, repaint) {
         {
           label: '主题颜色',
           rows: [
-            {
-              type: 'switch',
-              key: 'appearance.dynamicColor',
-              title: '动态取色',
-              desc: '从当前平台封面提取主题色（桌面端保持关闭时使用下面的固定色板）',
-            },
+            // 「动态取色」在 0.6.2 删除：它只在部分平台封面上取到过颜色，
+            // 移动端根本没有稳定的取色来源，留着只会让人以为主题色会自己变。
             { type: 'colors' },
           ],
         },
@@ -477,7 +477,9 @@ function detailSections(key, ctx, repaint) {
         {
           label: '直播间行为',
           rows: [
-            { type: 'switch', key: 'live.autoFullscreen', title: '进入直播自动全屏' },
+            // 「进入直播间自动全屏」只在「播放页设置 → 直播间」里保留一份：
+            // 这里原本也有一份 `live.autoFullscreen`，但从没被读过，两处各改各的
+            // 就是 0.6.2 修掉的「同一个设置不联动」。
             { type: 'switch', key: 'live.autoSwitchNext', title: '关播后自动换下一个', desc: '当前房间确认下播后，自动切到关注列表里的下一个直播间' },
             { type: 'switch', key: 'live.allowBackground', title: '允许后台继续播放', desc: '窗口失去焦点时保持视频与弹幕连接' },
             { type: 'switch', key: 'live.gesture', title: '滑动调节音量/亮度', desc: '播放页左右两侧上下滑动调节' },
@@ -815,6 +817,14 @@ function segmented(options, active, onPick) {
   return bar;
 }
 
+/// 局域网同步里显示包体大小：几百字节的包写成「0 KB」会让人以为什么都没收到。
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} 字节`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /// 把毫秒转成「2 小时 13 分」这类人话，统计卡片和排行都用它。
 function formatWatchTime(ms) {
   const seconds = Math.round((Number(ms) || 0) / 1000);
@@ -829,13 +839,92 @@ function formatWatchTime(ms) {
   return restHours ? `${days} 天 ${restHours} 小时` : `${days} 天`;
 }
 
+/// 同步包范围说明。WebDAV 与局域网打包的是同一份 `buildBundle()`，
+/// 清单直接取自 `bundleScope()`，避免「界面上说同步了、实际没同步」。
+/// 开关一改就要重绘，所以每次调用都现算，不缓存。
+function bundleScopeNote() {
+  const scope = bundleScope();
+  const list = (items) => items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+  return `<div class="pill-note">${icon('info', 16)}<div>
+    <b>同步包包含</b><ul class="bundle-scope">${list(scope.included)}</ul>
+    <b>不会同步（跟设备或凭据绑定）</b><ul class="bundle-scope">${list(scope.excluded)}</ul>
+  </div></div>`;
+}
+
+/// 「同步内容」卡片：决定同步包里带不带观看记录与登录信息。
+/// 本机备份是另一条路（落在自己磁盘上），不受这里的开关影响。
+function paintSyncScope(content, repaint) {
+  const scope = getSetting('sync', {}) || {};
+  const historyOn = scope.includeHistory !== false;
+  const accountsOn = scope.includeAccounts === true;
+
+  const card = document.createElement('div');
+  card.className = 'tool-card';
+  card.innerHTML = `
+    <h3>同步内容</h3>
+    <p>决定「局域网同步」和「WebDAV 同步」打包时带哪些数据。本机备份是导出到自己磁盘上的文件，
+       始终包含全部内容，不受这里影响。</p>
+    <div class="sync-form">
+      <div class="sync-toggles">
+        <div class="sync-toggle"><span>同步观看记录</span>
+          <button class="switch" id="sync-inc-history" aria-checked="${historyOn}"></button></div>
+        <div class="sync-toggle"><span>同步登录信息（Cookie）</span>
+          <button class="switch" id="sync-inc-accounts" aria-checked="${accountsOn}"></button></div>
+      </div>
+    </div>
+    <div id="sync-inc-warn"></div>`;
+  content.appendChild(card);
+
+  const warn = card.querySelector('#sync-inc-warn');
+  const paintWarn = (on) => {
+    if (!on) {
+      warn.innerHTML = '';
+      return;
+    }
+    warn.innerHTML = `<div class="pill-note warn">${icon('info', 16)}<div>
+      登录 Cookie 会写进同步包：WebDAV 上那份 JSON 谁拿到都能用，
+      同一 Wi-Fi 下任何知道你地址的人也能从局域网同步端口<b>整包拉走</b>。
+      只在完全信任的网络与网盘上用。</div></div>`;
+  };
+  paintWarn(accountsOn);
+
+  card.querySelector('#sync-inc-history').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    const next = button.getAttribute('aria-checked') !== 'true';
+    button.setAttribute('aria-checked', String(next));
+    setSetting('sync.includeHistory', next);
+    repaint();
+  });
+
+  card.querySelector('#sync-inc-accounts').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    const next = button.getAttribute('aria-checked') !== 'true';
+    button.setAttribute('aria-checked', String(next));
+    setSetting('sync.includeAccounts', next);
+    repaint();
+  });
+}
+
+// 「数据同步」页的局域网轮询定时器。页面级单例：进页启动、离页停掉。
+let syncPollTimer = null;
+function stopSyncTimers() {
+  if (syncPollTimer) {
+    clearInterval(syncPollTimer);
+    syncPollTimer = null;
+  }
+}
+
 function paintSync(content, ctx, repaint) {
+  // 定时器在「数据同步」页内自己管：离开页面（renderSettingsDetail 的 dispose）要停掉，
+  // 重新进入或点「重画」时先把旧的清掉，否则两次轮询会同时往 DOM 里写。
+  stopSyncTimers();
   // ① 本机备份：仍是原来的导出一份 JSON / 导入回来。
   const backup = document.createElement('div');
   backup.className = 'tool-card';
   backup.innerHTML = `
     <h3>本机数据备份</h3>
-    <p>导出设置、关注列表、观看记录和登录信息为一个 JSON 文件；换机器或重装时可以再导入回来。</p>
+    <p>导出设置、关注列表、观看记录、搜索历史、观看统计和登录信息为一个 JSON 文件；
+       换机器或重装时可以再导入回来。</p>
     <div class="tool-actions">
       <button class="btn primary" id="sync-export">${icon('download', 16)} 导出备份</button>
       <button class="btn" id="sync-import">${icon('upload', 16)} 导入备份</button>
@@ -843,13 +932,14 @@ function paintSync(content, ctx, repaint) {
   const backupNote = document.createElement('div');
   backupNote.className = 'pill-note';
   backupNote.style.marginTop = '14px';
-  backupNote.innerHTML = `${icon('info', 16)}<div>当前版本使用本机 localStorage 保存数据，不会上传到服务器。导入会覆盖同名类别的数据。</div>`;
+  backupNote.innerHTML = `${icon('info', 16)}<div>备份文件存在你自己的磁盘上，所以<b>含登录 Cookie 与 WebDAV 口令</b>（同步包不含这两项）。
+      数据平时只在本机 localStorage 里，不上传服务器；导入会覆盖同名类别的数据。</div>`;
   backup.appendChild(backupNote);
   content.appendChild(backup);
 
   backup.querySelector('#sync-export').addEventListener('click', async () => {
     const payload = {
-      version: 1,
+      version: 2,
       app: '星幕直播 Starveil',
       exportedAt: new Date().toISOString(),
       settings: state.settings,
@@ -861,6 +951,9 @@ function paintSync(content, ctx, repaint) {
       // 半写入或手工改坏，未捕获的异常会让「导出备份」点了毫无反应。
       follows: loadFollow(),
       history: state.history,
+      // 0.6.2 补上：这两项以前既不在备份里也不在同步包里，换机后统计面板永远是空的。
+      search: loadSearchHistory(),
+      stats: loadStats(),
       // 登录信息（Cookie）一并导出，换机后导入即可恢复登录态。
       accounts: collectAccounts(),
     };
@@ -870,7 +963,221 @@ function paintSync(content, ctx, repaint) {
   });
   backup.querySelector('#sync-import').addEventListener('click', () => pickJsonFile(runImport));
 
-  // ② 从 dart_simple_live 迁移：直接吃它导出的 profile JSON。
+  // ② 同步内容：决定后面两块（局域网 / WebDAV）打包时带什么。
+  // 开关一改就 repaint——清单文案是现算的，不重绘会显示上一个状态。
+  paintSyncScope(content, repaint);
+
+  // ③ 局域网同步：同一 Wi-Fi 下的设备自动互相发现，点一下就能拉取/发送整包配置。
+  // 传输走本机起的 HTTP 服务（见 src-tauri/src/lan_sync.rs），不经任何第三方服务器。
+  const lan = document.createElement('div');
+  lan.className = 'tool-card';
+  lan.innerHTML = `
+    <h3>局域网同步</h3>
+    <p>同一 Wi-Fi 下打开了本页的设备会自动互相发现。可以直接拉取对方的配置覆盖本机，
+       也可以把自己的配置发过去覆盖对方；数据只在两台设备之间传输。</p>
+    <div class="lan-self" id="lan-self"></div>
+    <div class="lan-peers" id="lan-peers"></div>
+    <div class="lan-manual">
+      <input class="input" id="lan-address" placeholder="没找到？手动填对方地址，如 192.168.1.20:23244" />
+      <button class="btn" id="lan-connect">${icon('link', 16)} 连接</button>
+    </div>
+    <div id="lan-state"></div>`;
+  content.appendChild(lan);
+  const lanScope = document.createElement('div');
+  lanScope.style.marginTop = '14px';
+  lanScope.innerHTML = bundleScopeNote();
+  lan.appendChild(lanScope);
+
+  const lanSelf = lan.querySelector('#lan-self');
+  const lanPeers = lan.querySelector('#lan-peers');
+  const lanState = lan.querySelector('#lan-state');
+  const showLanState = (text, tone = 'info') => {
+    lanState.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon(
+      tone === 'error' ? 'info' : tone === 'success' ? 'check' : 'info',
+      16
+    )}<div>${escapeHtml(text)}</div></div>`;
+  };
+
+  // 发现列表每 2 秒刷一次（UDP 广播本身 3 秒一次），顺带把收到的包捞出来。
+  // 发布自己的数据放在单独的 15 秒节拍上：打包要遍历关注/记录/统计，不必跟着刷新走。
+  let lastPublish = 0;
+  let busy = false;
+  const publish = async () => {
+    try {
+      await api.lanSyncPublish(JSON.stringify(buildBundle()));
+      lastPublish = Date.now();
+    } catch (error) {
+      console.warn('发布本机数据失败', error);
+    }
+  };
+
+  const renderPeers = (peers) => {
+    if (!peers.length) {
+      lanPeers.innerHTML = `<div class="lan-empty">正在搜索同一局域网内的设备…</div>`;
+      return;
+    }
+    lanPeers.innerHTML = '';
+    for (const peer of peers) {
+      const row = document.createElement('div');
+      row.className = 'lan-peer';
+      row.innerHTML = `
+        <div class="lan-peer-main">
+          <div class="lan-peer-name">${escapeHtml(peer.name || '未知设备')}</div>
+          <div class="lan-peer-desc">${escapeHtml(peer.platform || '')}${
+            peer.version ? ` · ${escapeHtml(peer.version)}` : ''
+          } · ${escapeHtml(`${peer.address}:${peer.port}`)}</div>
+        </div>
+        <div class="lan-peer-actions">
+          <button class="btn small" data-act="pull">拉取配置</button>
+          <button class="btn small primary" data-act="push">发送配置</button>
+        </div>`;
+      const peerLabel = peer.name || `${peer.address}:${peer.port}`;
+      row.querySelector('[data-act="pull"]').addEventListener('click', async () => {
+        showLanState(`正在从「${peerLabel}」拉取配置…`);
+        try {
+          const payload = await api.lanSyncPull(peer.address, peer.port);
+          if (!payload) throw new Error('浏览器演示模式没有局域网服务');
+          const bundle = JSON.parse(payload);
+          const ok = await confirmDialog({
+            title: '拉取对方的配置',
+            text: `「${peerLabel}」的${describeBundleContents(bundle)}会覆盖本机同名数据，本机独有的条目不会保留。`,
+            okLabel: '覆盖本机',
+            danger: true,
+          });
+          if (!ok) {
+            showLanState('已取消，本机数据没有改动');
+            return;
+          }
+          const summary = await applyImport(bundle);
+          setSetting('sync.lastSyncAt', Date.now());
+          showLanState(`已从「${peerLabel}」同步：${describeImport(summary)}，正在重新载入…`, 'success');
+          setTimeout(() => location.reload(), 900);
+        } catch (error) {
+          showLanState(`拉取失败：${String(error?.message || error)}`, 'error');
+        }
+      });
+      row.querySelector('[data-act="push"]').addEventListener('click', async () => {
+        const outgoing = buildBundle();
+        const ok = await confirmDialog({
+          title: '发送配置给对端',
+          text: `本机的${describeBundleContents(outgoing)}会覆盖「${peerLabel}」上的同名数据，对方那边无法撤销。`,
+          okLabel: '发送',
+        });
+        if (!ok) return;
+        showLanState(`正在发送给「${peerLabel}」…`);
+        try {
+          const size = await api.lanSyncPush(peer.address, peer.port, JSON.stringify(outgoing));
+          setSetting('sync.lastSyncAt', Date.now());
+          showLanState(`已发送，对端收到 ${formatBytes(size?.bytes)}`, 'success');
+        } catch (error) {
+          showLanState(`发送失败：${String(error?.message || error)}`, 'error');
+        }
+      });
+      lanPeers.appendChild(row);
+    }
+  };
+
+  // 本机地址要在「一个设备都没发现」时也显示——那正是对方需要手填地址的场景。
+  const renderSelf = (status) => {
+    if (!status?.running) {
+      lanSelf.innerHTML = '';
+      return;
+    }
+    const addresses = status.addresses?.length
+      ? status.addresses.map((ip) => `${ip}:${status.http_port}`).join(' 或 ')
+      : '（没拿到局域网地址）';
+    lanSelf.innerHTML = `<div class="lan-self-line">${icon('signal', 14)} 本机：${escapeHtml(
+      status.device?.name || '未知设备'
+    )} · ${escapeHtml(addresses)}</div>`;
+  };
+
+  const tick = async () => {
+    try {
+      const status = await api.lanSyncStatus();
+      if (!status) {
+        lanSelf.innerHTML = '';
+        lanPeers.innerHTML = `<div class="lan-empty">浏览器预览模式没有局域网服务，请在应用内使用。</div>`;
+        return;
+      }
+      if (!status.running) {
+        lanPeers.innerHTML = `<div class="lan-empty">${
+          status.error ? escapeHtml(status.error) : '同步服务未启动'
+        }</div>`;
+        lanSelf.innerHTML = '';
+        return;
+      }
+      // 每 15 秒把最新的一份数据交给后端，别人来拉时拿到的是当下的状态。
+      if (Date.now() - lastPublish > 15000) await publish();
+      const peers = (await api.lanSyncPeers()) || [];
+      renderSelf(status);
+      renderPeers(peers);
+      if (busy) return;
+      const inbox = (await api.lanSyncInbox()) || [];
+      if (!inbox.length) return;
+      busy = true;
+      const item = inbox[inbox.length - 1];
+      // 先解包：解析失败要在这里就露出来，别卡在 busy=true 上让轮询再也不继续。
+      let incoming;
+      try {
+        incoming = JSON.parse(item.payload);
+      } catch {
+        busy = false;
+        showLanState('收到的配置包不是合法 JSON，已丢弃', 'error');
+        return;
+      }
+      const ok = await confirmDialog({
+        title: '收到配置包',
+        text: `「${item.from || item.address}」发来一份配置（${formatBytes(item.bytes)}）：${describeBundleContents(
+          incoming
+        )}。应用后会覆盖本机同名数据。`,
+        okLabel: '应用',
+        danger: true,
+      });
+      busy = false;
+      if (!ok) {
+        showLanState('已忽略这次收到的配置');
+        return;
+      }
+      try {
+        const summary = await applyImport(incoming);
+        setSetting('sync.lastSyncAt', Date.now());
+        showLanState(`已应用对端配置：${describeImport(summary)}，正在重新载入…`, 'success');
+        setTimeout(() => location.reload(), 900);
+      } catch (error) {
+        showLanState(`应用失败：${String(error?.message || error)}`, 'error');
+      }
+    } catch (error) {
+      lanPeers.innerHTML = `<div class="lan-empty">${escapeHtml(String(error?.message || error))}</div>`;
+    }
+  };
+
+  lan.querySelector('#lan-connect').addEventListener('click', async () => {
+    const raw = lan.querySelector('#lan-address').value.trim();
+    if (!raw) return;
+    const [address, portText] = raw.replace(/^https?:\/\//, '').split(':');
+    const port = Number(portText) || 23244;
+    showLanState(`正在连接 ${address}:${port}…`);
+    try {
+      const peer = await api.lanSyncProbe(address, port);
+      if (!peer) throw new Error('浏览器演示模式没有局域网服务');
+      showLanState(`已找到「${peer.name || address}」，它下面的按钮可以直接拉取或发送`, 'success');
+      await tick();
+    } catch (error) {
+      showLanState(`连不上 ${address}:${port}：${String(error?.message || error)}`, 'error');
+    }
+  });
+
+  // 启动服务（已在跑就只返回状态），然后开始轮询。离开页面时由 dispose 清掉定时器。
+  (async () => {
+    await api.lanSyncStart().catch((error) => showLanState(String(error?.message || error), 'error'));
+    await tick();
+    if (!syncPollTimer) syncPollTimer = setInterval(tick, 2000);
+  })();
+
+
+  // ④ 从 dart_simple_live 迁移：直接吃它导出的 profile JSON。
+  // 这里只建节点，真正插入 DOM 放到 WebDAV 之后——让「局域网 / WebDAV」两条同步路子相邻，
+  // 迁移入口排在最后。
   const migrate = document.createElement('div');
   migrate.className = 'tool-card';
   migrate.innerHTML = `
@@ -881,7 +1188,6 @@ function paintSync(content, ctx, repaint) {
       <button class="btn primary" id="sync-dart">${icon('upload', 16)} 选择 profile 文件</button>
     </div>
     <div id="import-report"></div>`;
-  content.appendChild(migrate);
 
   const report = migrate.querySelector('#import-report');
 
@@ -889,12 +1195,7 @@ function paintSync(content, ctx, repaint) {
 
   async function runImport(file) {
     try {
-      const summary = importData(JSON.parse(await file.text()));
-      // 导入的 Cookie 要重新注入后端，否则页面看着「已登录」但取流仍是游客。
-      for (const platform of summary.accounts) {
-        const login = loadLogin(platform);
-        if (login?.cookie) await api.setCookie(platform, login.cookie).catch(() => {});
-      }
+      const summary = await applyImport(JSON.parse(await file.text()));
       report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('check', 16)}<div>${escapeHtml(
         describeImport(summary)
       )}，正在重新载入…</div></div>`;
@@ -906,14 +1207,17 @@ function paintSync(content, ctx, repaint) {
     }
   }
 
-  // ③ WebDAV 同步：整包上传/下载，不做字段级合并。
+  // ④ WebDAV 同步：整包上传/下载，不做字段级合并。
+  // 和上面的局域网同步是两条独立的路：WebDAV 靠自己的网盘当中转（跨网络也能用），
+  // 局域网同步只在同一 Wi-Fi 内直连。0.6.1 之前这里叫「WebDAV 局域网同步」，
+  // 名字和功能对不上，0.6.2 拆开成两块。
   const config = state.settings.sync.webdav;
   const sync = document.createElement('div');
   sync.className = 'tool-card';
   sync.innerHTML = `
-    <h3>WebDAV 局域网同步</h3>
-    <p>把关注、观看记录与设置打包成一个 JSON 传到自己的 WebDAV（群晖、坚果云、Nextcloud 等），
-       多台机器共用同一份数据。</p>
+    <h3>WebDAV 同步</h3>
+    <p>把整份同步包（内容见本节末尾的清单）传到自己的 WebDAV（群晖、坚果云、Nextcloud 等），
+       多台机器共用同一份数据；跨网络也能用。</p>
     <div class="sync-form">
       <label class="sync-field"><span>服务器地址</span>
         <input class="input" id="dav-url" placeholder="https://nas.local:5006/dav/starveil/" value="${escapeHtml(config.url)}" /></label>
@@ -994,18 +1298,25 @@ function paintSync(content, ctx, repaint) {
 
   sync.querySelector('#dav-download').addEventListener('click', async () => {
     const cfg = readForm();
-    const ok = await confirmDialog({
-      title: '下载覆盖本机',
-      text: '云端的关注、观看记录与设置会覆盖本机同名数据，本机独有的条目不会保留。',
-      okLabel: '覆盖',
-      danger: true,
-    });
-    if (!ok) return;
+    // 先下载再确认：不知道云端那份到底带了什么（对方可能关着历史/登录信息同步），
+    // 泛泛地写「关注、观看记录与设置」会让人误判。
+    showState('正在读取云端文件…');
     try {
       const payload = await api.webdavDownload(target(), cfg.username, cfg.password, cfg.insecureTls);
-      importData(JSON.parse(payload.content));
+      const incoming = JSON.parse(payload.content);
+      const ok = await confirmDialog({
+        title: '下载覆盖本机',
+        text: `云端的${describeBundleContents(incoming)}会覆盖本机同名数据，本机独有的条目不会保留。`,
+        okLabel: '覆盖',
+        danger: true,
+      });
+      if (!ok) {
+        showState('已取消，本机数据没有改动');
+        return;
+      }
+      const summary = await applyImport(incoming);
       setSetting('sync.lastSyncAt', Date.now());
-      showState('已从云端同步，正在重新载入…');
+      showState(`已从云端同步：${describeImport(summary)}，正在重新载入…`);
       setTimeout(() => location.reload(), 900);
     } catch (error) {
       showState(String(error), 'error');
@@ -1015,9 +1326,17 @@ function paintSync(content, ctx, repaint) {
   const tip = document.createElement('div');
   tip.className = 'pill-note';
   tip.style.marginTop = '14px';
-  tip.innerHTML = `${icon('info', 16)}<div>同步包<b>不含登录 Cookie</b>；账号密码以明文存在本机设置里，别在公用电脑上保存。
+  tip.innerHTML = `${icon('info', 16)}<div>账号密码以明文存在本机设置里，别在公用电脑上保存。
     冲突处理只有「整包覆盖」，不做字段级合并；自动拉取只在云端比本机新时才应用。</div>`;
   sync.appendChild(tip);
+
+  const syncScope = document.createElement('div');
+  syncScope.style.marginTop = '10px';
+  syncScope.innerHTML = bundleScopeNote();
+  sync.appendChild(syncScope);
+
+  // 迁移卡片最后插入（节点在上面就建好了，这里只决定顺序）。
+  content.appendChild(migrate);
 }
 
 /// 选一个 JSON 文件交给回调处理，导入入口（备份/迁移）共用。
@@ -1034,7 +1353,12 @@ function pickJsonFile(onPick) {
 
 /// 把导入摘要翻成一句人话。
 function describeImport(summary) {
-  const parts = [`关注 ${summary.follows} 个`, `观看记录 ${summary.history} 条`];
+  // 0 条的项不列：关了「同步观看记录」时还写「观看记录 0 条」会让人以为被清空了。
+  const parts = [];
+  if (summary.follows) parts.push(`关注 ${summary.follows} 个`);
+  if (summary.history) parts.push(`观看记录 ${summary.history} 条`);
+  if (summary.search) parts.push(`搜索历史 ${summary.search} 条`);
+  if (summary.stats) parts.push(`观看统计 ${summary.stats} 个主播`);
   if (summary.settings) parts.push(`设置 ${summary.settings} 项`);
   if (summary.accounts?.length) parts.push(`登录 ${summary.accounts.length} 个平台`);
   const skipped = Object.entries(summary.skipped || {});
@@ -1042,7 +1366,34 @@ function describeImport(summary) {
     parts.push(`跳过 ${skipped.map(([platform, count]) => `${PLATFORM_META[platform]?.name || platform} ${count} 条`).join('、')}（尚未支持该平台）`);
   }
   if (summary.truncated) parts.push(`超出上限丢弃 ${summary.truncated} 条`);
-  return `导入完成：${parts.join('，')}`;
+  return `导入完成：${parts.length ? parts.join('，') : '没有可导入的内容'}`;
+}
+
+/// 一份同步包里实际带了什么，用在「即将覆盖」的确认弹窗上。
+/// 直接数包里的键而不是读本机设置——对端开着哪些开关，只有包自己知道。
+function describeBundleContents(bundle) {
+  const parts = [];
+  if (bundle.follow?.length) parts.push(`关注 ${bundle.follow.length} 个`);
+  if (bundle.history?.length) parts.push(`观看记录 ${bundle.history.length} 条`);
+  if (bundle.search?.length) parts.push(`搜索历史 ${bundle.search.length} 条`);
+  const rooms = bundle.stats?.rooms ? Object.keys(bundle.stats.rooms).length : 0;
+  if (rooms) parts.push(`观看统计 ${rooms} 个主播`);
+  const accounts = bundle.accounts ? Object.keys(bundle.accounts).length : 0;
+  if (accounts) parts.push(`登录信息 ${accounts} 个平台`);
+  if (bundle.settings) parts.push('设置一整份');
+  if (!parts.length) return '（空包）';
+  return parts.join('、');
+}
+
+/// 导入一份数据并把 Cookie 注回后端。文件导入 / WebDAV / 局域网三条路共用：
+/// 少了注入这一步，页面看着「已登录」，取流其实还是游客。
+async function applyImport(data) {
+  const summary = importData(data);
+  for (const platform of summary.accounts || []) {
+    const login = loadLogin(platform);
+    if (login?.cookie) await api.setCookie(platform, login.cookie).catch(() => {});
+  }
+  return summary;
 }
 
 /// 把 WebDAV 的目录地址与文件名拼成完整 URL，容忍多写/少写斜杠。

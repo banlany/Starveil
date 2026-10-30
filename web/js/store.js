@@ -57,7 +57,6 @@ export function clearLogin(platform) {
 export const DEFAULT_SETTINGS = {
   theme: 'dark',
   accent: '#fb7299',
-  dynamicColor: false,
   disclaimerAccepted: false,
   firstRun: true,
   home: {
@@ -69,7 +68,6 @@ export const DEFAULT_SETTINGS = {
   appearance: {
     theme: 'dark',
     accent: '#fb7299',
-    dynamicColor: false,
     density: 'comfortable',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
     orientation: 'auto',
@@ -91,7 +89,9 @@ export const DEFAULT_SETTINGS = {
     superChatAutoRemove: true,
   },
   live: {
-    autoFullscreen: false,
+    // 「进入直播间自动全屏」只有一份：`player.autoFullscreen`。
+    // 0.6.1 之前这里还有一份 `live.autoFullscreen`，两处各改各的互不影响，
+    // 用户改了哪一处都像是「设置没生效」——0.6.2 把这份删掉了。
     autoSwitchNext: false,
     allowBackground: true,
     gesture: true,
@@ -144,6 +144,10 @@ export const DEFAULT_SETTINGS = {
     once: false,
   },
   sync: {
+    // 同步包里要不要带这两类数据。默认：观看记录跟着走，登录信息不跟——
+    // Cookie 一进包，就跟着 WebDAV 的远端文件和局域网里的 HTTP 服务一起裸奔。
+    includeHistory: true,
+    includeAccounts: false,
     // WebDAV 局域网同步。密码明文存在本机 localStorage（设置页有风险提示），
     // 只在本机使用、不上传任何第三方。
     webdav: {
@@ -225,6 +229,15 @@ export function loadSettings() {
   if (stored.accent && !stored.appearance?.accent) {
     settings.appearance.accent = stored.accent;
   }
+  // 0.6.2 删掉的设置项，从落盘数据里清掉，避免导出备份时又把这些死字段带出去。
+  delete settings.dynamicColor;
+  delete settings.appearance?.dynamicColor;
+  // 「进入直播间自动全屏」原先在 live 段里也有一份，从没被读过。老版本改过它的人
+  // 升级后会看到开关自己关了，这里把那一次选择补到唯一生效的 player 段上。
+  if (stored.live?.autoFullscreen === true && stored.player?.autoFullscreen === undefined) {
+    settings.player.autoFullscreen = true;
+  }
+  delete settings.live?.autoFullscreen;
   return settings;
 }
 
@@ -657,6 +670,57 @@ export function addSearchHistory(keyword) {
 export function clearSearchHistory() {
   state.search.recent = [];
   localStorage.removeItem(SEARCH_KEY);
+}
+
+/// 导出/同步要用到的完整搜索历史（`state.search.recent` 与落盘同源，这里只是给调用方一份拷贝）。
+export function loadSearchHistory() {
+  return loadSearch();
+}
+
+/// 导入时整段替换搜索历史。仍然按 12 条上限截断，避免外部包把列表撑爆。
+export function replaceSearchHistory(list) {
+  const cleaned = (Array.isArray(list) ? list : [])
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  state.search.recent = cleaned;
+  if (cleaned.length) localStorage.setItem(SEARCH_KEY, JSON.stringify(cleaned));
+  else localStorage.removeItem(SEARCH_KEY);
+  return cleaned.length;
+}
+
+/// 导入时整段替换观看统计。只认结构对的包：`{v:1, rooms:{...}}`，
+/// 其它一律当空，避免一个坏包把统计写成一堆读不出来的东西。
+/// 写之前仍走 `saveStats` 的裁剪与体积保护——统计本来就是最容易顶到 5MB 上限的一项。
+export function replaceStats(stats) {
+  if (!stats || typeof stats !== 'object' || !stats.rooms || typeof stats.rooms !== 'object') {
+    return 0;
+  }
+  const rooms = {};
+  for (const [key, entry] of Object.entries(stats.rooms)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const platform = String(entry.platform || '').trim();
+    const roomId = String(entry.room_id ?? '').trim();
+    if (!platform || !roomId) continue;
+    const daily = {};
+    for (const [day, value] of Object.entries(entry.daily || {})) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !value || typeof value !== 'object') continue;
+      daily[day] = { ms: Math.max(0, Number(value.ms) || 0), visits: Math.max(0, Number(value.visits) || 0) };
+    }
+    rooms[`${platform}:${roomId}`] = {
+      platform,
+      room_id: roomId,
+      user_name: String(entry.user_name || ''),
+      cover: String(entry.cover || ''),
+      total_ms: Math.max(0, Number(entry.total_ms) || 0),
+      visits: Math.max(0, Number(entry.visits) || 0),
+      last_at: Math.max(0, Number(entry.last_at) || 0),
+      daily,
+    };
+  }
+  const next = { v: 1, rooms };
+  saveStats(next);
+  return Object.keys(rooms).length;
 }
 
 // ---------------------------------------------------------------- 其他

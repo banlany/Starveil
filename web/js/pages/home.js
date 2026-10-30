@@ -152,12 +152,15 @@ export function renderHome(ctx) {
 
   // 「刷新推荐」按钮放在顶栏，和搜索按钮同一排。
   // 页面本身只提供动作，按钮本身由 app.js 统一管理。
-  ctx.setHomeRefresh(() => {
+  const refreshHome = () => {
     if (state.home.loading) return;
     ctx.setHomeRefreshing(true);
     view.scrollTop = 0;
-    load(true).finally(() => ctx.setHomeRefreshing(false));
-  });
+    return load(true).finally(() => ctx.setHomeRefreshing(false));
+  };
+  ctx.setHomeRefresh(refreshHome);
+  // 下拉刷新走同一个动作：两个入口刷的是同一份数据，不会互相打架。
+  ctx.setPullRefresh(refreshHome);
 
   view.appendChild(page);
 
@@ -165,5 +168,6 @@ export function renderHome(ctx) {
   // 需要更多内容时点底部的「加载更多」，把网络和渲染放到用户主动操作之后。
   return () => {
     ctx.setHomeRefresh(null);
+    ctx.setPullRefresh(null);
   };
 }

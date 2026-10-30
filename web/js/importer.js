@@ -13,12 +13,17 @@ import { canonicalImage, ENABLED_PLATFORMS, normalizePlatform, roomUrl } from '.
 import {
   ACCOUNT_PLATFORMS,
   clone,
+  collectAccounts,
   followKey,
   HISTORY_LIMIT,
   loadFollow,
   loadHistory,
   loadLogin,
+  loadSearchHistory,
+  loadStats,
   merge,
+  replaceSearchHistory,
+  replaceStats,
   saveFollow,
   saveHistory,
   saveLogin,
@@ -29,13 +34,58 @@ import {
 
 const DART_SCHEMA = 'simple_live_profile';
 /// 中立包/备份的版本号，改结构时递增，导入侧按版本做兼容。
-export const BUNDLE_VERSION = 1;
+/// v2 起补上了搜索历史与观看统计（v1 只有关注 / 记录 / 设置）。
+export const BUNDLE_VERSION = 2;
 
-/// 参与同步与导出的本机数据。**不含登录 Cookie**——同步包要传到 WebDAV，
-/// 凭据不应该跟着一起漂。
+/// 同步包里到底有什么、为什么有些东西不在里面。
+///
+/// 这份清单是给设置页直接渲染的**唯一口径**：WebDAV 和局域网两条路打包的
+/// 都是同一个 `buildBundle()`，文案要是各写一份，改了包忘了改说明就会
+/// 变成「界面上说同步了，实际没同步」。加字段时先改这里。
+///
+/// 「观看记录」和「登录 Cookie」受设置页的两个开关控制，清单跟着实时变。
+export function bundleScope() {
+  const { includeHistory, includeAccounts } = bundleOptions();
+  const included = ['设置（不含 WebDAV 口令）', '关注列表'];
+  if (includeHistory) included.push('观看记录');
+  included.push('搜索历史', '观看统计');
+  if (includeAccounts) included.push('登录 Cookie（哔哩哔哩 / 斗鱼）');
+
+  const excluded = [
+    // 凭据：WebDAV 口令永远不进包，它本身是上传通道的钥匙。
+    'WebDAV 口令',
+    // 首次运行状态：换个设备就该各自确认一次免责声明，包不替对方做决定。
+    '首次运行状态（免责声明确认）',
+    // 跟物理设备绑定：窗口位置搬到手机上没有意义，聊天栏宽度换屏就错位。
+    '窗口位置与大小、聊天栏宽度',
+    // 按平台记的「第几档清晰度」：桌面存 1080 搬到手机上会直接卡死。
+    '各平台记住的清晰度',
+  ];
+  // 自己关掉的两项排在前面，免得用户以为漏了。
+  if (!includeAccounts) excluded.unshift('登录 Cookie（已关闭）');
+  if (!includeHistory) excluded.unshift('观看记录（已关闭）');
+  return { included, excluded };
+}
+
+/// 读当前设置里的同步取舍。默认值写在这里，设置页只负责翻开关。
+export function bundleOptions() {
+  const sync = state.settings?.sync ?? {};
+  return {
+    // 观看记录默认跟着走，只有显式关掉才不带。
+    includeHistory: sync.includeHistory !== false,
+    // Cookie 默认不带，必须用户显式打开——打开后它会进 WebDAV 的远端文件，
+    // 也会被局域网里任何知道本机地址的人 GET 走。
+    includeAccounts: sync.includeAccounts === true,
+  };
+}
+
+/// 参与同步与导出的本机数据。
 ///
 /// 输出的是「中立格式」（驼峰字段），和 dart 的 toJson 命名对齐，
 /// 这样同一个文件既能喂给自己的导入逻辑，也方便别的工具处理。
+///
+/// 有两段是可选的（`history` / `accounts`），由「设置 → 数据同步 → 同步内容」
+/// 的两个开关决定；关掉时**整段不写**而不是写空值。
 export function buildBundle() {
   // 设置里含 WebDAV 账号口令，而这份包本身就是要 PUT 到 WebDAV 上的，
   // 口令跟着一起传等于把自己的网盘密码写进远端文件。这里先摘掉。
@@ -43,7 +93,13 @@ export function buildBundle() {
   if (settings.sync?.webdav) {
     delete settings.sync.webdav.password;
   }
-  return {
+  // 「首次运行状态」只对产生它的那台设备有意义：局域网同步可能发给别人的机器，
+  // 不能顺手替对方把免责声明点掉；换机后也该各自确认一次。
+  delete settings.disclaimerAccepted;
+  delete settings.firstRun;
+
+  const { includeHistory, includeAccounts } = bundleOptions();
+  const bundle = {
     version: BUNDLE_VERSION,
     app: '星幕直播 Starveil',
     exportedAt: new Date().toISOString(),
@@ -55,20 +111,36 @@ export function buildBundle() {
       title: item.title || '',
       face: item.avatar || '',
       cover: item.cover || '',
+      area: item.area || '',
       tag: item.tag || '默认',
       addedAt: Number(item.added_at) || 0,
       clicks: Number(item.clicks) || 0,
       lastVisit: Number(item.lastVisit) || 0,
     })),
-    history: loadHistory().map((item) => ({
+    // 搜索历史与观看统计在 0.6.2 之前既不在备份里也不在同步包里，
+    // 换机器/多端同步之后统计面板永远是空的。
+    search: loadSearchHistory(),
+    stats: loadStats(),
+  };
+
+  // 关闭时会**整段不写**，导入侧看到没这个键就保持本机原样——
+  // 写个空数组反而会把对方的记录清空。
+  if (includeHistory) {
+    bundle.history = loadHistory().map((item) => ({
       platform: item.platform,
       roomId: String(item.room_id ?? ''),
       userName: item.user_name || '',
       title: item.title || '',
       face: item.cover || '',
+      area: item.area || '',
       updatedAt: Number(item.watched_at) || 0,
-    })),
-  };
+    }));
+  }
+  if (includeAccounts) {
+    const accounts = collectAccounts();
+    if (Object.keys(accounts).length) bundle.accounts = accounts;
+  }
+  return bundle;
 }
 
 /// 判断一份 JSON 属于哪种格式，认不出来返回 null。
@@ -83,6 +155,7 @@ export function detectFormat(data) {
 /**
  * 导入任意支持格式，返回给 UI 展示的摘要。
  * @returns {{format:string, follows:number, history:number, settings:number,
+ *            search:number, stats:number,
  *            accounts:string[], skipped:Object<string,number>, truncated:number}}
  */
 export function importData(data) {
@@ -91,7 +164,14 @@ export function importData(data) {
   if (format === 'dart-profile') return importDartProfile(data);
   if (format === 'starveil-backup') {
     return importBundle(
-      { settings: data.settings, follow: data.follows, history: data.history },
+      {
+        settings: data.settings,
+        follow: data.follows,
+        history: data.history,
+        // 0.6.2 之前的备份文件没有这两段，取不到就当没带，不覆盖本机。
+        search: data.search,
+        stats: data.stats,
+      },
       { accounts: data.accounts, format }
     );
   }
@@ -366,11 +446,24 @@ function importBundle(data, options = {}) {
     settingsCount = Object.keys(patch).length;
   }
 
+  // 搜索历史与观看统计：只在包里带了这两段时才覆盖本机（v1 的包没有）。
+  let searchCount = 0;
+  if (Array.isArray(data.search)) {
+    searchCount = replaceSearchHistory(data.search);
+  }
+  let statsCount = 0;
+  if (data.stats && typeof data.stats === 'object') {
+    statsCount = replaceStats(data.stats);
+  }
+
+  // 登录信息：本机备份走 options.accounts，同步包（用户开了「同步登录信息」才会有）
+  // 直接带在 `accounts` 字段里。两条路都认，前者优先。
+  const incomingAccounts = options.accounts || data.accounts || {};
   const accounts = [];
-  for (const platform of ['bilibili', 'douyu']) {
-    const cookie = options.accounts?.[platform]?.cookie;
-    if (!cookie) continue;
-    saveLogin(platform, options.accounts[platform]);
+  for (const platform of ACCOUNT_PLATFORMS) {
+    const login = incomingAccounts?.[platform];
+    if (!login?.cookie) continue;
+    saveLogin(platform, login);
     accounts.push(platform);
   }
 
@@ -379,6 +472,8 @@ function importBundle(data, options = {}) {
     follows: followCount,
     history: historyCount,
     settings: settingsCount,
+    search: searchCount,
+    stats: statsCount,
     accounts,
     skipped,
     truncated,

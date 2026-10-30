@@ -276,12 +276,12 @@ html.is-mobile .chat-resizer {
     height: calc(46px + var(--safe-bottom));
   }
 
-  /* 竖屏控制条放不下：画质、线路、时间、画中画都收进「更多」菜单
-     （room.js 的 showMoreMenu 用同一个判据决定菜单项，改这里要同步改那边）。 */
-  html.is-mobile .room-page #player-clock,
-  html.is-mobile .room-page #ctrl-quality,
-  html.is-mobile .room-page #ctrl-line,
-  html.is-mobile .room-page #ctrl-pip {
+  /* 竖屏控制条放不下的控件不是一刀切全藏：room.js 的 applyControlDensity 会量宽度，
+     按「线路 → 画质 → 时间」的顺序逐级挂上下面这些类，刚好放得下就停手。
+     小窗按钮留在控制条上（竖屏最常用），收起来的项在「更多」菜单里都能找到。 */
+  html.is-mobile .room-page.ctrl-hide-line #ctrl-line,
+  html.is-mobile .room-page.ctrl-hide-quality #ctrl-quality,
+  html.is-mobile .room-page.ctrl-hide-clock #player-clock {
     display: none;
   }
 
@@ -310,18 +310,35 @@ html.is-mobile .chat-resizer {
   }
 }
 
-/* 横屏（手机横过来）：屏幕很宽，列表页/设置页别把每行拉成一米长，
-   限宽居中后读起来才正常。直播间是左右分栏，不受影响。 */
+/* 横屏（手机横过来）：设置页/搜索这类「一行一行读」的页面限宽，
+   读起来不至于一行跨一米；首页、关注、分类是卡片流，两侧空间要用来多放几列，
+   所以不能限宽——之前统一限 760px，横屏时两侧各空出一大块，列数还是竖屏那些。 */
 @media (orientation: landscape) {
-  html.is-mobile .page-pad,
   html.is-mobile .settings-page,
   html.is-mobile .settings-content,
-  html.is-mobile .subpage-body,
-  html.is-mobile .search-body,
-  html.is-mobile .follow-grid {
+  /* 分类下的直播间列表是卡片流，不是「一行一行读」的正文，限宽会让平板上两侧空一片、
+     列数还不如竖屏（`:not` 把 `.category-rooms-body` 排除在外）。 */
+  html.is-mobile .subpage-body:not(.category-rooms-body),
+  html.is-mobile .search-body {
     max-width: 760px;
     margin-left: auto;
     margin-right: auto;
+  }
+
+  /* 横屏用更小的最小列宽：640px 宽的手机也能从 3 列变 4 列，平板能再多几列。
+     再用 clamp 让大屏的卡片跟着长一点——最小列宽不跟屏宽走的话，
+     平板横屏会出现十几列的小豆腐块。 */
+  html.is-mobile .room-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 12vw, 200px), 1fr));
+    gap: 12px 8px;
+  }
+
+  html.is-mobile .follow-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 12vw, 220px), 1fr));
+  }
+
+  html.is-mobile .category-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(80px, 6.5vw, 110px), 1fr));
   }
 }
 
@@ -357,4 +374,108 @@ html.is-pip .stage {
   aspect-ratio: auto !important;
   max-height: none !important;
   border-radius: 0 !important;
+}
+
+/* ------------------------------------------------------------ 安卓「全屏」 */
+/* WebView 不支持 requestFullscreen，全屏是 room.js 的 setTheater 拼出来的：
+   这里把视频铺满、其余 UI 收起，系统栏由原生 set_immersive 藏起来。
+   桌面走浏览器 Fullscreen API（.room-page.is-fullscreen），不受这一段影响。 */
+html.is-mobile.is-theater {
+  /* 系统栏已经藏了，再按 safe-area 留白就会在顶部露一条黑边。 */
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+}
+
+/* 顶部浮层（返回 / 标题 / 关注 / 分享）要留着：全屏只看画面时也得知道在哪个房间、
+   能一键退出。它和底部控制条共用 room.js 的 ui-idle，2.8 秒无操作一起淡出，
+   碰一下屏幕再一起回来。 */
+html.is-theater .rail,
+html.is-theater .room-footer,
+html.is-theater .room-chat,
+html.is-theater .chat-expand {
+  display: none !important;
+}
+
+html.is-theater .app,
+html.is-theater .main,
+html.is-theater .view,
+html.is-theater .room-page,
+html.is-theater .room-main {
+  display: block !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+html.is-theater .stage {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  border-radius: 0 !important;
+}
+
+/* 系统栏藏了，顶栏直接贴在物理屏幕边缘，补一层渐变让白字在亮画面上也读得清。 */
+html.is-theater .room-topbar {
+  padding: calc(var(--safe-top) + 12px) calc(var(--safe-right) + 18px) 26px calc(var(--safe-left) + 18px);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.52) 54%, transparent 100%);
+}
+
+/* ------------------------------------------------------------ 下拉刷新 */
+/* app.js 的 initPullRefresh 负责手势，这里只管那颗胶囊的外观。
+   默认停在屏幕上方外面，拖动时由 JS 用 transform 拉下来。 */
+.pull-refresh {
+  position: fixed;
+  top: calc(var(--safe-top, 0px) + 8px);
+  left: 50%;
+  transform: translate(-50%, -56px);
+  display: none;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  z-index: 3500;
+  pointer-events: none;
+  transition: transform 0.16s ease, color 0.16s ease;
+}
+
+html.is-mobile .pull-refresh {
+  display: flex;
+}
+
+.pull-refresh .pull-arrow {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  transition: border-color 0.16s ease;
+}
+
+.pull-refresh.ready {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+
+.pull-refresh.ready .pull-arrow {
+  border-color: var(--accent);
+}
+
+.pull-refresh.loading .pull-arrow {
+  animation: pull-spin 0.8s linear infinite;
+}
+
+@keyframes pull-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

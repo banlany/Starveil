@@ -3,11 +3,23 @@ name: build
 # 只手动触发：推代码、推 tag 都不会自动跑。
 # 需要出包时在 Actions 页面点「Run workflow」（或本地 `gh workflow run build.yml`）。
 # 版本号取自 src-tauri/tauri.conf.json，Release 的 tag 就是 `v<version>`。
+# 两个 job 并行跑，各自往同一个 Release 传资产：windows 传 exe/zip，android 传 arm64 APK。
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# 两个 job 共用同一份 Release 说明。放在顶层 env 而不是各写一段 heredoc：
+# heredoc 在 `run: |` 里必须缩进，缩进会被原样带进正文，Markdown 会把整段当代码块。
+env:
+  RELEASE_NOTES: |
+    聚合直播客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
+
+    - Windows 安装包：`Starveil_<版本>_x64-setup.exe`（NSIS）
+    - Windows 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
+    - Android：`Starveil_<版本>_arm64.apk`（arm64-v8a，Android 8.0+）
+    - 变更详情见仓库的 CHANGELOG.md
 
 jobs:
   windows:
@@ -79,14 +91,7 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           TAG=${{ steps.version.outputs.tag }}
           TITLE="星幕直播 v${VERSION}"
-          NOTES="$(cat <<'EOF'
-          聚合直播桌面客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
-
-          - 安装包：`Starveil_<版本>_x64-setup.exe`（NSIS）
-          - 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
-          - 变更详情见仓库的 CHANGELOG.md
-          EOF
-          )"
+          NOTES="$RELEASE_NOTES"
 
           # 用 gh CLI 而不是 softprops/action-gh-release：
           # GITHUB_TOKEN 没有「更新已有 Release」的权限
@@ -122,4 +127,174 @@ jobs:
           path: |
             src-tauri/target/release/starveil.exe
             starveil-portable.zip
+          if-no-files-found: warn
+
+  # 安卓只出 arm64-v8a：真机全是 arm64，模拟器（x86_64）自己本地编就行，
+  # 多编一个 ABI 只会让包大一倍、CI 多等十几分钟。
+  # gen/android 是入库的工程，这里不跑 `tauri android init`，直接打包。
+  android:
+    runs-on: ubuntu-latest
+    env:
+      # 与本地 .tmp/env-android.sh 的 NDK 版本保持一致，改一处要改两处。
+      NDK_VERSION: "28.2.13676358"
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # compileSdk / targetSdk 是 34（见 app/build.gradle.kts），JDK 要求 17。
+      - name: 准备 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # NDK 解开有 700 MB 左右，缓存住能省掉每次一两分钟的下载。
+      - name: 缓存 NDK
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
+
+      - name: 安装 Android SDK 与 NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-34
+            build-tools;34.0.0
+            ndk;${{ env.NDK_VERSION }}
+
+      # 版本跟仓库的 rust-toolchain.toml 对齐（那里固定 1.95.0）。
+      # 那个文件只列了 Windows 的 target，安卓 target 必须在这里显式加。
+      - name: 准备 Rust 工具链
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          targets: aarch64-linux-android
+
+      # 用 npm 的预编译二进制：linux 上 `cargo install tauri-cli` 要现场编译好几分钟。
+      # 命令名是 `tauri`（不是 `cargo tauri`），子命令完全相同。
+      - name: 安装 tauri-cli
+        run: npm install -g @tauri-apps/cli@^2
+
+      - name: 缓存 Rust 构建
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: android-aarch64
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # cargo-mobile2 靠 ANDROID_HOME / NDK_HOME 找 SDK 和交叉编译工具链
+      # （C 代码如 ring 要用 NDK 里的 clang），缺一个就会在编译到一半时失败。
+      - name: 导出安卓构建环境
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      # 没配正式签名时 tauri 用 debug keystore 签 release 包，
+      # runner 上默认没有这个文件，先手工生成一个（等同 Android Studio 的自动生成）。
+      - name: 准备 debug 签名
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: 读取版本号
+        id: version
+        run: |
+          VERSION=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "当前版本：$VERSION"
+
+      # --ci 由 Actions 自带的 CI=true 触发，跳过所有交互提示。
+      # 产物在 app/build/outputs/apk/universal/release/ 下（文件名由 productName 决定，
+      # 中文会被过滤，所以下面统一改名成 ASCII）。
+      - name: 打包 arm64 APK
+        run: tauri android build --target aarch64 --apk
+
+      - name: 重命名并校验 APK
+        id: apk
+        run: |
+          set -euo pipefail
+          VERSION=${{ steps.version.outputs.version }}
+          OUT_DIR=src-tauri/gen/android/app/build/outputs/apk
+          # 实测 tauri 只出 unsigned（gradle 的 release 没配 signingConfig），
+          # 所以先找它自己签；万一以后 CLI 自己签了，就退回那个已签的。
+          UNSIGNED=$(find "$OUT_DIR" -name "*unsigned*.apk" | head -1 || true)
+          APK=""
+          if [ -z "$UNSIGNED" ]; then
+            APK=$(find "$OUT_DIR" -name "*.apk" | head -1 || true)
+          fi
+          if [ -z "$APK" ] && [ -z "$UNSIGNED" ]; then
+            echo "没找到 APK，输出目录内容："
+            find src-tauri/gen/android/app/build/outputs -type f || true
+            exit 1
+          fi
+
+          # 名字写 apksigner* 而不是 apksigner：Windows 的 build-tools 里只有 .bat，
+          # 这样同一段脚本在本地也能跑通。
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner*" ! -name "*.jar" | sort | tail -1)
+          OUT="Starveil_${VERSION}_arm64.apk"
+          if [ -n "$UNSIGNED" ]; then
+            "$APKSIGNER" sign --ks "$HOME/.android/debug.keystore" \
+              --ks-pass pass:android --key-pass pass:android \
+              --ks-key-alias androiddebugkey --out "$OUT" "$UNSIGNED"
+          else
+            cp "$APK" "$OUT"
+          fi
+
+          # 装不上的包不如不传，先验一遍签名。
+          "$APKSIGNER" verify --print-certs "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+
+      - name: 创建 Release 并上传
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=${{ steps.version.outputs.version }}
+          TAG=${{ steps.version.outputs.tag }}
+          TITLE="星幕直播 v${VERSION}"
+          # 与 windows job 共用顶层 env 的那份说明：两个 job 并行，谁先跑到谁创建 Release。
+          NOTES="$RELEASE_NOTES"
+
+          # 两个 job 会同时抢着创建 Release，用「建不上就等别人建好」的循环兜住。
+          for _ in $(seq 1 12); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              break
+            fi
+            gh release create "$TAG" --title "$TITLE" --notes "$NOTES" --target "$GITHUB_SHA" >/dev/null 2>&1 || true
+            sleep 5
+          done
+          gh release view "$TAG" >/dev/null
+
+          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" --clobber
+
+          echo "=== Release 资产 ==="
+          gh release view "$TAG" --json assets --jq '.assets[] | "  \(.name)  \(.size) bytes"'
+
+      - name: 保存构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: starveil-android-arm64-${{ steps.version.outputs.version }}
+          path: Starveil_*_arm64.apk
           if-no-files-found: warn

@@ -460,10 +460,21 @@ impl LiveSite for DouyinSite {
         Ok(items)
     }
 
-    fn categories(&self, _http: &HttpSession) -> Result<Vec<LiveCategory>, LiveError> {
-        Err(LiveError::unsupported(
-            "抖音的分区接口需要签名，当前版本暂不支持分类浏览",
-        ))
+    /// 分区树。
+    ///
+    /// 抖音没有免签名的分区接口（`/webcast/web/partition/detail/*` 一律被风控挡回来），
+    /// 但首页 HTML 里内嵌了整棵树：`"categoryData":[{"partition":{...},"sub_partition":[...]}]`。
+    /// 直接把它抠出来解析，省得为这一个功能去移植 `a_bogus` 签名。
+    fn categories(&self, http: &HttpSession) -> Result<Vec<LiveCategory>, LiveError> {
+        let cookie = Self::cookie(http)?;
+        let headers = Self::request_headers(&cookie, REFERER);
+        let borrowed: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+        let html = http.get_text(REFERER, &[], &borrowed)?;
+        parse_home_categories(&html)
+            .ok_or_else(|| LiveError::parse("抖音首页里没有找到分类数据（页面结构可能变了）"))
     }
 
     fn category_rooms(
@@ -472,7 +483,11 @@ impl LiveSite for DouyinSite {
         _category: &LiveSubCategory,
         _page: u32,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
-        Err(LiveError::unsupported("抖音暂不支持按分区浏览"))
+        // 分类能列出来，但「某个分区下的房间列表」那个接口要 a_bogus 签名，
+        // 目前没有可用的免签名替代（feed 接口会忽略 partition 参数，回的是同一份推荐流）。
+        Err(LiveError::unsupported(
+            "抖音按分区看房间需要平台签名，当前版本只支持分类列表；可以在首页或关注页浏览",
+        ))
     }
 
     fn play(
@@ -538,6 +553,94 @@ impl LiveSite for DouyinSite {
     }
 }
 
+/// 从抖音首页 HTML 里抠出内嵌的分区树。
+///
+/// 首页的分类数据长这样（是 JS 字符串里的 JSON，引号被转义成 `\"`）：
+/// `"categoryData":[{"partition":{"id_str":"101","type":4,"title":"聊天"},"sub_partition":[...]}]`
+///
+/// 这里先按括号匹配取出数组原文（跳过字符串内部，标题里的 `[` 才不会数错），
+/// 再把 `\"` 还原成 `"`，最后当普通 JSON 解析。
+fn parse_home_categories(html: &str) -> Option<Vec<LiveCategory>> {
+    let key = html.find("categoryData")?;
+    let rest = &html[key..];
+    let start = rest.find('[')?;
+    // 分类树最多几十 KB，截一段足够。必须先还原 JS 字符串那一层转义（`\"` → `"`），
+    // 再按普通 JSON 规则做括号匹配——否则每个引号前面都带反斜杠，
+    // 字符串永远不会闭合，整段匹配不出来。
+    let window: String = rest[start..].chars().take(200_000).collect();
+    let json = window.replace("\\\"", "\"");
+
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut end = None;
+    for (index, ch) in json.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(index + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let value: Value = serde_json::from_str(&json[..end?]).ok()?;
+
+    let mut categories = Vec::new();
+    for item in value.as_array()? {
+        let Some(node) = item.get("partition") else { continue };
+        let id = text_of(node, "id_str");
+        let name = text_of(node, "title");
+        if id.is_empty() || name.is_empty() {
+            continue;
+        }
+        let children = item
+            .get("sub_partition")
+            .and_then(Value::as_array)
+            .map(|subs| {
+                subs.iter()
+                    .filter_map(|sub| {
+                        let node = sub.get("partition")?;
+                        let child_id = text_of(node, "id_str");
+                        let child_name = text_of(node, "title");
+                        if child_id.is_empty() || child_name.is_empty() {
+                            return None;
+                        }
+                        Some(LiveSubCategory {
+                            id: child_id,
+                            name: child_name,
+                            parent_id: id.clone(),
+                            // 抖音的分区没有图标，前端会自动退回首字占位。
+                            pic: String::new(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        categories.push(LiveCategory { id, name, children });
+    }
+    if categories.is_empty() {
+        None
+    } else {
+        Some(categories)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,5 +670,19 @@ mod tests {
     fn 数字字段也能取文本() {
         let value = serde_json::json!({"id": 123});
         assert_eq!(text_of(&value, "id"), "123");
+    }
+
+    #[test]
+    fn 解析首页内嵌的分类树() {
+        // 首页里的分类数据是 JS 字符串里的 JSON（引号被转义成 \"），
+        // 这里放一段和真实页面同构的片段。
+        let html = r#"<script>self.__pace_f.push([1,"{\"categoryData\":[{\"partition\":{\"id_str\":\"101\",\"type\":4,\"title\":\"聊天\"},\"sub_partition\":[]},{\"partition\":{\"id_str\":\"103\",\"type\":4,\"title\":\"游戏\"},\"sub_partition\":[{\"partition\":{\"id_str\":\"1011032\",\"type\":1,\"title\":\"三角洲行动\"}}]}]}"])</script>"#;
+        let tree = parse_home_categories(html).expect("应当解析出分类");
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[1].name, "游戏");
+        assert_eq!(tree[1].children.len(), 1);
+        assert_eq!(tree[1].children[0].id, "1011032");
+        assert_eq!(tree[1].children[0].parent_id, "103");
+        assert_eq!(tree[1].children[0].name, "三角洲行动");
     }
 }

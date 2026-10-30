@@ -18,7 +18,13 @@ const PATHS = {
   mute: '<path d="M4 9.5v5h3.4L12 19V5L7.4 9.5H4Z"/><path d="m16 9.5 5 5m0-5-5 5"/>',
   fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   fullscreenExit: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
-  screen: '<rect x="3" y="4.5" width="18" height="12.5" rx="1.6"/><path d="M8.5 20.5h7M12 17v3.5"/>',
+  // 小窗（画中画）：空心大框 + 右下角实心小框，一眼能认出「大画面里套小画面」。
+  // 原来画的是显示器（带底座），和「全屏/显示器」类图标混在一起分不清。
+  screen:
+    '<rect x="2.6" y="4.4" width="18.8" height="15.2" rx="2.6"/><rect x="10.4" y="9.4" width="7.8" height="6.4" rx="1.3" fill="currentColor" stroke="none"/>',
+  // 大航海：船锚
+  anchor:
+    '<circle cx="12" cy="5.2" r="2.2"/><path d="M12 7.4V21"/><path d="M8.4 10.6h7.2"/><path d="M4 14.4a8 8 0 0 0 16 0"/><path d="M4 14.4h2.2M20 14.4h-2.2"/>',
   hd: '<rect x="2.8" y="5.5" width="18.4" height="13" rx="2.2"/><path d="M7.2 9v6M11.8 9v6M7.2 12h4.6M14.2 9v6h2.1a3 3 0 0 0 0-6h-2.1Z"/>',
   signal: '<path d="M4 20v-4M9.3 20v-8M14.6 20V7.5M20 20V4"/>',
   danmaku: '<path d="M4 5.5h16v11H9l-4 3.2V5.5Z"/><path d="M8 9.5h8M8 12.5h5"/>',
