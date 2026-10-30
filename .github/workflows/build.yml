@@ -209,18 +209,28 @@ jobs:
       # gradle 的 `rustBuild<Abi><Profile>` 任务（buildSrc 的 BuildTask.kt）是写死
       # `cargo tauri android android-studio-script` 的，靠它把 Rust 编出来并 symlink
       # 到 jniLibs。而 npm 装的只有 `tauri` 这**一个**可执行文件，没有 cargo 子命令，
-      # 于是这一步报 `error: no such command: 'tauri'`，exit 101。
+      # 于是那一步报 `error: no such command: 'tauri'`，exit 101。
       # 两条路：`cargo install tauri-cli`（现场编译十几分钟）或放个转发脚本。
       # 选后者——npm 版与 cargo 版是同一个 CLI 的同一版本，转发过去行为一致；
       # 而且不用为它再维护一份几百 MB 的构建缓存。
+      #
+      # 容易踩的一点：cargo 执行外部子命令时**会把子命令名一起传进去**，
+      # `cargo tauri --version` 实际调的是 `cargo-tauri tauri --version`。
+      # 脚本里必须先把这个 "tauri" 丢掉，否则 CLI 收到 `tauri tauri --version`，
+      # 报 `unrecognized subcommand 'tauri'`。
       - name: 让 cargo 认得 tauri 子命令
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/cargo-bin"
-          printf '#!/bin/sh\nexec tauri "$@"\n' > "$RUNNER_TEMP/cargo-bin/cargo-tauri"
+          cat > "$RUNNER_TEMP/cargo-bin/cargo-tauri" <<'SH'
+          #!/bin/sh
+          # cargo 会把子命令名作为第一个参数传进来，去掉它再交给真正的 CLI。
+          if [ "${1:-}" = "tauri" ]; then shift; fi
+          exec tauri "$@"
+          SH
           chmod +x "$RUNNER_TEMP/cargo-bin/cargo-tauri"
           echo "$RUNNER_TEMP/cargo-bin" >> "$GITHUB_PATH"
-          # GITHUB_PATH 只对后续步骤生效，这里临时挂上去当场验一遍
+          # GITHUB_PATH 只对后续步骤生效，这里临时挂上去当场验一遍（顺便验证 shift 逻辑）
           PATH="$RUNNER_TEMP/cargo-bin:$PATH" cargo tauri --version
 
       - name: 缓存 Rust 构建
