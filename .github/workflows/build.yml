@@ -267,9 +267,14 @@ jobs:
             exit 1
           fi
 
-          # 名字写 apksigner* 而不是 apksigner：Windows 的 build-tools 里只有 .bat，
-          # 这样同一段脚本在本地也能跑通。
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner*" ! -name "*.jar" | sort | tail -1)
+          # 先找 Linux/macOS 那个无扩展名的 `apksigner`；Windows 的 build-tools 里只有
+          # apksigner.bat，所以留个回退。不能直接写 `-name "apksigner*"`：Linux 的
+          # build-tools 里两个都有，`sort | tail -1` 会挑到 .bat，在 Linux 上根本跑不起来。
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name "apksigner" | sort | tail -1 || true)
+          if [ -z "$APKSIGNER" ]; then
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name "apksigner.bat" | sort | tail -1)
+          fi
+          echo "apksigner: $APKSIGNER"
           OUT="Starveil_${VERSION}_arm64.apk"
           if [ -n "$UNSIGNED" ]; then
             "$APKSIGNER" sign --ks "$HOME/.android/debug.keystore" \
