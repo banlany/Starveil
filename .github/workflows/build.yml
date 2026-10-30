@@ -226,10 +226,23 @@ jobs:
         run: |
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          NDK="$SDK/ndk/${NDK_VERSION}"
+          # prebuilt 目录按宿主命名，Linux runner 固定是 linux-x86_64。
+          LLVM_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -d "$LLVM_BIN"
+
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$SDK/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+
+          # 把 NDK 的 clang 放进 PATH。cc-rs（ring、其它带 C 代码的依赖）会自己按
+          # ANDROID_NDK_HOME 去找，但版本更新的 cc-rs 才认这个变量；显式给 CC/AR 更稳，
+          # 名字要带 API level（NDK 只提供 aarch64-linux-android24-clang），24 对齐 minSdk。
+          echo "$LLVM_BIN" >> "$GITHUB_PATH"
+          echo "CC_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
 
       # 没配正式签名时 tauri 用 debug keystore 签 release 包，
       # runner 上默认没有这个文件，先手工生成一个（等同 Android Studio 的自动生成）。
