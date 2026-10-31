@@ -1652,13 +1652,6 @@ html[data-theme="light"] .sc-delete {
   gap: 2px;
 }
 
-.room-footer .footer-divider {
-  width: 1px;
-  height: 16px;
-  background: rgba(255, 255, 255, 0.1);
-  margin: 0 4px;
-}
-
 /* 聊天折叠后的展开按钮 */
 
 .chat-expand {

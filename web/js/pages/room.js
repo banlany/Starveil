@@ -1,6 +1,6 @@
 // 直播间：mpegts 播放、滚动弹幕、聊天面板、清晰度/线路、全屏。
 import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
-import { BIG_EMOJI_LINE_OPTIONS, createDanmakuLayer, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
+import { createDanmakuLayer, DANMAKU_PRESETS, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
 import { signDouyinDanmaku } from '../douyin-sign.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
@@ -35,25 +35,18 @@ const QUALITY_KEY = 'simple-live.quality.';
 // 太勤只会白白多打几次平台接口。
 const REFRESH_INFO_INTERVAL = 5 * 60 * 1000;
 
-// 直播间右侧「设置」页签里，原来用滑块和数字框的项全部改成预设值下拉。
-// 原因：面板只有两百多像素宽，滑块拖不准；数字框在手机上一聚焦就弹键盘，
-// 整个面板被顶上去，改完还得再收回来。设置页那边仍是滑块（宽屏下更自由），
-// 两边读写的是同一份配置，不会打架。
-const CS_PRESETS = {
-  opacity: [20, 30, 40, 50, 60, 70, 80, 90, 100],
-  area: [15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100],
-  lines: [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30],
-  // 大表情大小：单位是「行」，与设置页同一份档位（来自弹幕层的 BIG_EMOJI_LINE_OPTIONS）。
-  bigEmoji: BIG_EMOJI_LINE_OPTIONS,
-  font: [12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36, 40],
-  speed: [3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20],
-  strokeWidth: [0, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5],
-  safe: [0, 4, 8, 12, 16, 20, 24, 30, 40, 50, 60],
-  dedupeWindow: [1, 2, 3, 5, 8, 10, 15, 20, 30, 45, 60],
-  dedupeStep: [1, 2, 3, 4, 5, 6, 8, 10],
-};
+// 直播间右侧「设置」页签里的数值项都用预设值下拉，档位表来自弹幕层
+// （DANMAKU_PRESETS），和设置页读的是同一份，不会出现两边档位对不上。
+const CS_PRESETS = DANMAKU_PRESETS;
 
-/// 生成预设值下拉框。当前值不在预设里（用户之前在设置页拖过滑块）时补一项，
+/// 画面尺寸：与设置页「播放 → 画面尺寸」是同一份配置（player.scaleMode）。
+const SCALE_MODES = [
+  ['contain', '适应'],
+  ['cover', '铺满'],
+  ['fill', '拉伸'],
+];
+
+/// 生成预设值下拉框。当前值不在预设里（老版本存下来的非档位值）时补一项，
 /// 否则下拉会自己显示成某个档位，看着像「设置被改了」。
 function presetOptions(values, current, format = (value) => String(value)) {
   const list = [...values];
@@ -146,9 +139,6 @@ export function renderRoom(ctx, params = {}) {
       <button class="footer-action" id="footer-tag">${icon('tag', 17)}<span>标签</span></button>
       <div class="footer-right">
         <button class="footer-action" id="footer-share">${icon('share', 17)}<span>分享</span></button>
-        <button class="footer-action" id="footer-copy-link">${icon('link', 17)}<span>复制链接</span></button>
-        <span class="footer-divider"></span>
-        <button class="footer-action" id="footer-copy-stream">${icon('copy', 17)}<span>复制直播流</span></button>
       </div>
     </footer>
     <button class="chat-expand hidden" id="chat-expand" title="展开聊天区">${icon('back', 18)}</button>`;
@@ -282,8 +272,6 @@ export function renderRoom(ctx, params = {}) {
   $('footer-tag').addEventListener('click', onTagClick);
   $('room-share').addEventListener('click', shareRoom);
   $('footer-share').addEventListener('click', shareRoom);
-  $('footer-copy-link').addEventListener('click', copyRoomLink);
-  $('footer-copy-stream').addEventListener('click', copyStream);
   $('footer-refresh').addEventListener('click', () => manualRefreshStream());
   $('room-more').addEventListener('click', showMoreMenu);
   $('chat-collapse').addEventListener('click', () => setChatCollapsed(true));
@@ -1019,6 +1007,10 @@ export function renderRoom(ctx, params = {}) {
     // 表情开关只影响「后续渲染」，聊天栏里已经画好的行要重画一遍才能立刻看到效果。
     // 弹幕层不用动：新弹幕在 emit 时会重新读配置，屏上的旧弹幕滚过去就算了。
     if (key === 'emoji' && session.tab === 'chat') renderChatTab();
+    // 大表情大小改的是聊天栏的 CSS 变量（--big-emoji-lines），
+    // 必须在这里单独推一次：聊天栏不在 applyDanmakuStyle 的触发列表里，
+    // 漏了这一步，改成 3 行要退出直播间重进才生效。
+    if (key === 'bigEmojiLines') applyBigEmojiSize(value);
 
     // 字号/行数/区域/速度的改动交给弹幕层：库内部会重排轨道并保留现有弹幕，
     // 只有字号变化才需要重建（弹幕实例的宽高是创建时固定的）。
@@ -2064,9 +2056,12 @@ export function renderRoom(ctx, params = {}) {
     renderChatSettings(body);
   }
 
+  /// 控制条上的齿轮：只放**直播间里独有**的设置。
+  /// 刷新直播流 / 复制直播流 / 在浏览器打开 在上方「更多」里已经有入口，
+  /// 弹幕开关就在紧邻的图标按钮上——重复的入口只是让人多找一次，去掉了。
+  /// 「画面尺寸」是原来那个只会弹提示的「播放器设置」换来的：改铺满/适应不必离开直播间。
   function openQuickSettings() {
     openMenu($('ctrl-settings'), [
-      { label: '弹幕开关', icon: 'danmaku', active: session.danmakuEnabled, onClick: () => setDanmakuEnabled(!session.danmakuEnabled) },
       {
         label: '弹幕设置',
         icon: 'text',
@@ -2079,12 +2074,35 @@ export function renderRoom(ctx, params = {}) {
           }
         },
       },
-      { label: '播放器设置', icon: 'player', onClick: () => toast('完整播放设置请到 设置 → 播放页设置') },
-      { label: '刷新直播流', icon: 'refresh', onClick: () => manualRefreshStream() },
-      { separator: true },
-      { label: '复制直播流', icon: 'copy', onClick: copyStream },
-      { label: '打开网页版', icon: 'link', onClick: () => openExternal(session.detail?.url || roomUrl(session.platform, session.roomId)) },
+      {
+        label: '画面尺寸',
+        icon: 'player',
+        value: SCALE_MODES.find(([value]) => value === state.settings.player.scaleMode)?.[1] || '适应',
+        onClick: showScaleMenu,
+      },
     ], { align: 'end', placement: 'top' });
+  }
+
+  /// 画面尺寸：和设置页「播放 → 画面尺寸」写同一份配置，改完立刻作用于当前画面。
+  function applyScaleMode(mode) {
+    video.style.objectFit = mode === 'cover' ? 'cover' : mode === 'fill' ? 'fill' : 'contain';
+  }
+
+  function showScaleMenu() {
+    const current = state.settings.player.scaleMode;
+    openMenu(
+      $('ctrl-settings'),
+      SCALE_MODES.map(([value, label]) => ({
+        label,
+        active: current === value,
+        onClick: () => {
+          state.settings.player.scaleMode = value;
+          saveSettings();
+          applyScaleMode(value);
+        },
+      })),
+      { align: 'end', placement: 'top' }
+    );
   }
 
   // ------------------------------------------------------------ 数据连接
@@ -2420,7 +2438,7 @@ export function renderRoom(ctx, params = {}) {
   document.addEventListener('fullscreenchange', onFullscreenChange);
 
   video.volume = 0.8;
-  video.style.objectFit = state.settings.player.scaleMode === 'cover' ? 'cover' : state.settings.player.scaleMode === 'fill' ? 'fill' : 'contain';
+  applyScaleMode(state.settings.player.scaleMode);
   updateVolumeIcon();
   updatePlayIcon();
   // 控制条要等真正有了宽度才能量出放不放得下：插进 DOM 后按 rAF 量一次，

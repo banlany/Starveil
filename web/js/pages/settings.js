@@ -25,7 +25,7 @@ import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
 // 改档位定义时只改 danmaku.js 一处。
-import { BIG_EMOJI_LINE_OPTIONS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
+import { DANMAKU_PRESETS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
 // 移动端专属设置项（屏幕方向）要按平台显示。
 import { IS_MOBILE } from '../platform.js';
 import {
@@ -54,10 +54,26 @@ const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
 // select 行要的是 { 值: 文案 }，这里由共享选项表派生，避免手工维护两份。
 const PERF_MAP = Object.fromEntries(PERF_OPTIONS.map((option) => [option.value, option.label]));
 const FPS_MAP = Object.fromEntries(FPS_OPTIONS.map((option) => [option.value, option.label]));
-/// 大表情大小：档位单位是「行」——1 行 = 一个弹幕轨道高。
-const BIG_EMOJI_MAP = Object.fromEntries(
-  BIG_EMOJI_LINE_OPTIONS.map((lines) => [lines, `${lines} 行`]),
-);
+
+/// 把一个档位数组转成 select 用的 { 值: 文案 }。
+/// 当前值不在档位里（老版本拖滑块存下来的 37、23 之类）时补一项进去，
+/// 否则下拉会「自己显示成最近的档位」，看着像设置被改了。
+function presetMap(key, values, format) {
+  const list = [...values];
+  const current = Number(getSetting(key));
+  if (Number.isFinite(current) && !list.includes(current)) {
+    list.push(current);
+    list.sort((a, b) => a - b);
+  }
+  return Object.fromEntries(list.map((value) => [value, format(value)]));
+}
+
+/// 弹幕数值项统一成「预设值下拉」，和直播间右侧「设置」页签用同一套档位
+/// （DANMAKU_PRESETS）。滑块在窄屏上拖不准，数字框在手机上一聚焦就弹键盘，
+/// 两边行为不一致还容易改不到想要的值。
+function presetRow(key, title, values, format, desc = '') {
+  return { type: 'select', key, title, desc, numeric: true, valueMap: presetMap(key, values, format) };
+}
 
 const SETTINGS_ITEMS = [
   { key: 'history', icon: 'history', label: '观看记录' },
@@ -259,26 +275,6 @@ function buildRow(config, repaint, ctx) {
     minus.addEventListener('click', () => apply(-1));
     plus.addEventListener('click', () => apply(1));
     control.appendChild(stepper);
-  } else if (config.type === 'range') {
-    const wrap = document.createElement('div');
-    wrap.className = 'gap-8';
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = String(config.min ?? 0);
-    input.max = String(config.max ?? 100);
-    input.step = String(config.step ?? 1);
-    input.value = String(getSetting(config.key, config.min ?? 0));
-    const value = document.createElement('span');
-    value.className = 'value-text';
-    value.textContent = formatNumber(Number(input.value), config);
-    input.addEventListener('input', () => {
-      const next = Number(input.value);
-      setSetting(config.key, next);
-      value.textContent = formatNumber(next, config);
-      config.onChange?.(next);
-    });
-    wrap.append(input, value);
-    control.appendChild(wrap);
   } else if (config.type === 'select') {
     const button = document.createElement('button');
     button.className = 'select-btn';
@@ -506,26 +502,19 @@ function detailSections(key, ctx, repaint) {
           label: '弹幕显示',
           rows: [
             { type: 'switch', key: 'danmaku.enabled', title: '默认开启弹幕' },
-            { type: 'range', key: 'danmaku.area', title: '显示区域', desc: '弹幕占据播放器顶部的高度比例', min: 15, max: 100, step: 5, unit: '%' },
-            { type: 'number', key: 'danmaku.lines', title: '显示几行', desc: '按区域优先，超出可用高度时自动收紧', min: 1, max: 30, unit: ' 行' },
+            presetRow('danmaku.area', '显示区域', DANMAKU_PRESETS.area, (value) => `${value}%`, '弹幕占据播放器顶部的高度比例'),
+            presetRow('danmaku.lines', '显示几行', DANMAKU_PRESETS.lines, (value) => `${value} 行`, '按区域优先，超出可用高度时自动收紧'),
             { type: 'switch', key: 'danmaku.emoji', title: '显示弹幕表情' },
-            {
-              type: 'select',
-              key: 'danmaku.bigEmojiLines',
-              title: '大表情大小',
-              desc: '只能单独发送的大表情占几行高；占几行就预留几条弹幕轨道，旁边的弹幕会自动让开',
-              numeric: true,
-              valueMap: BIG_EMOJI_MAP,
-            },
-            { type: 'number', key: 'danmaku.speed', title: '滚动速度', desc: '弹幕持续秒数，越小越快', min: 3, max: 20, unit: ' 秒' },
-            { type: 'range', key: 'danmaku.opacity', title: '不透明度', min: 20, max: 100, step: 5, unit: '%' },
-            { type: 'number', key: 'danmaku.font', title: '字体大小', min: 12, max: 40, unit: ' px' },
+            presetRow('danmaku.bigEmojiLines', '大表情大小', DANMAKU_PRESETS.bigEmoji, (value) => `${value} 行`, '只能单独发送的大表情占几行高；占几行就预留几条弹幕轨道，旁边的弹幕会自动让开'),
+            presetRow('danmaku.speed', '滚动速度', DANMAKU_PRESETS.speed, (value) => `${value} 秒`, '弹幕持续秒数，越小越快'),
+            presetRow('danmaku.opacity', '不透明度', DANMAKU_PRESETS.opacity, (value) => `${value}%`),
+            presetRow('danmaku.font', '字体大小', DANMAKU_PRESETS.font, (value) => `${value} px`),
             { type: 'select', key: 'danmaku.weight', title: '字体粗细', numeric: true, valueMap: { 300: '极细', 400: '很细', 500: '正常', 600: '小粗', 700: '偏粗', 800: '很粗', 900: '极粗' } },
             { type: 'switch', key: 'danmaku.stroke', title: '弹幕描边' },
-            { type: 'number', key: 'danmaku.strokeWidth', title: '描边宽度', min: 0, max: 5, step: 0.5, float: true, unit: ' px' },
+            presetRow('danmaku.strokeWidth', '描边宽度', DANMAKU_PRESETS.strokeWidth, (value) => `${value} px`),
             { type: 'select', key: 'danmaku.fps', title: '帧率上限', desc: '限制弹幕层的重绘频率，越低越省电', numeric: true, valueMap: FPS_MAP },
-            { type: 'number', key: 'danmaku.safeTop', title: '顶部安全边距', desc: '相对画面顶端；0 表示贴着顶端', min: 0, max: 60, unit: ' px' },
-            { type: 'number', key: 'danmaku.safeBottom', title: '底部安全边距', min: 0, max: 60, unit: ' px' },
+            presetRow('danmaku.safeTop', '顶部安全边距', DANMAKU_PRESETS.safe, (value) => `${value} px`, '相对画面顶端；0 表示贴着顶端'),
+            presetRow('danmaku.safeBottom', '底部安全边距', DANMAKU_PRESETS.safe, (value) => `${value} px`),
           ],
         },
         {
@@ -545,8 +534,8 @@ function detailSections(key, ctx, repaint) {
           rows: [
             { type: 'switch', key: 'danmaku.dedupe', title: '启用重复过滤' },
             { type: 'select', key: 'danmaku.dedupeMode', title: '过滤模式', valueMap: { content: '按内容', user: '按用户', strict: '刷屏严格' } },
-            { type: 'number', key: 'danmaku.dedupeWindow', title: '过滤窗口', desc: '窗口内重复的弹幕会被合并', min: 1, max: 60, unit: ' 秒' },
-            { type: 'number', key: 'danmaku.dedupeStep', title: '过滤步长', min: 1, max: 10, unit: '' },
+            presetRow('danmaku.dedupeWindow', '过滤窗口', DANMAKU_PRESETS.dedupeWindow, (value) => `${value} 秒`, '窗口内重复的弹幕会被合并'),
+            presetRow('danmaku.dedupeStep', '过滤步长', DANMAKU_PRESETS.dedupeStep, (value) => `${value}`),
           ],
         },
         { label: '提示', rows: [{ type: 'info', title: '即时生效', desc: '修改会立即保存，并在当前/下一个直播间生效', value: '已保存到本机' }] },
@@ -1468,7 +1457,7 @@ function paintAbout(content, ctx) {
   card.innerHTML = `
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
     <h2>星幕直播</h2>
-    <p>Starveil · 聚合直播桌面客户端 · Tauri 2 + WebView2</p>
+    <p>Starveil · 聚合客户端 · Tauri 2 + ${IS_MOBILE ? 'WebView' : 'WebView2'}</p>
     <span class="about-version" id="about-version">${FALLBACK_VERSION}</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
