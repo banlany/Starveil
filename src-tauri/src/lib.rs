@@ -1585,8 +1585,12 @@ async fn start_danmaku(
             for status in session.drain_status() {
                 let _ = app.emit("danmaku-status", &status);
             }
-            for message in session.drain() {
-                let _ = app.emit("danmaku", &message);
+            // 一次轮询收到的弹幕合并成一个数组发出去，不再逐条 emit。
+            // 每条 emit 都要过一次 evaluateJavascript（安卓上还要跨到 WebView 主线程），
+            // 热门直播间一秒几十条时，光这一层就够把界面拖卡；合并之后每 100ms 只有一次。
+            let messages = session.drain();
+            for chunk in messages.chunks(120) {
+                let _ = app.emit("danmaku-batch", chunk);
             }
             std::thread::sleep(Duration::from_millis(100));
         }

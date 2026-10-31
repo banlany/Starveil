@@ -51,6 +51,10 @@ pub struct Emoticon {
     pub url: String,
     pub width: u32,
     pub height: u32,
+    /// 大表情（收藏集/房间表情）：只能整条单独发送，正文就是表情名。
+    /// 前端据此放大到字号 2.5 倍——小表情按行高缩放，大表情按字号缩放，两者比例不一样。
+    #[serde(default)]
+    pub big: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -640,6 +644,7 @@ fn bilibili_extract_emoticons(
                 url: bilibili_upgrade_scheme(url),
                 width: emoticon_dimension(&object, "width"),
                 height: emoticon_dimension(&object, "height"),
+                big: true,
             });
         }
     }
@@ -672,6 +677,7 @@ fn bilibili_extract_emoticons(
                 url: bilibili_upgrade_scheme(url),
                 width: emoticon_dimension(&object, "width"),
                 height: emoticon_dimension(&object, "height"),
+                big: false,
             });
         }
     }

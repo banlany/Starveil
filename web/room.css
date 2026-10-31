@@ -1321,6 +1321,15 @@ body.is-resizing-chat .room-chat {
   margin: 0 1px;
 }
 
+/* 大表情（B 站收藏集那类只能单独发送的）：宽高都是字号的 2.5 倍。
+   和弹幕层同一个倍数，两边看起来才是同一个表情。
+   行高不跟着放大——弹幕区一行字不该被一张表情顶开，让它自己溢出上下一点即可。 */
+.chat-emoji.is-big {
+  height: 2.5em;
+  vertical-align: -0.65em;
+  margin: 0 2px;
+}
+
 .chat-line.system {
   color: rgba(255, 255, 255, 0.38);
   font-size: 11.5px;
@@ -1330,16 +1339,25 @@ body.is-resizing-chat .room-chat {
   color: var(--warning);
 }
 
-/* 聊天区里的 SC：底色由 room.js 按 SC 档位平铺（和「SC」面板那张卡片同一套配色），
-   这里只给兜底色。以前是一层粉红渐变 + 主题紫的用户名，跟 SC 面板对不上。 */
+/* 聊天区里的 SC：底色由 room.js 把 SC 档位色写成两个变量（--sc-bg / --sc-bg-strong），
+   深浅主题各挑一档。以前是一层粉红渐变 + 主题紫的用户名，跟 SC 面板对不上。 */
 .chat-line.sc {
   padding: 8px 10px;
   margin: 4px 0;
   border-radius: 8px;
-  background: #ffe3ed;
+  background: var(--sc-bg, #ffe3ed);
   border: 1px solid rgba(0, 0, 0, 0.08);
   color: #2a1c0d;
   text-shadow: none;
+}
+
+/* 深色主题：用深一档的档位色（同一套 palette 的下半截）配白字。
+   彩色底保留下来，但不会在暗色聊天区里亮得刺眼——浅金/浅粉平铺在深色背景上
+   像是把聊天区戳了个白洞，而且白字在上面根本看不清。 */
+html[data-theme="dark"] .chat-line.sc {
+  background: var(--sc-bg-strong, #d85a84);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
 }
 
 /* 用户名 / 正文 / 价格标签一律跟底色走（深色底时 room.js 会把 color 改成白色），

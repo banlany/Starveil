@@ -2,6 +2,7 @@
 import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { collectAccounts, followKey, loadFollow, removeFollow, restoreAccounts, saveFollow, state, updateFollow } from '../store.js';
+import { IS_MOBILE } from '../platform.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
 /// 上次刷新完成的时间。
@@ -27,7 +28,6 @@ export function renderFollow(ctx) {
       </div>
       <h1>关注用户</h1>
       <div class="header-right">
-        <button class="icon-btn" id="follow-search" title="搜索关注">${icon('search', 19)}</button>
         <button class="icon-btn" id="follow-view" title="切换布局">${icon('gridView', 18)}</button>
         <button class="icon-btn" id="follow-more" title="更多">${icon('more', 19)}</button>
       </div>
@@ -223,19 +223,23 @@ export function renderFollow(ctx) {
     }
     const grid = document.createElement('div');
     grid.className = state.followView === 'grid' ? 'follow-grid' : 'follow-list-view';
+    // 手机竖屏一行两张卡，62px 头像会把卡片撑得很高，小一号才匀称。
+    const gridAvatar = IS_MOBILE ? 46 : 62;
     for (const item of list) {
       const card = document.createElement('article');
       card.className = 'follow-card';
       card.tabIndex = 0;
       card.innerHTML = `
         <span class="card-platform">${platformIcon(item.platform, 17)}</span>
-        ${avatarHtml(item.user_name, item.avatar || item.cover, state.followView === 'grid' ? 62 : 44)}
-        <div class="follow-name">${escapeHtml(item.user_name || '未知主播')}</div>
-        <div class="follow-meta">
-          <span class="follow-status${item.live ? ' live' : ''}">${item.live ? '直播中' : '未开播'}</span>
-          <span>·</span>
-          <span>${escapeHtml(PLATFORM_META[item.platform]?.short || item.platform)}</span>
-          ${item.tag ? `<span>·</span><span>${escapeHtml(item.tag)}</span>` : ''}
+        ${avatarHtml(item.user_name, item.avatar || item.cover, state.followView === 'grid' ? gridAvatar : 44)}
+        <div class="follow-text">
+          <div class="follow-name">${escapeHtml(item.user_name || '未知主播')}</div>
+          <div class="follow-meta">
+            <span class="follow-status${item.live ? ' live' : ''}">${item.live ? '直播中' : '未开播'}</span>
+            <span>·</span>
+            <span>${escapeHtml(PLATFORM_META[item.platform]?.short || item.platform)}</span>
+            ${item.tag ? `<span>·</span><span>${escapeHtml(item.tag)}</span>` : ''}
+          </div>
         </div>
         <div class="follow-actions">
           <button class="tag-btn${item.tag ? ' active' : ''}" title="设置标签">${icon('star', 16)}</button>
@@ -322,11 +326,6 @@ export function renderFollow(ctx) {
       event.preventDefault();
       submitSearch();
     }
-  });
-  // 右上角的搜索图标只是把焦点送到输入框，避免再弹一层对话框。
-  page.querySelector('#follow-search').addEventListener('click', () => {
-    searchInput.focus();
-    searchInput.select();
   });
 
   page.querySelector('#follow-more').addEventListener('click', (event) => {

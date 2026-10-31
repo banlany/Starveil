@@ -295,7 +295,17 @@ export const api = {
   onDanmaku(handler) {
     // 浏览器里没有后端事件，用演示弹幕驱动布局/样式调试。
     if (!hasTauri) return startDemoDanmaku(handler);
-    return TAURI.event.listen('danmaku', (event) => handler(event.payload));
+    // 后端每 100ms 把这一轮收到的弹幕**合并成数组**发过来（事件名 danmaku-batch）。
+    // 逐条 emit 时每条都要过一次 evaluateJavascript，安卓上尤其贵，
+    // 所以这里把数组摊开交给调用方，调用方拿到的仍然是一条一条的消息。
+    return TAURI.event.listen('danmaku-batch', (event) => {
+      const payload = event.payload;
+      if (Array.isArray(payload)) {
+        for (const message of payload) handler(message);
+      } else if (payload) {
+        handler(payload);
+      }
+    });
   },
   // 弹幕连接状态（连接中 / 已连接 / 失败原因 / 本平台不支持）。
   // 和 onDanmaku 分开：状态是"当前这一刻"的结论，界面用它画聊天栏顶部的横幅。

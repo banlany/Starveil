@@ -411,22 +411,16 @@ export function renderRoom(ctx, params = {}) {
   }
 
   /// 聊天区里的 SC 行：底色直接取 SC 面板那张卡片的档位色（同一套 palette），
-  /// 平铺一个颜色、不铺渐变；字色按底色明暗二选一，浅金/浅蓝那几档用深色字。
+  /// 平铺一个颜色、不铺渐变。
+  ///
+  /// 这里只把两个档位色写成 CSS 变量，深浅主题各用哪一档、配什么字色交给 room.css：
+  /// 深色主题用深一档的底色 + 白字，浅色主题用浅一档 + 深字。
+  /// 走 CSS 的另一个好处是切换主题时，屏上已经画好的 SC 行会立刻跟着变，
+  /// 不像 inline style 那样必须重新渲染聊天栏。
   function paintScChatLine(line, sc) {
-    const { top } = scTierColors(sc);
-    line.style.backgroundColor = top;
-    line.style.color = isLightColor(top) ? '#2a1c0d' : '#ffffff';
-  }
-
-  /// 粗略亮度（sRGB 加权）：只用来在深/浅两种字色之间二选一，够用就好。
-  function isLightColor(color) {
-    const match = /^#?([0-9a-f]{6})$/i.exec(String(color ?? '').trim());
-    if (!match) return true;
-    const value = parseInt(match[1], 16);
-    const r = (value >> 16) & 0xff;
-    const g = (value >> 8) & 0xff;
-    const b = value & 0xff;
-    return (r * 299 + g * 587 + b * 114) / 1000 > 150;
+    const { top, bottom } = scTierColors(sc);
+    line.style.setProperty('--sc-bg', top);
+    line.style.setProperty('--sc-bg-strong', bottom);
   }
 
   function clearScTimer(entry) {
@@ -525,7 +519,7 @@ export function renderRoom(ctx, params = {}) {
       if (session.tab === 'sc') renderChatTab();
     }
     if (!entry.system && !entry.sc) spawnDanmaku(entry);
-    if (session.tab === 'chat') appendChatLine(entry);
+    if (session.tab === 'chat') queueChatLine(entry);
   }
 
   // 正则里的特殊字符要转义：表情 key 自带 `[` `]`，不转义会被当成字符组。
@@ -533,9 +527,11 @@ export function renderRoom(ctx, params = {}) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  function chatEmojiImage(key, url) {
+  function chatEmojiImage(key, url, big = false) {
     const image = document.createElement('img');
-    image.className = 'chat-emoji';
+    // 大表情（收藏集那类只能单独发送的）按字号的 2.5 倍画，和弹幕层保持一致；
+    // 小表情（`[热]`）仍跟行高走，否则一行字会被顶开。
+    image.className = big ? 'chat-emoji is-big' : 'chat-emoji';
     image.src = url;
     image.alt = key;
     image.loading = 'lazy';
@@ -553,13 +549,13 @@ export function renderRoom(ctx, params = {}) {
     const text = message.text == null ? '' : String(message.text);
     const list = Array.isArray(message.emoticons) ? message.emoticons : null;
     // 同一个 key 可能对应不同的图（每个房间都有自己那套 `[热]`），按出现顺序取第一个。
-    const urlByKey = new Map();
+    const entryByKey = new Map();
     for (const emoticon of list || []) {
       const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
       const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
-      if (key && url && !urlByKey.has(key)) urlByKey.set(key, url);
+      if (key && url && !entryByKey.has(key)) entryByKey.set(key, { url, big: Boolean(emoticon.big) });
     }
-    if (!urlByKey.size) {
+    if (!entryByKey.size) {
       node.textContent = text;
       return;
     }
@@ -570,21 +566,21 @@ export function renderRoom(ctx, params = {}) {
     // 整条扫一遍再切片，而不是按 emoticons 逐个 replace 一次：
     // 同一条弹幕里同一个表情常出现多次（`[大哭][大哭]`），只换第一处会让后面几个留成文字。
     // 长 key 排在前面，避免 `[热]` 抢走 `[热乎]` 的前半截。
-    const keys = [...urlByKey.keys()].sort((a, b) => b.length - a.length);
+    const keys = [...entryByKey.keys()].sort((a, b) => b.length - a.length);
     const pattern = new RegExp(keys.map(escapeRegExp).join('|'), 'g');
     let cursor = 0;
     for (const match of text.matchAll(pattern)) {
       const at = match.index ?? 0;
       if (at > cursor) node.appendChild(document.createTextNode(text.slice(cursor, at)));
-      node.appendChild(chatEmojiImage(match[0], urlByKey.get(match[0])));
+      const entry = entryByKey.get(match[0]);
+      node.appendChild(chatEmojiImage(match[0], entry.url, entry.big));
       cursor = at + match[0].length;
     }
     if (cursor < text.length) node.appendChild(document.createTextNode(text.slice(cursor)));
   }
 
-  function appendChatLine(message) {
-    const empty = chatList.querySelector('.chat-placeholder');
-    if (empty) empty.remove();
+  /// 造一条聊天行，只建 DOM 不插入聊天列表。
+  function buildChatLine(message) {
     const line = document.createElement('div');
     line.className = `chat-line${message.system ? ' system' : ''}${message.sc ? ' sc' : ''}`;
     if (!message.system) {
@@ -619,11 +615,55 @@ export function renderRoom(ctx, params = {}) {
     } else {
       line.textContent = message.text;
     }
+    return line;
+  }
+
+  /// 聊天行只留最近这些条：再往前滚不到，留着纯属拖慢布局。
+  const MAX_CHAT_LINES = 320;
+
+  /// 待上屏的聊天行。
+  ///
+  /// 一条一条 append 是刷屏时最贵的一段：每条都要读一次 scrollHeight 再改 scrollTop，
+  /// 每一读都是强制同步布局；热门直播间一秒钟几十条，安卓 WebView 上就是肉眼可见的卡顿。
+  /// 这里攒到下一帧一起插进去，插入和滚动每帧只做一次。
+  const pendingChatLines = [];
+  let chatFlushHandle = 0;
+
+  function queueChatLine(message) {
+    pendingChatLines.push(message);
+    if (chatFlushHandle) return;
+    chatFlushHandle = requestAnimationFrame(flushChatLines);
+  }
+
+  function flushChatLines() {
+    chatFlushHandle = 0;
+    if (!pendingChatLines.length) return;
+    const batch = pendingChatLines.splice(0, pendingChatLines.length);
+    // 切到别的标签页时聊天列表会被清空，这批消息已经在 session.messages 里，
+    // 切回来 renderChatTab() 会整表重画，这里直接丢掉就不会重复上屏。
+    if (session.tab !== 'chat') return;
+    chatList.querySelector('.chat-placeholder')?.remove();
+    // 贴不贴底必须在插入之前量。
     const pinned = chatGapToBottom() < CHAT_PIN_GAP;
-    chatList.appendChild(line);
-    while (chatList.childElementCount > 320) chatList.firstElementChild?.remove();
+    const fragment = document.createDocumentFragment();
+    for (const message of batch) fragment.appendChild(buildChatLine(message));
+    chatList.appendChild(fragment);
+    while (chatList.childElementCount > MAX_CHAT_LINES) chatList.firstElementChild?.remove();
     if (pinned) chatList.scrollTop = chatList.scrollHeight;
     updateChatToBottom();
+  }
+
+  function cancelChatFlush() {
+    if (chatFlushHandle) cancelAnimationFrame(chatFlushHandle);
+    chatFlushHandle = 0;
+    pendingChatLines.length = 0;
+  }
+
+  /// 整表重画时用：消息都从 session.messages 来，一条一条同步插入即可。
+  function appendChatLine(message) {
+    chatList.querySelector('.chat-placeholder')?.remove();
+    chatList.appendChild(buildChatLine(message));
+    while (chatList.childElementCount > MAX_CHAT_LINES) chatList.firstElementChild?.remove();
   }
 
   function placeholder(text, iconName = 'danmaku') {
@@ -689,6 +729,8 @@ export function renderRoom(ctx, params = {}) {
     // 记下滚动位置：SC 面板在「历史」视图时收到新 SC 也会整体重渲染，
     // 不还原的话列表会每次跳回顶部。
     const keepScroll = chatList.scrollTop;
+    // 从这里开始整表重画，攒着的聊天行也一起作废（消息本身都在 session.messages 里）。
+    cancelChatFlush();
     chatList.innerHTML = '';
     // 换标签页或重画时先收起悬浮按钮，聊天分支画完再按实际位置决定要不要露出。
     chatToBottom.classList.remove('is-shown');
@@ -2348,6 +2390,7 @@ export function renderRoom(ctx, params = {}) {
     document.documentElement.classList.remove('is-pip');
     page.classList.remove('is-pip');
     danmaku?.destroy();
+    cancelChatFlush();
     session.resizerCleanup?.();
     session.resizerCleanup = null;
     video.removeEventListener('timeupdate', purgeExpiredSc);

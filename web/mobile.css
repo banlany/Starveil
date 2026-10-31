@@ -193,6 +193,7 @@ html.is-mobile .category-page,
 html.is-mobile .search-body,
 html.is-mobile .follow-toolbar,
 html.is-mobile .follow-grid,
+html.is-mobile .follow-list-view,
 html.is-mobile .subpage-body {
   padding-left: 12px;
   padding-right: 12px;
@@ -202,9 +203,65 @@ html.is-mobile .page-pad {
   padding-bottom: calc(24px + var(--safe-bottom));
 }
 
-html.is-mobile .room-grid {
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 14px 10px;
+/* 竖屏（手机、平板竖着拿）：卡片列数不能白捡桌面的 210px 最小列宽。
+   minmax 的最小值跟屏宽走，一行几张就由「屏宽 / 这个值」决定，
+   360dp 的手机是 2 张，768 的平板正好 3 张，再宽也不会一路加到豆腐块。 */
+@media (orientation: portrait) {
+  html.is-mobile .room-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(148px, 26vw, 240px), 1fr));
+    gap: 14px 10px;
+  }
+
+  html.is-mobile .follow-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(136px, 24vw, 200px), 1fr));
+    gap: 10px;
+  }
+}
+
+/* 关注卡片在手机上一行两张：头像小一号、留白收紧，一张卡从 178px 压到 126px，
+   一屏能多看两排。高度不再写死，内容多了自己长。 */
+html.is-mobile .follow-card {
+  min-height: 126px;
+  padding: 14px 8px 8px;
+  border-radius: 10px;
+}
+
+html.is-mobile .follow-card .avatar {
+  margin-bottom: 6px;
+}
+
+html.is-mobile .follow-name {
+  font-size: 13px;
+}
+
+html.is-mobile .follow-meta {
+  margin-top: 4px;
+  gap: 4px;
+  font-size: 10.5px;
+}
+
+html.is-mobile .follow-actions {
+  padding-top: 6px;
+  gap: 16px;
+}
+
+/* 列表模式：头像、名字/状态竖排、操作按钮各占一列，窄屏也读得出层次。 */
+html.is-mobile .follow-list-view .follow-card {
+  min-height: 64px;
+  padding: 10px 12px;
+  gap: 12px;
+}
+
+html.is-mobile .follow-list-view .follow-name {
+  font-size: 14px;
+}
+
+html.is-mobile .follow-list-view .follow-meta {
+  font-size: 11.5px;
+}
+
+html.is-mobile .follow-list-view .follow-actions button {
+  padding: 8px;
 }
 
 html.is-mobile .settings-item,
@@ -326,19 +383,32 @@ html.is-mobile .chat-resizer {
   }
 
   /* 横屏用更小的最小列宽：640px 宽的手机也能从 3 列变 4 列，平板能再多几列。
-     再用 clamp 让大屏的卡片跟着长一点——最小列宽不跟屏宽走的话，
-     平板横屏会出现十几列的小豆腐块。 */
+     最小列宽跟着屏宽涨（clamp 的下限 150px、上限 280px），
+     1280 CSS px 的平板是 5 列、1920 是 6 列，不会像以前那样一路加到一行十几个豆腐块。
+     上限那档再配合下面的限宽，2560 这种超宽屏也不会超过 6 列。 */
   html.is-mobile .room-grid {
-    grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 12vw, 200px), 1fr));
-    gap: 12px 8px;
+    grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 17vw, 280px), 1fr));
+    gap: 14px 10px;
   }
 
   html.is-mobile .follow-grid {
-    grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 12vw, 220px), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 15vw, 240px), 1fr));
   }
 
   html.is-mobile .category-grid {
     grid-template-columns: repeat(auto-fill, minmax(clamp(80px, 6.5vw, 110px), 1fr));
+  }
+}
+
+/* 超宽屏（高分辨率平板横屏）：列数到此为止，剩下的空间居中留白。
+   限宽 1760px 配上 280px 的最小列宽，最多 6 列——再多的列只会让封面变小、
+   标题只剩两三个字，翻起来更累。 */
+@media (orientation: landscape) and (min-width: 1500px) {
+  html.is-mobile .room-grid,
+  html.is-mobile .follow-grid {
+    max-width: 1760px;
+    margin-left: auto;
+    margin-right: auto;
   }
 }
 

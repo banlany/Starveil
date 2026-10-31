@@ -529,24 +529,35 @@ export function createDanmakuLayer(container, video, config = null) {
     if (session.queue.length) scheduleDrain();
   }
 
-  /// 表情图尺寸对齐行高。大表情原图可能 200×60，按原尺寸画会把轨道撑高、挤掉正常弹幕；
-  /// 20×20 的小表情则偏小，和字号不搭。两种都等比缩到「一个行高」附近。
-  function fitEmoticon(width, height, fontSize) {
-    const rawWidth = Math.max(1, Number(width) || 20);
-    const rawHeight = Math.max(1, Number(height) || 20);
-    let nextHeight = Math.max(12, Math.round(fontSize * LINE_HEIGHT_RATIO * 0.92));
-    let nextWidth = (rawWidth / rawHeight) * nextHeight;
-    // 横条表情（收藏集里常见）限到 8 个字符宽，否则一条就占半屏。
-    const maxWidth = fontSize * 8;
-    if (nextWidth > maxWidth) {
-      nextWidth = maxWidth;
-      nextHeight = (rawHeight / rawWidth) * nextWidth;
-    }
-    return {
-      width: Math.max(1, Math.round(nextWidth)),
-      height: Math.max(1, Math.round(nextHeight)),
-    };
+/// 大表情（B 站收藏集/房间表情，只能整条单独发送）按**字号**的 2.5 倍画。
+/// 小表情（`[热]` 这种内嵌在文字里的）仍按行高缩放——它要和同一行的文字齐平。
+const BIG_EMOTICON_SCALE = 2.5;
+
+/// 表情图尺寸对齐。
+///
+/// 大表情：宽高都是字号 2.5 倍（等比），比行高还高，所以会略微盖住上下轨道——
+/// 这是平台自己的画法，压到行高里反而看不出是个大表情。
+/// 小表情：大图按原尺寸画会把轨道撑高、挤掉正常弹幕，20×20 又偏小，
+/// 两种都等比缩到「一个行高」附近。
+function fitEmoticon(width, height, fontSize, big = false) {
+  const rawWidth = Math.max(1, Number(width) || 20);
+  const rawHeight = Math.max(1, Number(height) || 20);
+  let nextHeight = big
+    ? Math.max(24, Math.round(fontSize * BIG_EMOTICON_SCALE))
+    : Math.max(12, Math.round(fontSize * LINE_HEIGHT_RATIO * 0.92));
+  let nextWidth = (rawWidth / rawHeight) * nextHeight;
+  // 横条表情（收藏集里常见）限宽：大表情按 4 张自身宽度算，小表情仍是 8 个字符宽，
+  // 否则一条就能占掉半屏、把后面的弹幕全挤掉。
+  const maxWidth = fontSize * (big ? BIG_EMOTICON_SCALE * 4 : 8);
+  if (nextWidth > maxWidth) {
+    nextWidth = maxWidth;
+    nextHeight = (rawHeight / rawWidth) * nextWidth;
   }
+  return {
+    width: Math.max(1, Math.round(nextWidth)),
+    height: Math.max(1, Math.round(nextHeight)),
+  };
+}
 
   /// 登记一张表情图，返回库用的图片 id（正文里会写成 `[id]`，所以不能带中括号）。
   /// 同一张图重复出现时复用已有 id；同名但不同图（不同房间的 `[热]`）另起一个。
@@ -582,7 +593,7 @@ export function createDanmakuLayer(container, video, config = null) {
       const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
       if (!key || !url || !text.includes(key)) continue;
       const bracketed = key.startsWith('[') && key.endsWith(']');
-      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize);
+      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize, Boolean(emoticon.big));
       const id = registerImage(url, size, bracketed ? key.slice(1, -1) : key);
       text = text.split(key).join(`[${id}]`);
     }

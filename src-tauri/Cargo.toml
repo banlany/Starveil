@@ -1,6 +1,6 @@
 [package]
 name = "starveil"
-version = "0.6.2"
+version = "0.6.3"
 description = "星幕直播 · Tauri 桌面客户端"
 edition = "2024"
 rust-version = "1.95"
@@ -10,6 +10,12 @@ rust-version = "1.95"
 [lib]
 name = "starveil_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# 排查用：带 `devtools` 特性出包，release 也能用 WebView 远程调试
+# （`cargo tauri android build --features devtools` / `cargo build --features devtools`）。
+# 不加这个特性时行为和以前完全一样。
+[features]
+devtools = ["tauri/devtools"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

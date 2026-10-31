@@ -446,6 +446,15 @@
   white-space: nowrap;
 }
 
+/* 名字 + 状态/平台/标签一组：卡片模式竖排居中，列表模式靠左并占满中间那一列。 */
+.follow-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .follow-meta {
   margin-top: 7px;
   display: flex;
@@ -533,9 +542,12 @@
   margin: 0;
 }
 
-.follow-list-view .follow-name,
-.follow-list-view .follow-meta {
-  align-self: flex-start;
+/* 列表模式：头像 | 名字/状态（竖排） | 右侧操作按钮。
+   以前名字和状态是行内并排的两个兄弟节点，窄屏上挤成一行读不出层次。 */
+.follow-list-view .follow-text {
+  align-items: flex-start;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .follow-list-view .follow-meta {
