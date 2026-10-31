@@ -22,6 +22,7 @@ import { renderSettings, renderSettingsDetail } from './pages/settings.js';
 import { renderRoom } from './pages/room.js';
 import { importData } from './importer.js';
 import { initTitlebar } from './titlebar.js';
+import { bindHorizontalSwipe } from './swipe.js';
 import { applyPlatformFlags, IS_MOBILE } from './platform.js';
 
 const view = document.getElementById('view');
@@ -211,10 +212,35 @@ function selectPlatform(platform, options = {}) {
   return true;
 }
 
-function syncPlatformTabs() {
-  for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
-    tab.classList.toggle('active', tab.dataset.platform === state.platform);
+/// 把平台标签下方的主色条摆到当前标签下面。
+/// 用一个共享元素 + transform 过渡，切换平台时它是「滑过去」而不是跳过去。
+let platformUnderlineReady = false;
+function placePlatformUnderline(active) {
+  const underline = platformTabs.querySelector('.tab-underline');
+  if (!underline || !active) return;
+  const inset = parseFloat(getComputedStyle(platformTabs).getPropertyValue('--tab-underline-inset')) || 0;
+  if (!platformUnderlineReady) underline.style.transition = 'none';
+  underline.style.width = `${Math.max(0, active.offsetWidth - inset * 2)}px`;
+  underline.style.transform = `translateX(${active.offsetLeft + inset}px)`;
+  if (!platformUnderlineReady) {
+    // 首帧直接定位，别让色条从最左边滑进第一个标签。
+    void underline.offsetWidth;
+    underline.style.transition = '';
+    platformUnderlineReady = true;
   }
+}
+
+function syncPlatformTabs() {
+  let active = null;
+  for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
+    const current = tab.dataset.platform === state.platform;
+    tab.classList.toggle('active', current);
+    if (current) active = tab;
+  }
+  // 移动端标签条本身可以横向滚动，手指滑到的平台很可能在视野外，
+  // 不滚过去用户就看不出当前在哪一页。
+  if (IS_MOBILE) active?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  placePlatformUnderline(active);
 }
 
 function renderPlatformTabs() {
@@ -222,10 +248,39 @@ function renderPlatformTabs() {
     const envEnabled = ENABLED_PLATFORMS.includes(platform);
     const active = platform === state.platform;
     return `<button class="platform-tab${active ? ' active' : ''}${envEnabled ? '' : ' is-disabled'}" data-platform="${platform}" role="tab" aria-selected="${active}" title="${escapeHtml(PLATFORM_META[platform].name)}${envEnabled ? '' : '（即将支持）'}">${platformIcon(platform, 23)}<span>${escapeHtml(PLATFORM_META[platform].name)}</span></button>`;
-  }).join('');
+  }).join('') + '<span class="tab-underline" aria-hidden="true"></span>';
   for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
     tab.addEventListener('click', () => selectPlatform(tab.dataset.platform));
   }
+}
+
+/// 按已启用的平台顺序翻一页。到两端就停住（不循环），和常见分页手势一致。
+/// 返回是否真的切了——没切的话调用方不必播放过渡。
+function cyclePlatform(direction) {
+  const list = ALL_PLATFORMS.filter((platform) => isPlatformEnabled(platform));
+  if (list.length < 2) return false;
+  const index = list.indexOf(state.platform);
+  if (index < 0) return false;
+  const next = list[index + (direction === 'left' ? 1 : -1)];
+  if (!next) return false;
+  return selectPlatform(next, { silent: true });
+}
+
+/// 左右滑动切平台：只在首页和分类页，这两个页面的顶栏挂的就是平台标签条。
+/// 直播间里对应的手势是切聊天标签，见 room.js。
+function initSwipe() {
+  if (!IS_MOBILE) return;
+  bindHorizontalSwipe(view, (direction) => {
+    if (state.page !== 'home' && state.page !== 'category') return false;
+    // 有浮层时手势归浮层，别在下面偷偷切平台。
+    if (document.querySelector('.modal-overlay, .menu-overlay')) return false;
+    if (!cyclePlatform(direction)) return false;
+    view.classList.remove('swipe-in');
+    // 连续两次滑动时，先去掉类再回流，动画才会重新播。
+    void view.offsetWidth;
+    view.classList.add('swipe-in');
+    return true;
+  });
 }
 
 function renderChrome() {
@@ -502,6 +557,7 @@ function initPullRefresh() {
 
   const THRESHOLD = 64;
   const MAX = 96;
+  let startX = 0;
   let startY = 0;
   let pulling = false;
   let distance = 0;
@@ -516,6 +572,7 @@ function initPullRefresh() {
 
   view.addEventListener('touchstart', (event) => {
     if (!pullRefreshHandler || view.scrollTop > 0 || event.touches.length !== 1) return;
+    startX = event.touches[0].clientX;
     startY = event.touches[0].clientY;
     pulling = true;
     distance = 0;
@@ -523,7 +580,13 @@ function initPullRefresh() {
 
   view.addEventListener('touchmove', (event) => {
     if (!pulling) return;
-    const delta = event.touches[0].clientY - startY;
+    const touch = event.touches[0];
+    const delta = touch.clientY - startY;
+    // 横向为主的那一下是翻页（swipe.js），别在顶上冒一个下拉胶囊出来。
+    if (Math.abs(touch.clientX - startX) > Math.abs(delta)) {
+      reset();
+      return;
+    }
     if (delta <= 0) {
       reset();
       return;
@@ -727,6 +790,7 @@ function init() {
   renderPlatformTabs();
   initGlobalShortcuts();
   initPullRefresh();
+  initSwipe();
   state.page = 'home';
   state.routeParams = {};
   render({ keepScroll: false });

@@ -113,7 +113,9 @@ export const DEFAULT_SETTINGS = {
     // 行数既决定画多大，也决定轨道算法给它留几条轨道（弹幕层会按它抬高 maxGrade），
     // 所以设成 2 行就真的会空出上下两条轨道，不会盖住旁边的弹幕。
     bigEmojiLines: 2,
-    dedupe: true,
+    // 默认**关**：按内容去重会把「666」「哈哈哈哈」这类不同人发的一模一样的话
+    // 整段吞掉，这是实打实的「能显示却被丢掉」。真有刷屏再让用户自己开。
+    dedupe: false,
     dedupeMode: 'content',
     dedupeWindow: 10,
     dedupeStep: 2,

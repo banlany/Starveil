@@ -1,15 +1,24 @@
 // 弹幕层：封装 fly-barrage（canvas 渲染 + 虚拟轨道避让），对外只暴露项目需要的接口。
 //
 // 设计要点：
-// 1. fly-barrage 的进度来自 `video.currentTime`，直播流每次重连都会归零，
-//    所以重连/换线后必须 `reset()` 重建渲染器，否则旧弹幕的时间轴和新时间轴对不上。
+// 1. **弹幕流与直播流彻底解耦**：库每帧读一次「进度」来算弹幕位置，这个进度由
+//    我们喂进去的时钟源提供。这里用的是**单调墙钟**（createMonotonicClock），
+//    不读 `video.currentTime`、也不理会 `video.paused`——直播流暂停、缓冲、
+//    断流重连、还没开播，弹幕都照常流动。早期版本直接绑视频时间，上面任何一种情况
+//    都会让整层弹幕冻住，而聊天栏还在刷新，看着就像弹幕流被直播流拖死了。
 // 2. 库内部不回收已下屏的弹幕实例，长时间观看会持续增长；
-//    超过阈值时同样走 `reset()`，代价只是清空当前屏上的弹幕。
-// 3. 库没有“满轨排队”，这里保留一个轻量发送队列做限速，
-//    避免瞬时爆发的一批弹幕被轨道算法整批丢弃。
+//    超过阈值时走 `prune()` 摘掉滚出屏幕的实例，屏上正在滚的不受影响。
+// 3. 库没有「满轨排队」：轨道占满时它会把弹幕随便塞进一条轨道（叠字）。
+//    这里用发送队列限速；被判定满轨的**退回队尾稍后重试**，而不是当场丢掉。
+//    真正允许丢弃的只有一种情况：这条在队列里等得比 QUEUE_MAX_AGE 还久
+//    （轨道容量是物理上限，等太久的弹幕再放出来也只是错位的旧话）。
 // 4. **尺寸变化不重建渲染器**：进出全屏、窗口缩放、聊天栏收起都只走库自己的
 //    `resize()` + `setRenderConfig()`，弹幕实例、待发队列和计数全部保留。
 //    早期版本这里直接 `rebuild()`，结果每切一次全屏弹幕就「重新加载」一次。
+// 5. **时钟要单调且平滑**：墙钟本身每帧都在变，不需要再做帧间预测；
+//    它也不会因为视频时间跳变（换线、跳帧）而整体回退。
+
+import { IS_MOBILE } from './platform.js';
 
 const RENDERER_KEY = 'FlyBarrage';
 
@@ -44,10 +53,14 @@ const DEFAULT_BIG_EMOJI_LINES = 2;
 /// canvas 上最贵的是阴影和描边，所以档位越高越倾向把它们关掉；
 /// DPR 是第二贵的因素（画布面积按 dpr² 增长），极速档把它压到 1；
 /// sendScale < 1 表示「发送间隔放大」，档位越高每秒进的弹幕越少，绘制压力更小。
+///
+/// 移动端默认就把 DPR 压到 2：安卓手机的 devicePixelRatio 常见 2.75~3，
+/// 而库每帧要「清离屏画布 → 画弹幕 → 清主画布 → 整屏合成」，
+/// 填充量按 dpr² 走，3 降到 2 直接省掉一半多，20px 的字在 2 倍下依然锐利。
 const PERF_PROFILES = {
-  balanced: { maxStored: 1500, dprCap: 0, shadowBlur: 2, minSpace: 26, sendScale: 1, noStroke: false },
-  smooth: { maxStored: 1000, dprCap: 2, shadowBlur: 0, minSpace: 22, sendScale: 0.8, noStroke: false },
-  ultra: { maxStored: 700, dprCap: 1, shadowBlur: 0, minSpace: 18, sendScale: 0.6, noStroke: true },
+  balanced: { maxStored: 1500, dprCap: IS_MOBILE ? 2 : 0, shadowBlur: 2, minSpace: 26, sendScale: 1, noStroke: false },
+  smooth: { maxStored: 1000, dprCap: 1.75, shadowBlur: 0, minSpace: 22, sendScale: 0.8, noStroke: false },
+  ultra: { maxStored: 700, dprCap: 1.25, shadowBlur: 0, minSpace: 18, sendScale: 0.6, noStroke: true },
 };
 
 /// 性能档位与帧率上限的选项表。
@@ -68,6 +81,21 @@ export const FPS_OPTIONS = [
 /// 否则一帧里创建大量实例，正好撞上掉帧。
 const MAX_PER_DRAIN = 3;
 
+/// 待发队列的两个上限。
+/// 超过软上限就开始**压缩发送间隔**，优先把积压消化掉——刷屏时本来也分不清快慢，
+/// 但少丢一条是一条。硬上限只是防内存失控的兜底（40 条/秒也要堆两分钟才到），
+/// 到了这一步说明无论如何都发不完，才丢最旧的。
+const QUEUE_SOFT_LIMIT = 80;
+const QUEUE_HARD_LIMIT = 4000;
+
+/// 一条弹幕最多在队列里等多久（毫秒）。
+///
+/// 轨道容量是物理上限（十来个轨道 × 每条滚 N 秒 ≈ 每秒几条），刷屏时进得比出得快，
+/// 硬排队只会让队列越拖越长：观众看到的是几十秒前的话，直播间早就翻篇了。
+/// 所以等太久的一律按「显示不下」处理——超过这个时间还没轮到的，允许丢。
+/// 反过来，一两百毫秒的瞬时爆发（比如一堆人同时刷「哈哈」）完全在这个窗口里，一条都不会少。
+const QUEUE_MAX_AGE = 3000;
+
 /// 已经预热过的表情图（url → Image）。持有引用是为了避免图片还没下载完就被回收，
 /// 命中之后浏览器缓存会接管，弹幕库自己再取一次就是同步的。
 const preloadedEmoticons = new Map();
@@ -87,6 +115,25 @@ function rendererClass() {
   return lib?.BarrageRenderer || lib?.default || null;
 }
 
+/// 弹幕时钟（秒），给弹幕库当进度源。
+///
+/// **只用单调墙钟，完全不看视频**。理由：
+/// - 库每画一帧读一次进度算位置。早期版本绑 `video.currentTime`，而这个值在 WebView 里
+///   不保证每帧都变（安卓上常见十几到几十毫秒跳一次），弹幕就会一段一段往前挪；
+/// - 更糟的是它跟着视频走：暂停、缓冲（readyState 掉下来）、断流、还没开播，
+///   进度一律不动 → 整层弹幕冻住，而聊天栏还在刷新，看起来就是「弹幕流挂了」。
+///
+/// 直播里弹幕的语义本来就是「此刻发的」，跟真实时间走才对。墙钟（`performance.now()`）
+/// 单调递增、不受系统时间调整影响，视频卡多久都不影响它；换线重连也不会回退。
+/// 代价是弹幕与画面不再逐帧对齐，但直播流本身就有秒级延迟，这点偏差看不出来。
+function createMonotonicClock(origin = performance.now()) {
+  return {
+    get currentTime() {
+      return (performance.now() - origin) / 1000;
+    },
+  };
+}
+
 export function flyBarrageAvailable() {
   return typeof rendererClass() === 'function';
 }
@@ -103,16 +150,18 @@ export function createDanmakuLayer(container, video, config = null) {
   container.appendChild(host);
 
   const Renderer = rendererClass();
-  // 浏览器演示模式下 <video> 没有真实媒体，currentTime 恒为 0，
-  // 这里用墙钟兜底，保证弹幕库的进度能推进（真实播放时仍用 currentTime）。
-  const bornAt = performance.now();
-  const hasMedia = () => video.readyState > 0 || Boolean(video.currentSrc);
+  // 整层共用一个时钟（不是每次 rebuild 新建），见 createMonotonicClock。
+  const clock = createMonotonicClock();
+  // 时钟对象要**始终是同一个引用**：库在构造时按引用把它存下来，
+  // 之后 rebuild 只是重建渲染器，时钟继续往前跑，弹幕不会因为重建而集体「归零重放」。
   const clockSource = {
     get currentTime() {
-      return hasMedia() ? video.currentTime : (performance.now() - bornAt) / 1000;
+      return clock.currentTime;
     },
+    // 永远返回「在播放」：库的 `play()` 看到 paused 为真就只画一帧、不启动渲染循环，
+    // 这会直接表现成「弹幕层空着不动」。弹幕是否流动只由我们自己的开关决定。
     get paused() {
-      return hasMedia() ? video.paused : false;
+      return false;
     },
   };
   const session = {
@@ -134,6 +183,8 @@ export function createDanmakuLayer(container, video, config = null) {
     destroyed: false,
     observer: null,
     resizeHandle: 0,
+    // 定时确认渲染循环还在跑（见下方 keepAlive）
+    keepAliveTimer: 0,
     enabled: true,
     width: 0,
     height: 0,
@@ -308,7 +359,7 @@ export function createDanmakuLayer(container, video, config = null) {
     const renderer = session.renderer;
     const calc = renderer?.barrageLayoutCalculate;
     if (!calc) return 0;
-    // 和 emit() 用同一个时钟（视频 currentTime，演示模式下是墙钟）。
+    // 和 emit()/库渲染用同一个时钟（单调墙钟），否则回收判断会和实际显示错位。
     const now = Math.max(0, Number(clockSource.currentTime) || 0) * 1000;
     const removed = new Set();
     const keep = (barrage) => {
@@ -365,7 +416,8 @@ export function createDanmakuLayer(container, video, config = null) {
   /// 直播流重连（时间轴归零）、字号变化（每条弹幕实例的宽高是创建时固定的）。
   function rebuild() {
     if (session.destroyed || !Renderer) return;
-    session.queue.length = 0;
+    // **不清队列**：待发的弹幕还没上过屏，重建只是换了个画布，它们照旧可以显示。
+    // 清理定时器只是让它按新配置重新起一轮节奏。
     clearTimeout(session.queueTimer);
     session.queueTimer = 0;
     // 表情尺寸是按字号算的，重建后（字号/档位变了）必须重新量一遍；
@@ -443,11 +495,16 @@ export function createDanmakuLayer(container, video, config = null) {
 
   /// 帧率上限：库的渲染循环是裸 rAF，没有节流开关，这里包一层 `_render`。
   /// 跳帧时必须自己把下一帧排上，否则链条会断（续帧写在原函数末尾）。
+  ///
+  /// 判定要留余量：60Hz 屏的 rAF 间隔本来就在 16.67ms 上下抖，若写成
+  /// 「小于 interval 就跳过」，几乎每帧都会被判成太早，于是隔一帧画一次，
+  /// 实际帧率掉到一半（60 档变 30、30 档变 20，看着就是「一卡一卡」）。
+  /// 留 1/4 帧容差后，与屏幕同频的档位是满帧，跨档位（120Hz 屏选 60）才真正抽帧。
   function applyFrameLimit() {
     const renderer = session.renderer;
     if (!renderer) return;
     const fps = Number((session.config || FALLBACK_CONFIG).fps) || 0;
-    if (!fps || fps >= 60) {
+    if (!fps) {
       // 跟随屏幕：把包过的函数还原成原型上的原版。
       if (renderer.__starveilRender) {
         try {
@@ -461,10 +518,11 @@ export function createDanmakuLayer(container, video, config = null) {
     const original = renderer.__starveilRender || renderer._render;
     renderer.__starveilRender = original;
     const interval = 1000 / Math.max(10, fps);
+    const threshold = interval * 0.75;
     let last = 0;
     renderer._render = function throttledRender() {
       const now = performance.now();
-      if (now - last < interval) {
+      if (now - last < threshold) {
         requestAnimationFrame(() => this._render());
         return;
       }
@@ -576,9 +634,15 @@ export function createDanmakuLayer(container, video, config = null) {
     // 没量到过宽度时按「约 12 个字符」估一下，之后用实测值修正。
     const width = session.widthAvg || Math.min(canvasWidth * 0.4, 200);
     const perTrack = ((width + profile().minSpace) * durationMs) / (canvasWidth + width);
-    // 上限 400ms：再慢就变成明显延迟了，宁可后面按「满轨」丢弃。
+    // 上限 400ms：再慢就变成明显延迟了。
     const gap = Math.min(400, perTrack / tracks);
-    return Math.max(16, Math.round(gap / profile().sendScale));
+    // 积压越多发得越快（最多压到 1/4 间隔）：宁可这一屏挤一点，也别把弹幕存在队列里
+    // 越攒越旧——观众看到的是「三分钟前的话」，还不如早点放出来。
+    const backlog = session.queue.length;
+    const compress = backlog > QUEUE_SOFT_LIMIT
+      ? Math.min(4, 1 + (backlog - QUEUE_SOFT_LIMIT) / 60)
+      : 1;
+    return Math.max(16, Math.round(gap / (profile().sendScale * compress)));
   }
 
   function scheduleDrain() {
@@ -586,25 +650,41 @@ export function createDanmakuLayer(container, video, config = null) {
     session.queueTimer = setTimeout(() => {
       session.queueTimer = 0;
       drain();
-    }, sendGap());
+    }, Math.max(16, sendGap()));
   }
 
   function drain() {
-    if (session.destroyed || !session.renderer) return;
-    const gap = sendGap();
+    if (session.destroyed || !session.renderer || !session.queue.length) return;
+    // 先把等太久的清掉：它们的「出现时刻」已经过去，补放出来只是错位的旧话。
+    // 这一步算「显示不下」，会计入 dropped；队列里剩下的都是还来得及显示的。
     const now = performance.now();
-    if (now - session.lastSendAt < gap && session.queue.length) {
+    while (session.queue.length && now - session.queue[0].at > QUEUE_MAX_AGE) {
+      session.queue.shift();
+      session.dropped += 1;
+    }
+    if (!session.queue.length) return;
+    const gap = sendGap();
+    if (performance.now() - session.lastSendAt < gap) {
       scheduleDrain();
       return;
     }
     // 一次最多补发 MAX_PER_DRAIN 条：时间戳间隔检查在循环里只能发出 1~2 条，
     // 但 lastSendAt 很久没更新时（切标签页、窗口刚恢复）会一次塞进整批。
-    let sentNow = 0;
-    while (session.queue.length && sentNow < MAX_PER_DRAIN) {
+    let attempts = 0;
+    while (session.queue.length && attempts < MAX_PER_DRAIN) {
       if (performance.now() - session.lastSendAt < gap) break;
-      emit(session.queue.shift());
+      const entry = session.queue.shift();
+      const result = emit(entry.msg);
       session.lastSendAt = performance.now();
-      sentNow += 1;
+      attempts += 1;
+      if (result === 'full') {
+        // 放回**队尾**，下一轮再看轨道有没有空出来：既不能插队，也不能赖在队头
+        // 把后面所有人堵死——那样刷屏过后队列会拖几十秒，新弹幕还被压在
+        // 一堆注定要丢的旧弹幕后面。多久算「等太久」由 QUEUE_MAX_AGE 统一裁决。
+        session.queue.push(entry);
+        continue;
+      }
+      if (result === 'dropped') session.dropped += 1;
     }
     if (session.queue.length) scheduleDrain();
   }
@@ -683,12 +763,13 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     return text;
   }
 
+  /// 试着把一条弹幕送进库里。
+  /// 返回 `'shown'` 成功上屏、`'full'` 当下没有空轨道（可以稍后重试）、
+  /// `'dropped'` 参数不合法等没法显示的原因（重试也没用）。
   function emit(message) {
     const config = session.config || FALLBACK_CONFIG;
     const renderer = session.renderer;
-    if (!renderer) return;
-    // 回收阈值用的计数（id 走 seq，两者必须分开）。
-    session.sent += 1;
+    if (!renderer) return 'full';
     const fontSize = Math.max(12, Math.min(48, Number(config.font) || FALLBACK_CONFIG.font));
     // 颜色统一截到 RGB888：平台偶尔会下发 32 位带 alpha 的值，
     // `padStart(6)` 不会截断，会拼出 `#xxxxxxxx` 这种非法 hex —— canvas 直接不画，
@@ -725,9 +806,9 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       if (instances && instances.length > before) created = instances[instances.length - 1];
     } catch {
       /* 库对个别非法参数会抛错，忽略单条不影响其他弹幕 */
-      return;
+      return 'dropped';
     }
-    if (!created) return;
+    if (!created) return 'dropped';
     // 大表情占几行：把避让表抬到它的实际 grade。
     // 正常情况配置已经抬好了（primeTracks/syncMaxGrade），这里兜住
     // 「横条表情被限宽后变矮」之外的极端情况（比如轨道数刚变过）。
@@ -739,15 +820,19 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
         ? session.widthAvg * 0.85 + created.width * 0.15
         : created.width;
     }
-    // 满轨：库只能把它丢到随机轨道上，结果一定是叠字。
-    // 这条直接撤下不显示——刷屏时宁可少显示，也不叠成一坨（B 站同样会丢弃满轨的弹幕）。
+    // 满轨：库把它丢到随机轨道上，直接画就是叠字。这条先从库里撤下来，
+    // 交给 drain 退回队列重试——满轨是**这一刻**没位置，不是永远显示不下。
     if (created.fallbackTrack) {
       dropInstance(created);
-      return;
+      return 'full';
     }
     // 交叉登记：一条弹幕占了几条实际轨道，就写进这几条轨道上所有虚拟轨道的占用表。
     // 不做这一步，两行高的大表情和普通弹幕会互相看不见（见 registerOccupancy 注释）。
     if (barrageType === 'scroll') registerOccupancy(created);
+    // 回收阈值用的计数（id 走 seq，两者必须分开）。只统计真正上屏的，
+    // 满轨重试的那几次不该被算成「已发送」。
+    session.sent += 1;
+    return 'shown';
   }
 
   /// 把刚创建但放不下的实例从库里摘干净。
@@ -755,7 +840,7 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
   function dropInstance(instance) {
     const calc = session.renderer?.barrageLayoutCalculate;
     if (!calc) return;
-    session.dropped += 1;
+    // 这里不记 `dropped`：撤下只是因为这一轮满轨，drain 会决定是重试还是最终丢弃。
     for (const list of [calc.scrollBarrageInstances, calc.canShowScrollBarrageInstances]) {
       const index = list.indexOf(instance);
       if (index >= 0) list.splice(index, 1);
@@ -775,8 +860,20 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
   build();
   syncRenderConfig();
 
-  video.addEventListener('play', () => session.renderer?.play());
-  video.addEventListener('pause', () => session.renderer?.pause());
+  // 只**重新拉起**渲染循环，不在暂停时停它。
+  // 早期这里还挂了 `pause → renderer.pause()`，于是点一下暂停（或直播流缓冲、
+  // 自动重连时短暂 paused）整层弹幕就冻住，看起来就像弹幕流跟着直播流一起死了。
+  // 弹幕要不要流动只由弹幕开关决定，与视频状态无关。
+  video.addEventListener('play', () => {
+    if (session.enabled) session.renderer?.play();
+  });
+  // 同理：断流重连、未开播时渲染循环也可能被别处停掉，这里定时补一脚，
+  // 保证「弹幕在流动」这件事不依赖任何外部事件。空转开销可以忽略（每 5 秒一次）。
+  session.keepAliveTimer = setInterval(() => {
+    if (session.destroyed || !session.enabled) return;
+    const renderer = session.renderer;
+    if (renderer && !renderer.animationHandle) renderer.play();
+  }, 5000);
 
   // 调试句柄：在控制台里可以查 sent / queued / renderer 状态，也能手动塞一条弹幕试样式。
   const api = {
@@ -809,11 +906,16 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       syncMaxGrade();
       ensureLayout();
     },
-    /** 立刻显示一条弹幕；超出发送速率时先入队 */
+    /** 立刻显示一条弹幕；超出发送速率时先入队，排队期间一条都不会被悄悄丢掉 */
     send(message) {
       if (session.destroyed || !session.renderer) return;
-      if (session.queue.length > 300) session.queue.shift();
-      session.queue.push(message);
+      // 只有堆到硬上限才挤掉最旧的，正常直播碰不到这一步（见 QUEUE_HARD_LIMIT）。
+      // 早期版本这里写的是 300 条，一场热闹的直播里会不声不响地丢掉大量弹幕。
+      if (session.queue.length >= QUEUE_HARD_LIMIT) {
+        session.queue.shift();
+        session.dropped += 1;
+      }
+      session.queue.push({ msg: message, tries: 0, at: performance.now() });
       if (performance.now() - session.lastSendAt >= sendGap()) drain();
       else scheduleDrain();
     },
@@ -860,6 +962,8 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       session.destroyed = true;
       session.queue.length = 0;
       clearTimeout(session.queueTimer);
+      clearInterval(session.keepAliveTimer);
+      session.keepAliveTimer = 0;
       if (session.resizeHandle) cancelAnimationFrame(session.resizeHandle);
       session.resizeHandle = 0;
       session.observer?.disconnect();

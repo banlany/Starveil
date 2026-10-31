@@ -4,6 +4,7 @@ import { BIG_EMOJI_LINE_OPTIONS, createDanmakuLayer, FPS_OPTIONS, flyBarrageAvai
 import { signDouyinDanmaku } from '../douyin-sign.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
+import { bindHorizontalSwipe } from '../swipe.js';
 import {
   addWatchTime,
   DEFAULT_SETTINGS,
@@ -128,6 +129,7 @@ export function renderRoom(ctx, params = {}) {
           <button class="chat-tab" data-tab="sc">SC<em id="sc-count">0</em></button>
           <button class="chat-tab" data-tab="follow">关注</button>
           <button class="chat-tab" data-tab="settings">设置</button>
+          <span class="tab-underline chat-tab-underline" aria-hidden="true"></span>
         </div>
         <div class="chat-status" id="chat-status" hidden></div>
         <div class="chat-list" id="chat-list"></div>
@@ -292,6 +294,21 @@ export function renderRoom(ctx, params = {}) {
     setChatTab(tab);
   });
   chatList.addEventListener('scroll', updateChatToBottom, { passive: true });
+  // 聊天栏左右滑动切标签：聊天 → SC → 关注 → 设置。只在移动端，
+  // 桌面端鼠标拖拽容易误触，而且标签本来就好点。
+  if (IS_MOBILE) {
+    const swipeTabs = ['chat', 'sc', 'follow', 'settings'];
+    bindHorizontalSwipe(chat, (direction) => {
+      const index = swipeTabs.indexOf(session.tab);
+      if (index < 0) return;
+      const next = swipeTabs[index + (direction === 'left' ? 1 : -1)];
+      if (!next) return;
+      setChatTab(next);
+      chatList.classList.remove('swipe-in');
+      void chatList.offsetWidth;
+      chatList.classList.add('swipe-in');
+    });
+  }
   chatToBottom.addEventListener('click', () => scrollChatToBottom(true));
   composer.addEventListener('submit', submitDanmaku);
   updateComposer();
@@ -450,7 +467,10 @@ export function renderRoom(ctx, params = {}) {
     const counter = $('sc-count');
     if (counter) counter.textContent = String(session.scMessages.length);
     renderScOverlay();
-    if (session.tab === 'sc') renderChatTab();
+    if (session.tab === 'sc') {
+      renderChatTab();
+      syncChatTabUnderline();
+    }
   }
 
   function scheduleScRemoval(entry) {
@@ -527,7 +547,11 @@ export function renderRoom(ctx, params = {}) {
       if (counter) counter.textContent = String(session.scMessages.length);
       scheduleScRemoval(entry);
       renderScOverlay();
-      if (session.tab === 'sc') renderChatTab();
+      if (session.tab === 'sc') {
+        renderChatTab();
+        // 计数位数变了（9 → 10）标签会变宽，色条得跟着重新对齐。
+        syncChatTabUnderline();
+      }
     }
     if (!entry.system && !entry.sc) spawnDanmaku(entry);
     if (session.tab === 'chat') queueChatLine(entry);
@@ -634,6 +658,9 @@ export function renderRoom(ctx, params = {}) {
   /// 聊天行只留最近这些条：再往前滚不到，留着纯属拖慢布局。
   const MAX_CHAT_LINES = 320;
 
+  /// 每帧最多上屏多少行（见 flushChatLines）。
+  const CHAT_LINES_PER_FRAME = 24;
+
   /// 待上屏的聊天行。
   ///
   /// 一条一条 append 是刷屏时最贵的一段：每条都要读一次 scrollHeight 再改 scrollTop，
@@ -651,10 +678,16 @@ export function renderRoom(ctx, params = {}) {
   function flushChatLines() {
     chatFlushHandle = 0;
     if (!pendingChatLines.length) return;
-    const batch = pendingChatLines.splice(0, pendingChatLines.length);
     // 切到别的标签页时聊天列表会被清空，这批消息已经在 session.messages 里，
     // 切回来 renderChatTab() 会整表重画，这里直接丢掉就不会重复上屏。
-    if (session.tab !== 'chat') return;
+    if (session.tab !== 'chat') {
+      pendingChatLines.length = 0;
+      return;
+    }
+    // 一帧最多上屏这么多行：热门房间 100ms 一批能来几十条，一次性建完 DOM
+    // 会在安卓上顶出一个几十毫秒的长任务，视频和弹幕跟着掉帧。
+    // 拆到几帧里插完，肉眼看不出来，主线程不堵。
+    const batch = pendingChatLines.splice(0, CHAT_LINES_PER_FRAME);
     chatList.querySelector('.chat-placeholder')?.remove();
     // 贴不贴底必须在插入之前量。
     const pinned = chatGapToBottom() < CHAT_PIN_GAP;
@@ -664,6 +697,7 @@ export function renderRoom(ctx, params = {}) {
     while (chatList.childElementCount > MAX_CHAT_LINES) chatList.firstElementChild?.remove();
     if (pinned) chatList.scrollTop = chatList.scrollHeight;
     updateChatToBottom();
+    if (pendingChatLines.length) chatFlushHandle = requestAnimationFrame(flushChatLines);
   }
 
   function cancelChatFlush() {
@@ -1023,7 +1057,28 @@ export function renderRoom(ctx, params = {}) {
       button.classList.toggle('active', button.dataset.tab === tab);
     }
     renderChatTab();
+    syncChatTabUnderline();
     updateComposer();
+  }
+
+  // 聊天标签下方的主色条：所有标签共用一个元素，切换时滑过去。
+  // 标签宽度会随 SC 计数变化，所以每次切标签、计数变动都要重新量一次。
+  const chatTabUnderline = page.querySelector('.chat-tab-underline');
+  let chatTabUnderlineReady = false;
+  function syncChatTabUnderline() {
+    const active = page.querySelector('.chat-tab.active');
+    if (!chatTabUnderline || !active) return;
+    // 和原来的 ::after 一样左右各缩 22%，条比文字长一点。
+    const inset = active.offsetWidth * 0.22;
+    if (!chatTabUnderlineReady) chatTabUnderline.style.transition = 'none';
+    chatTabUnderline.style.width = `${Math.max(0, active.offsetWidth - inset * 2)}px`;
+    chatTabUnderline.style.transform = `translateX(${active.offsetLeft + inset}px)`;
+    if (!chatTabUnderlineReady) {
+      // 首次定位不要动画，否则进房间时会看到色条从左边滑过来。
+      void chatTabUnderline.offsetWidth;
+      chatTabUnderline.style.transition = '';
+      chatTabUnderlineReady = true;
+    }
   }
 
   // 发送弹幕的输入框默认隐藏（设置 → 弹幕设置 → 允许发送弹幕），
@@ -2379,6 +2434,8 @@ export function renderRoom(ctx, params = {}) {
   };
   window.addEventListener('simple-live:exit-theater', onExitTheater);
   document.getElementById('view').appendChild(page);
+  // 插进 DOM、量得到宽度之后再把主色条摆到「聊天」下面。
+  syncChatTabUnderline();
   requestAnimationFrame(onControlResize);
   boot();
 

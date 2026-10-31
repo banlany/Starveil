@@ -223,9 +223,12 @@ img {
 }
 
 .platform-tabs {
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 4px;
+  /* 指示条比标签左右各缩进这么多，别顶到标签的文字和图标的边。 */
+  --tab-underline-inset: 17px;
 }
 
 .platform-tab {
@@ -251,16 +254,21 @@ img {
   font-weight: 600;
 }
 
-.platform-tab.active::after {
-  content: "";
+/* 标签下方的主题色条。
+   所有标签共用一个绝对定位的元素，切换时靠 transform 滑过去——用每个标签
+   自己的 ::after 做不到过渡：旧的那个直接消失，新的那个凭空出现。 */
+.tab-underline {
   position: absolute;
-  left: 17px;
-  right: 17px;
+  left: 0;
   bottom: 0;
   height: 2px;
   border-radius: 2px;
   /* 跟随强调色，而不是用 --fg：否则除了默认粉色，其余主题下都是黑白下划线。 */
   background: var(--accent);
+  transition:
+    transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
 }
 
 .platform-tab.is-disabled {
@@ -495,7 +503,10 @@ textarea.input {
   cursor: not-allowed;
 }
 
-.icon-btn.is-loading .ico {
+/* 凡是带 `is-loading` 的按钮，里面的图标都转起来。
+   之前限定 `.icon-btn`，直播间「关注」面板的刷新按钮是 `btn small`，
+   点了完全没反应，看着像没点中。 */
+.is-loading .ico {
   animation: spin 1s linear infinite;
 }
 

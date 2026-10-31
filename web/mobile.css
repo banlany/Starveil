@@ -161,6 +161,8 @@ html.is-mobile .platform-tabs {
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x proximity;
+  /* 标签左右内边距是 10px，指示条跟着缩进这么多。 */
+  --tab-underline-inset: 10px;
   /* 右侧渐隐，避免标签在搜索按钮前面被硬生生切断。 */
   mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
 }
@@ -173,11 +175,6 @@ html.is-mobile .platform-tab {
   padding: 0 10px;
   font-size: 14px;
   scroll-snap-align: center;
-}
-
-html.is-mobile .platform-tab.active::after {
-  left: 10px;
-  right: 10px;
 }
 
 html.is-mobile .icon-btn {
@@ -504,7 +501,9 @@ html.is-theater .room-topbar {
   border: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
-  box-shadow: var(--shadow);
+  /* 不要投影：胶囊是压在列表上方的，阴影会投到下面的内容上，
+     在浅色卡片和封面上看起来像一圈脏边。 */
+  box-shadow: none;
   z-index: 3500;
   pointer-events: none;
   transition: transform 0.16s ease, color 0.16s ease;
@@ -539,5 +538,23 @@ html.is-mobile .pull-refresh {
 @keyframes pull-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------ 左右滑动翻页 */
+/* 切完页给新内容一个极轻的淡入，免得看起来像「闪了一下」。
+   只用 opacity，不动 transform：#view 里可能有 position: fixed 的浮层，
+   transform 会让它们改成相对 #view 定位。 */
+html.is-mobile .view.swipe-in,
+html.is-mobile .chat-list.swipe-in {
+  animation: swipe-fade 0.18s ease;
+}
+
+@keyframes swipe-fade {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 1;
   }
 }

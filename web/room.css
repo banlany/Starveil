@@ -57,7 +57,10 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  z-index: 3;
+  /* 压在加载/错误提示卡（z-index 5）之上：直播流断了、还没开播时，
+     正中间那张提示卡会把正在滚的弹幕挡掉一半，而弹幕这时候本来该照常跑。
+     仍然低于顶部浮层与控制条（8），不至于盖住按钮。 */
+  z-index: 6;
 }
 
 /* fly-barrage 会把容器改成 position: relative，所以这里用显式宽高撑满弹幕层 */
@@ -75,7 +78,8 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  z-index: 7;
+  /* 低于弹幕层（6）：提示卡居中，正好压在弹幕区上，断流时不该把弹幕挡住。 */
+  z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -935,6 +939,7 @@ body.is-resizing-chat .room-chat {
 
 .chat-tabs {
   flex: none;
+  position: relative;
   height: 42px;
   display: flex;
   align-items: stretch;
@@ -964,16 +969,8 @@ body.is-resizing-chat .room-chat {
   font-weight: 600;
 }
 
-.chat-tab.active::after {
-  content: "";
-  position: absolute;
-  left: 22%;
-  right: 22%;
-  bottom: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-}
+/* 主色条由 `.tab-underline` 统一画（styles.css），位置在 room.js 里按
+   当前标签的宽度算，切换标签时滑过去而不是跳过去。 */
 
 .chat-tab em {
   font-style: normal;
