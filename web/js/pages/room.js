@@ -1,6 +1,6 @@
 // 直播间：mpegts 播放、滚动弹幕、聊天面板、清晰度/线路、全屏。
 import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
-import { createDanmakuLayer, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
+import { BIG_EMOJI_LINE_OPTIONS, createDanmakuLayer, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
 import { signDouyinDanmaku } from '../douyin-sign.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
@@ -42,6 +42,8 @@ const CS_PRESETS = {
   opacity: [20, 30, 40, 50, 60, 70, 80, 90, 100],
   area: [15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100],
   lines: [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30],
+  // 大表情大小：单位是「行」，与设置页同一份档位（来自弹幕层的 BIG_EMOJI_LINE_OPTIONS）。
+  bigEmoji: BIG_EMOJI_LINE_OPTIONS,
   font: [12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36, 40],
   speed: [3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20],
   strokeWidth: [0, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5],
@@ -333,7 +335,16 @@ export function renderRoom(ctx, params = {}) {
     // 导致设置里 0~60 的滑块怎么调都不生效）。
     layer.style.top = `${Math.max(0, Number(config.safeTop) || 0)}px`;
     layer.style.bottom = `${Math.max(0, Number(config.safeBottom) || 0)}px`;
+    applyBigEmojiSize(config.bigEmojiLines);
     danmaku?.update(config);
+  }
+
+  /// 聊天栏大表情的高度用 CSS 变量推下去（而不是写到每个 `<img>` 的内联样式里）：
+  /// 改档位时屏上已有的那些表情会立刻跟着变，不用等聊天栏重渲染。
+  /// 1 行 = `.chat-line` 的 line-height（1.55），和弹幕层「1 行 = 一个轨道高」是同一个口径。
+  function applyBigEmojiSize(lines) {
+    const value = Math.max(1, Number(lines) || 2);
+    document.documentElement.style.setProperty('--big-emoji-lines', String(value));
   }
 
   /// 弹幕开关只有这一条逻辑：底部控件、右侧设置面板、全屏设置弹窗都走这里。
@@ -529,7 +540,9 @@ export function renderRoom(ctx, params = {}) {
 
   function chatEmojiImage(key, url, big = false) {
     const image = document.createElement('img');
-    // 大表情（收藏集那类只能单独发送的）按字号的 2.5 倍画，和弹幕层保持一致；
+    // 大表情（收藏集那类只能单独发送的）按设置里的「几行」画，和弹幕层同一个行数；
+    // 具体高度由 CSS 变量 --big-emoji-lines 决定（见 applyBigEmojiSize），
+    // 所以改档位时屏上已有的表情也会立刻跟着变。
     // 小表情（`[热]`）仍跟行高走，否则一行字会被顶开。
     image.className = big ? 'chat-emoji is-big' : 'chat-emoji';
     image.src = url;
@@ -857,6 +870,7 @@ export function renderRoom(ctx, params = {}) {
         <h4>弹幕设置</h4>
         <div class="chat-setting-row"><span>弹幕开关</span><button class="switch" id="cs-enabled" aria-checked="${session.danmakuEnabled}"></button></div>
         <div class="chat-setting-row"><span>弹幕表情</span><button class="switch" id="cs-emoji" aria-checked="${config.emoji !== false}"></button></div>
+        <div class="chat-setting-row"><span>大表情大小</span><select class="chat-setting-select" id="cs-big-emoji">${presetOptions(CS_PRESETS.bigEmoji, config.bigEmojiLines, (value) => `${value} 行`)}</select></div>
         <div class="chat-setting-row"><span>不透明度</span><select class="chat-setting-select" id="cs-opacity">${presetOptions(CS_PRESETS.opacity, config.opacity, (value) => `${value}%`)}</select></div>
         <div class="chat-setting-row"><span>显示区域</span><select class="chat-setting-select" id="cs-area">${presetOptions(CS_PRESETS.area, config.area, (value) => `${value}%`)}</select></div>
         <div class="chat-setting-row"><span>显示行数</span><select class="chat-setting-select" id="cs-lines">${presetOptions(CS_PRESETS.lines, config.lines, (value) => `${value} 行`)}</select></div>
@@ -915,6 +929,7 @@ export function renderRoom(ctx, params = {}) {
 
     bindSwitch('cs-enabled', 'enabled');
     bindSwitch('cs-emoji', 'emoji');
+    bindSelect('cs-big-emoji', 'bigEmojiLines', true);
     bindSelect('cs-opacity', 'opacity', true);
     bindSelect('cs-area', 'area', true);
     bindSelect('cs-lines', 'lines', true);

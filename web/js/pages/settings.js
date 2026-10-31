@@ -25,7 +25,7 @@ import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
 // 改档位定义时只改 danmaku.js 一处。
-import { FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
+import { BIG_EMOJI_LINE_OPTIONS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
 // 移动端专属设置项（屏幕方向）要按平台显示。
 import { IS_MOBILE } from '../platform.js';
 import {
@@ -54,6 +54,10 @@ const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
 // select 行要的是 { 值: 文案 }，这里由共享选项表派生，避免手工维护两份。
 const PERF_MAP = Object.fromEntries(PERF_OPTIONS.map((option) => [option.value, option.label]));
 const FPS_MAP = Object.fromEntries(FPS_OPTIONS.map((option) => [option.value, option.label]));
+/// 大表情大小：档位单位是「行」——1 行 = 一个弹幕轨道高。
+const BIG_EMOJI_MAP = Object.fromEntries(
+  BIG_EMOJI_LINE_OPTIONS.map((lines) => [lines, `${lines} 行`]),
+);
 
 const SETTINGS_ITEMS = [
   { key: 'history', icon: 'history', label: '观看记录' },
@@ -505,6 +509,14 @@ function detailSections(key, ctx, repaint) {
             { type: 'range', key: 'danmaku.area', title: '显示区域', desc: '弹幕占据播放器顶部的高度比例', min: 15, max: 100, step: 5, unit: '%' },
             { type: 'number', key: 'danmaku.lines', title: '显示几行', desc: '按区域优先，超出可用高度时自动收紧', min: 1, max: 30, unit: ' 行' },
             { type: 'switch', key: 'danmaku.emoji', title: '显示弹幕表情' },
+            {
+              type: 'select',
+              key: 'danmaku.bigEmojiLines',
+              title: '大表情大小',
+              desc: '只能单独发送的大表情占几行高；占几行就预留几条弹幕轨道，旁边的弹幕会自动让开',
+              numeric: true,
+              valueMap: BIG_EMOJI_MAP,
+            },
             { type: 'number', key: 'danmaku.speed', title: '滚动速度', desc: '弹幕持续秒数，越小越快', min: 3, max: 20, unit: ' 秒' },
             { type: 'range', key: 'danmaku.opacity', title: '不透明度', min: 20, max: 100, step: 5, unit: '%' },
             { type: 'number', key: 'danmaku.font', title: '字体大小', min: 12, max: 40, unit: ' px' },

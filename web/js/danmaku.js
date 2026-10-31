@@ -30,7 +30,15 @@ const FALLBACK_CONFIG = {
   strokeWidth: 2,
   fps: 60,
   perf: 'balanced',
+  bigEmojiLines: 2,
 };
+
+/// 大表情（收藏集/房间表情，只能整条单独发送）能选几种大小。
+/// 单位是「行」而不是像素：一行 = 一个弹幕轨道高，所以「占 2 行」既是画多大、
+/// 也是轨道算法要给它留几条轨道（见 syncMaxGrade）。设置页与直播间弹幕设置共用这份表。
+export const BIG_EMOJI_LINE_OPTIONS = [1, 2, 3, 4, 5];
+
+const DEFAULT_BIG_EMOJI_LINES = 2;
 
 /// 性能档位：只改**绘制成本**与实例上限，不动用户设定的字号、颜色、区域。
 /// canvas 上最贵的是阴影和描边，所以档位越高越倾向把它们关掉；
@@ -135,6 +143,9 @@ export function createDanmakuLayer(container, video, config = null) {
     imageIdByUrl: new Map(),
     imageUrlById: new Map(),
     imageSeq: 0,
+    // 轨道避让表（vtToVtsMap）是按「大表情占几行」建的；这里记住建表时的行数，
+    // 免得库自己改过 maxGrade 之后我们误判成「已经是最新的」。
+    gradeMapGrade: 0,
   };
 
   /// 当前性能档位配置（缺省回落到「平衡」）。
@@ -180,11 +191,51 @@ export function createDanmakuLayer(container, video, config = null) {
     if (algorithm.realTracks?.length && algorithm.virtualTracks?.length) return;
     const config = session.config || FALLBACK_CONFIG;
     try {
-      algorithm.maxGrade = 1;
+      // initTracks 会顺手按**当时的** maxGrade 建避让表，所以先抬到「大表情占几行」。
+      algorithm.maxGrade = bigEmojiLines();
       algorithm.initTracks(lineHeightFor(Number(config.font) || FALLBACK_CONFIG.font));
     } catch {
       /* 初始化失败时弹幕不显示，但不影响播放 */
     }
+    // 轨道数不够时（区域小 / 字号大）再压回来，否则 grade 超过轨道数就永远放不下。
+    syncMaxGrade();
+  }
+
+  /// 当前设置下大表情占几行（1~5，再按可用轨道数收窄）。
+  function bigEmojiLines() {
+    const raw = Number((session.config || FALLBACK_CONFIG).bigEmojiLines);
+    const lines = Math.max(1, Math.min(BIG_EMOJI_LINE_OPTIONS.length, Number.isFinite(raw) ? Math.round(raw) : DEFAULT_BIG_EMOJI_LINES));
+    const realTrackNum = Number(session.renderer?.barrageLayoutCalculate?.virtualTrackAlgorithm?.realTrackNum);
+    if (!realTrackNum) return lines;
+    return Math.max(1, Math.min(lines, realTrackNum));
+  }
+
+  /// **让库把「大表情占几行」算进避让范围。**
+  ///
+  /// 库的 `vtToVtsMap`（轨道 → 与它交叉、需要一起检查的高轨道）只在 `initTracks` 里
+  /// 按当时的 `maxGrade` 建一次。建表时 `maxGrade = 1` 等于告诉库「每条弹幕只占一行」：
+  /// 一条两行高的大表情被放进 2~3 号轨道后，后面来的小弹幕只检查自己那一条轨道，
+  /// 完全看不见它 → 直接压上去。所以大表情能用几行，`maxGrade` 就得是几。
+  ///
+  /// 只重建这张表、不动轨道本身：屏上的弹幕实例（含它们的 top）都还在。
+  function syncMaxGrade(extra = 0) {
+    const algorithm = session.renderer?.barrageLayoutCalculate?.virtualTrackAlgorithm;
+    if (!algorithm?.virtualTracks?.length) return;
+    const grade = Math.max(bigEmojiLines(), Number(extra) || 0, 1);
+    // 用自己记的「这张表是按几行建的」判断，而不是 maxGrade：
+    // 库的 layoutScrollBarrages 会改 maxGrade 却不重建表，两者可能对不上。
+    if (session.gradeMapGrade === grade && algorithm.vtToVtsMap.size) return;
+    algorithm.maxGrade = grade;
+    algorithm.vtToVtsMap.clear();
+    for (const track of algorithm.virtualTracks) {
+      algorithm.vtToVtsMap.set(
+        track,
+        algorithm.virtualTracks.filter(
+          (item) => item.grade <= grade && track.rtIdArr.some((id) => item.rtIdSet.has(id)),
+        ),
+      );
+    }
+    session.gradeMapGrade = grade;
   }
 
   /// 轨道兜底：库在 `setRenderConfig` / `resize` 重排时会先清空轨道表，
@@ -203,6 +254,35 @@ export function createDanmakuLayer(container, video, config = null) {
       algorithm.layoutScrollBarrages(instances);
     } catch (error) {
       console.warn('弹幕轨道重建失败', error);
+    }
+  }
+
+  /// 把刚放进轨道的那条弹幕，补登记到**所有轨道范围与它相交**的虚拟轨道里。
+  ///
+  /// 库的增量插入（`avoidOverlapInsert`）对「空虚拟轨道」有一条捷径：
+  /// 只要这条虚拟轨道自己的 `barrages` 是空的就直接放进去，不检查与它相交的其他轨道。
+  /// 而它登记时只写进被选中的那一条虚拟轨道——一条两行高的大表情只属于某个 grade 2 轨道，
+  /// 于是「1 号实际轨道」那条 grade 1 虚拟轨道仍然是空的，下一条普通弹幕走捷径直接压上去。
+  /// 反过来也一样（先有普通弹幕、再来大表情）。
+  ///
+  /// 这里按实际占用的轨道区间补一遍登记，`isEmpty` 和 `getLastBarrage()` 才名副其实。
+  /// 新增的实例总是最后一个，所以数组仍是按时间顺序，插入位置的计算不受影响。
+  function registerOccupancy(instance) {
+    const algorithm = session.renderer?.barrageLayoutCalculate?.virtualTrackAlgorithm;
+    if (!algorithm?.virtualTracks?.length) return;
+    const trackHeight = Number(algorithm.realTrackHeight);
+    const top = Number(instance?.top);
+    const height = Number(instance?.height);
+    if (!trackHeight || !Number.isFinite(top) || !Number.isFinite(height)) return;
+    // 实例占用的实际轨道（1 起，闭区间）：top / 行高 得到起始轨道。
+    const first = Math.floor(top / trackHeight) + 1;
+    const last = first + Math.max(1, Math.ceil(height / trackHeight)) - 1;
+    for (const track of algorithm.virtualTracks) {
+      const ids = track.rtIdArr;
+      if (!ids?.length) continue;
+      // 两条闭区间不相交就跳过
+      if (ids[ids.length - 1] < first || ids[0] > last) continue;
+      if (!track.barrages.includes(instance)) track.barrages.push(instance);
     }
   }
 
@@ -529,29 +609,31 @@ export function createDanmakuLayer(container, video, config = null) {
     if (session.queue.length) scheduleDrain();
   }
 
-/// 大表情（B 站收藏集/房间表情，只能整条单独发送）按**字号**的 2.5 倍画。
-/// 小表情（`[热]` 这种内嵌在文字里的）仍按行高缩放——它要和同一行的文字齐平。
-const BIG_EMOTICON_SCALE = 2.5;
-
 /// 表情图尺寸对齐。
 ///
-/// 大表情：宽高都是字号 2.5 倍（等比），比行高还高，所以会略微盖住上下轨道——
-/// 这是平台自己的画法，压到行高里反而看不出是个大表情。
-/// 小表情：大图按原尺寸画会把轨道撑高、挤掉正常弹幕，20×20 又偏小，
-/// 两种都等比缩到「一个行高」附近。
-function fitEmoticon(width, height, fontSize, big = false) {
+/// **大表情**（`lines > 0`，行数由设置项 `danmaku.bigEmojiLines` 决定）：
+/// 高 = 行数 × 行高。行高就是轨道高度，所以高 2 行 = 轨道算法里的 grade 2，
+/// 占位和尺寸天然一致——想让它真占两条轨道，不用另做一套布局。
+/// **小表情**（`lines = 0`，正文里的 `[热]`）：等比缩到「一个行高」附近，
+/// 它要和同一行的文字齐平，撑高轨道反而挤掉正常弹幕。
+function fitEmoticon(width, height, fontSize, lines = 0) {
   const rawWidth = Math.max(1, Number(width) || 20);
   const rawHeight = Math.max(1, Number(height) || 20);
-  let nextHeight = big
-    ? Math.max(24, Math.round(fontSize * BIG_EMOTICON_SCALE))
+  const big = Number(lines) > 0;
+  const nextHeight = big
+    ? lineHeightFor(fontSize) * Number(lines)
     : Math.max(12, Math.round(fontSize * LINE_HEIGHT_RATIO * 0.92));
   let nextWidth = (rawWidth / rawHeight) * nextHeight;
-  // 横条表情（收藏集里常见）限宽：大表情按 4 张自身宽度算，小表情仍是 8 个字符宽，
+  // 横条表情（收藏集里常见）限宽：大表情按 10 个字宽，小表情 8 个字符宽，
   // 否则一条就能占掉半屏、把后面的弹幕全挤掉。
-  const maxWidth = fontSize * (big ? BIG_EMOTICON_SCALE * 4 : 8);
+  // 被限宽时**等比缩回去**，高度跟着变——grade 由真实高度算，不会出现「说占两行其实只占一行」。
+  const maxWidth = fontSize * (big ? 10 : 8);
   if (nextWidth > maxWidth) {
-    nextWidth = maxWidth;
-    nextHeight = (rawHeight / rawWidth) * nextWidth;
+    const scale = maxWidth / nextWidth;
+    return {
+      width: Math.max(1, Math.round(maxWidth)),
+      height: Math.max(1, Math.round(nextHeight * scale)),
+    };
   }
   return {
     width: Math.max(1, Math.round(nextWidth)),
@@ -593,7 +675,8 @@ function fitEmoticon(width, height, fontSize, big = false) {
       const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
       if (!key || !url || !text.includes(key)) continue;
       const bracketed = key.startsWith('[') && key.endsWith(']');
-      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize, Boolean(emoticon.big));
+      // 大表情的高 = 设置里的行数 × 行高；小表情仍是「一个行高」量级。
+      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize, emoticon.big ? bigEmojiLines() : 0);
       const id = registerImage(url, size, bracketed ? key.slice(1, -1) : key);
       text = text.split(key).join(`[${id}]`);
     }
@@ -645,13 +728,26 @@ function fitEmoticon(width, height, fontSize, big = false) {
       return;
     }
     if (!created) return;
+    // 大表情占几行：把避让表抬到它的实际 grade。
+    // 正常情况配置已经抬好了（primeTracks/syncMaxGrade），这里兜住
+    // 「横条表情被限宽后变矮」之外的极端情况（比如轨道数刚变过）。
+    if (Number(created.grade) > (session.gradeMapGrade || 1)) syncMaxGrade(Number(created.grade));
     // 用实测宽度修正发送速率（EMA），下一次 sendGap() 会更接近真实轨道容量。
-    session.widthAvg = session.widthAvg
-      ? session.widthAvg * 0.85 + created.width * 0.15
-      : created.width;
+    // 高轨道弹幕（大表情）不算进来：它一条顶几条的高度，混进平均会把正常弹幕的节奏拖慢。
+    if (!(Number(created.grade) > 1)) {
+      session.widthAvg = session.widthAvg
+        ? session.widthAvg * 0.85 + created.width * 0.15
+        : created.width;
+    }
     // 满轨：库只能把它丢到随机轨道上，结果一定是叠字。
     // 这条直接撤下不显示——刷屏时宁可少显示，也不叠成一坨（B 站同样会丢弃满轨的弹幕）。
-    if (created.fallbackTrack) dropInstance(created);
+    if (created.fallbackTrack) {
+      dropInstance(created);
+      return;
+    }
+    // 交叉登记：一条弹幕占了几条实际轨道，就写进这几条轨道上所有虚拟轨道的占用表。
+    // 不做这一步，两行高的大表情和普通弹幕会互相看不见（见 registerOccupancy 注释）。
+    if (barrageType === 'scroll') registerOccupancy(created);
   }
 
   /// 把刚创建但放不下的实例从库里摘干净。
@@ -663,6 +759,11 @@ function fitEmoticon(width, height, fontSize, big = false) {
     for (const list of [calc.scrollBarrageInstances, calc.canShowScrollBarrageInstances]) {
       const index = list.indexOf(instance);
       if (index >= 0) list.splice(index, 1);
+    }
+    // 交叉登记也写了虚拟轨道的占用表，撤下时要一并清掉，否则它会一直挡着后来的弹幕。
+    for (const track of calc.virtualTrackAlgorithm?.virtualTracks || []) {
+      const index = Array.isArray(track.barrages) ? track.barrages.indexOf(instance) : -1;
+      if (index >= 0) track.barrages.splice(index, 1);
     }
   }
 
@@ -695,9 +796,17 @@ function fitEmoticon(width, height, fontSize, big = false) {
       }
       // 行数/区域/速度只影响渲染配置，库内部重排轨道并保留现有弹幕实例。
       syncRenderConfig();
+      // 大表情大小变了：已登记的图是旧尺寸，清掉让后面的弹幕重新登记；
+      // 屏上的旧实例宽高在创建时就定死了，随它滚过去，不必整层重建。
+      // 同时把避让表按新行数重建，否则「改成 3 行」之后小弹幕还是看不见它。
+      if (previous && previous.bigEmojiLines !== session.config.bigEmojiLines) {
+        clearImages();
+        syncMaxGrade();
+      }
       // 帧率上限不受重建影响，改完立即生效。
       applyFrameLimit();
       ensureTracks();
+      syncMaxGrade();
       ensureLayout();
     },
     /** 立刻显示一条弹幕；超出发送速率时先入队 */

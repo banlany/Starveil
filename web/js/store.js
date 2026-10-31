@@ -109,6 +109,10 @@ export const DEFAULT_SETTINGS = {
     strokeWidth: 2,
     fps: 60,
     emoji: true,
+    // 大表情（B 站收藏集那类只能单独发送的）占几行：1~5，1 行 = 一个弹幕轨道高。
+    // 行数既决定画多大，也决定轨道算法给它留几条轨道（弹幕层会按它抬高 maxGrade），
+    // 所以设成 2 行就真的会空出上下两条轨道，不会盖住旁边的弹幕。
+    bigEmojiLines: 2,
     dedupe: true,
     dedupeMode: 'content',
     dedupeWindow: 10,

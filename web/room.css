@@ -1321,12 +1321,13 @@ body.is-resizing-chat .room-chat {
   margin: 0 1px;
 }
 
-/* 大表情（B 站收藏集那类只能单独发送的）：宽高都是字号的 2.5 倍。
-   和弹幕层同一个倍数，两边看起来才是同一个表情。
-   行高不跟着放大——弹幕区一行字不该被一张表情顶开，让它自己溢出上下一点即可。 */
+/* 大表情（B 站收藏集那类只能单独发送的）：高 = 设置里的「几行」× 聊天行高。
+   行数由 room.js 写进 --big-emoji-lines（见 applyBigEmojiSize），
+   1 行 = 1.55em，正好等于 .chat-line 的 line-height，所以「3 行」就是 3 行文字高。
+   走 CSS 变量而不是内联 height：改档位时屏上已有的表情也会立刻跟着变。 */
 .chat-emoji.is-big {
-  height: 2.5em;
-  vertical-align: -0.65em;
+  height: calc(var(--big-emoji-lines, 2) * 1.55em);
+  vertical-align: middle;
   margin: 0 2px;
 }
 
