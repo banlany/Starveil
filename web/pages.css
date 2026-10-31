@@ -554,6 +554,13 @@
   margin-top: 4px;
 }
 
+/* 列表模式下平台角标会和右侧那颗「取消关注」按钮挤在同一角，
+   而且 `.follow-meta` 里本来就写了平台名（「B站」「斗鱼」），角标纯属重复。
+   卡片模式才需要它，因为那时没有别的地方标平台。 */
+.follow-list-view .follow-card .card-platform {
+  display: none;
+}
+
 .follow-list-view .follow-actions {
   margin: 0 0 0 auto;
   padding: 0;
