@@ -23,33 +23,6 @@ export function on(target, event, handler, options) {
   target?.addEventListener(event, handler, options);
 }
 
-export function debounce(fn, wait = 200) {
-  let timer = 0;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), wait);
-  };
-}
-
-export function throttle(fn, wait = 100) {
-  let last = 0;
-  let timer = 0;
-  return (...args) => {
-    const now = Date.now();
-    const left = wait - (now - last);
-    if (left <= 0) {
-      last = now;
-      fn(...args);
-    } else if (!timer) {
-      timer = setTimeout(() => {
-        timer = 0;
-        last = Date.now();
-        fn(...args);
-      }, left);
-    }
-  };
-}
-
 export function platformBadge(platform, withName = false) {
   const meta = PLATFORM_META[platform] || PLATFORM_META.bilibili;
   return `<span class="platform-badge" title="${escapeHtml(meta.name)}">${platformIcon(platform, 18)}${withName ? `<span>${escapeHtml(meta.name)}</span>` : ''}</span>`;
@@ -161,13 +134,6 @@ export function emptyState({ iconName = 'spark', title, text, actionLabel, onAct
     ${actionLabel ? `<button class="btn primary empty-action">${escapeHtml(actionLabel)}</button>` : ''}`;
   box.querySelector('.empty-action')?.addEventListener('click', onAction);
   return box;
-}
-
-export function sectionHeader(title, extra = '') {
-  const row = document.createElement('div');
-  row.className = 'section-header';
-  row.innerHTML = `<h2>${escapeHtml(title)}</h2><div class="section-extra">${extra}</div>`;
-  return row;
 }
 
 export function toast(message, type = 'info', duration = 2400) {
@@ -385,23 +351,4 @@ export function loadMore(text = '加载更多') {
   box.className = 'load-more';
   box.innerHTML = `<span>${escapeHtml(text)}</span>`;
   return box;
-}
-
-export function setPageChrome({ rail = true, topbar = false, search = false, className = '' }) {
-  document.getElementById('rail').classList.toggle('is-hidden', !rail);
-  document.getElementById('topbar').classList.toggle('is-hidden', !topbar);
-  document.getElementById('topbar-search').classList.toggle('is-hidden', !search);
-  const view = document.getElementById('view');
-  view.className = `view ${className}`.trim();
-}
-
-export function autoHideOnScroll(header, threshold = 8) {
-  let last = window.scrollY;
-  const onScroll = () => {
-    const current = window.scrollY;
-    header.classList.toggle('is-scrolled', current > threshold);
-    last = current;
-  };
-  window.addEventListener('scroll', onScroll, { passive: true });
-  return () => window.removeEventListener('scroll', onScroll);
 }

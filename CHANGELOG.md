@@ -68,6 +68,19 @@
   三端一套代码；桌面在 8601 连不上时仍会退回 wss（8501~8506）。
   代价是弹幕走明文：内容本身是公开的，风险主要是可被中间人篡改，以及个别企业/校园网会拦 8601。
 
+### 工程清理
+
+- 清掉 0.6.1/0.6.2 遗留在样式表与脚本里的死代码，共 328 行：
+  - `.stage-menu` 悬浮菜单一整块样式（JS 早就不生成这个节点了，只剩一句
+    `if (page.querySelector('.stage-menu')) return;` 永远为假，ESC 处理里也一并删掉）；
+  - 「平台未接入」占位页、旧版观看记录列表、卡片底部的在线人数浮层、
+    `.category-rooms-grid` 等已换实现的规则，以及没人引用的工具类与 `--warning` 变量。
+- 删掉 4 个从来没有被读取过的设置项（`danmaku.showEvents`、`danmaku.delay`、
+  `follow.autoUpdate`、`follow.interval`）和 9 个没有任何引用的导出函数
+  （`currentClock`、`debounce`、`throttle`、`setPageChrome`、`autoHideOnScroll` 等），
+  其余只在模块内部用到的符号去掉了多余的 `export`。
+- `web/assets/bilibili.png` 已由 `bilibili_2.png` 取代（`platformAsset()` 里写死），删掉旧图。
+
 ## 0.6.2
 
 四件事：删掉一个名不副实的外观开关、合并重复的直播间设置、把「同步」真正拆成

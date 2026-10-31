@@ -18,7 +18,6 @@ import {
   HISTORY_LIMIT,
   loadFollow,
   loadHistory,
-  loadLogin,
   loadSearchHistory,
   loadStats,
   merge,
@@ -35,7 +34,7 @@ import {
 const DART_SCHEMA = 'simple_live_profile';
 /// 中立包/备份的版本号，改结构时递增，导入侧按版本做兼容。
 /// v2 起补上了搜索历史与观看统计（v1 只有关注 / 记录 / 设置）。
-export const BUNDLE_VERSION = 2;
+const BUNDLE_VERSION = 2;
 
 /// 同步包里到底有什么、为什么有些东西不在里面。
 ///
@@ -68,7 +67,7 @@ export function bundleScope() {
 }
 
 /// 读当前设置里的同步取舍。默认值写在这里，设置页只负责翻开关。
-export function bundleOptions() {
+function bundleOptions() {
   const sync = state.settings?.sync ?? {};
   return {
     // 观看记录默认跟着走，只有显式关掉才不带。
@@ -144,7 +143,7 @@ export function buildBundle() {
 }
 
 /// 判断一份 JSON 属于哪种格式，认不出来返回 null。
-export function detectFormat(data) {
+function detectFormat(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
   if (data.schema === DART_SCHEMA) return 'dart-profile';
   if (Array.isArray(data.follows) || Array.isArray(data.accounts)) return 'starveil-backup';
@@ -478,14 +477,4 @@ function importBundle(data, options = {}) {
     skipped,
     truncated,
   };
-}
-
-/// 供设置页判断「这个平台能不能导入」用（同步/导入的提示文案里会用到）。
-export function isPlatformImportable(platform) {
-  return ENABLED_PLATFORMS.includes(normalizePlatform(platform));
-}
-
-/// 已登录平台列表，导入结果里用来提示需要重新注入后端的平台。
-export function importedLoginPlatforms() {
-  return ['bilibili', 'douyu'].filter((platform) => loadLogin(platform)?.cookie);
 }

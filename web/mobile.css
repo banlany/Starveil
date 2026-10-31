@@ -428,14 +428,6 @@ html.is-pip .room-main,
 html.is-pip .room-page,
 html.is-pip .view,
 html.is-pip .app,
-html.is-pip .app-shell {
-  display: block !important;
-  height: 100% !important;
-  min-height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
 html.is-pip .stage {
   position: fixed !important;
   inset: 0 !important;

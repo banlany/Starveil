@@ -2319,7 +2319,6 @@ export function renderRoom(ctx, params = {}) {
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
     if (event.key === 'Escape') {
       if (document.fullscreenElement) return;
-      if (page.querySelector('.stage-menu')) return;
       event.preventDefault();
       ctx.exitRoom();
       return;

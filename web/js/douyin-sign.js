@@ -18,7 +18,7 @@
 
 const SIGN_SCRIPT = 'vendor/douyin-sign.js';
 // 必须和后端 WebSocket 请求头的 User-Agent 完全一致：签名里带 UA 的指纹。
-export const DOUYIN_UA =
+const DOUYIN_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
 let signerPromise = null;

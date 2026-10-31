@@ -1,5 +1,5 @@
 // 本地状态与持久化：设置、关注、观看记录、搜索历史。
-import { ALL_PLATFORMS, api, canonicalImage, roomUrl } from './api.js';
+import { api, canonicalImage, roomUrl } from './api.js';
 import { IS_MOBILE } from './platform.js';
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
@@ -120,10 +120,8 @@ export const DEFAULT_SETTINGS = {
     block: false,
     blockKeywords: '',
     blockUsers: '',
-    showEvents: false,
     safeTop: 8,
     safeBottom: 8,
-    delay: 0,
     perf: 'balanced',
     // 发送弹幕默认关闭：写操作会用账号 Cookie，让用户主动开启。
     sendEnabled: false,
@@ -132,11 +130,9 @@ export const DEFAULT_SETTINGS = {
     sendUnlocked: false,
   },
   follow: {
-    autoUpdate: true,
     // 进入关注页时是否自动刷新直播状态。默认关闭：关注几百个主播时
     // 一进页面就打几百个请求，用户没要求就别替他决定。
     autoRefresh: false,
-    interval: 10,
     threads: 0,
     pageSize: 200,
   },
@@ -217,7 +213,7 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-export function loadSettings() {
+function loadSettings() {
   let stored = {};
   try {
     stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
@@ -473,7 +469,7 @@ function statsKey(platform, roomId) {
 }
 
 /// 本地时区的「日」键，不能用 toISOString（那是 UTC，跨时区会把凌晨的观看算到前一天）。
-export function dayKey(timestamp = Date.now()) {
+function dayKey(timestamp = Date.now()) {
   const date = new Date(timestamp);
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -555,7 +551,7 @@ function ensureStatsRoom(stats, room) {
 }
 
 /// 进房一次：点进次数 +1（按天也记一份）。
-export function bumpStatsVisit(room) {
+function bumpStatsVisit(room) {
   if (!room?.platform || !room?.room_id) return;
   const stats = loadStats();
   const entry = ensureStatsRoom(stats, room);
@@ -597,7 +593,7 @@ export const STATS_RANGES = [
 ];
 
 /// 时间范围的起点（本地零点）。week 按周一起算，和国内习惯一致。
-export function statsRangeStart(range, now = Date.now()) {
+function statsRangeStart(range, now = Date.now()) {
   const date = new Date(now);
   date.setHours(0, 0, 0, 0);
   if (range === 'week') {
@@ -725,18 +721,4 @@ export function replaceStats(stats) {
   const next = { v: 1, rooms };
   saveStats(next);
   return Object.keys(rooms).length;
-}
-
-// ---------------------------------------------------------------- 其他
-
-export function nextPlatform(current, delta = 1) {
-  const list = ALL_PLATFORMS;
-  const index = list.indexOf(current);
-  return list[(index + delta + list.length) % list.length];
-}
-
-export function acceptDisclaimer() {
-  state.settings.disclaimerAccepted = true;
-  state.settings.firstRun = false;
-  saveSettings();
 }

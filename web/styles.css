@@ -21,7 +21,6 @@
   --accent-soft: rgba(251, 114, 153, 0.16);
   --success: #57d38c;
   --danger: #ff6b6b;
-  --warning: #ffc857;
   --switch-on: var(--accent);
   --switch-knob: #ffffff;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
@@ -124,10 +123,6 @@ img {
 
 .muted {
   color: var(--muted);
-}
-
-.dim {
-  color: var(--dim);
 }
 
 .accent {
@@ -701,28 +696,6 @@ textarea.input {
   color: var(--accent);
 }
 
-.cover-bottom {
-  position: absolute;
-  z-index: 2;
-  right: 8px;
-  bottom: 7px;
-  display: flex;
-  align-items: center;
-}
-
-.online-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 19px;
-  padding: 0 6px;
-  border-radius: 5px;
-  background: rgba(10, 10, 14, 0.55);
-  backdrop-filter: blur(8px);
-  color: #ececf1;
-  font-size: 11px;
-}
-
 .room-title {
   margin: 8px 1px 0;
   font-size: 15px;
@@ -1134,29 +1107,10 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
 
 /* ------------------------------------------------------------ 工具类 */
 
-.row-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .gap-8 {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.gap-12 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.text-ellipsis {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 @media (max-width: 1280px) {

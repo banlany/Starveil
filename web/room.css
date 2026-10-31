@@ -377,104 +377,6 @@ input[type="range"]::-webkit-slider-thumb {
   background: linear-gradient(90deg, var(--accent), rgba(251, 114, 153, 0.2));
 }
 
-/* 悬浮菜单 */
-
-.stage-menu {
-  position: absolute;
-  right: 18px;
-  bottom: 68px;
-  z-index: 20;
-  width: 240px;
-  padding: 7px;
-  border-radius: 12px;
-  background: rgba(24, 24, 31, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(18px);
-  color: #f2f2f5;
-  animation: menu-in 0.14s ease;
-}
-
-.stage-menu.wide {
-  width: 286px;
-}
-
-.stage-menu h4 {
-  margin: 4px 8px 7px;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.stage-menu-item {
-  width: 100%;
-  min-height: 36px;
-  border-radius: 8px;
-  padding: 0 10px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #f1f1f4;
-  font-size: 13px;
-  text-align: left;
-}
-
-.stage-menu-item:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.stage-menu-item.active {
-  color: var(--accent);
-}
-
-.stage-menu-item .ico {
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.stage-menu-item.active .ico {
-  color: var(--accent);
-}
-
-.stage-menu-item .menu-value {
-  margin-left: auto;
-  color: rgba(255, 255, 255, 0.36);
-  font-size: 11.5px;
-}
-
-.stage-menu-sep {
-  height: 1px;
-  margin: 6px 4px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.stage-menu .quick-row {
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border-radius: 8px;
-}
-
-.stage-menu .quick-row:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.stage-menu .quick-row .quick-label {
-  flex: 1;
-  font-size: 12.5px;
-}
-
-.stage-menu .quick-row input[type="range"] {
-  width: 92px;
-}
-
-.stage-menu .quick-value {
-  width: 38px;
-  text-align: right;
-  color: rgba(255, 255, 255, 0.48);
-  font-size: 11.5px;
-}
-
 /* ------------------------------------------------------------ 全屏 */
 
 /* 全屏只看画面：聊天栏、底部动作栏、折叠按钮全部隐藏。
@@ -713,15 +615,6 @@ body.is-resizing-chat .room-chat {
   border-radius: 10px;
   color: #2a1c0d;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
-}
-
-/* SC 分「正在显示 / 历史」两组，这里是小分组标题与历史行 */
-.sc-section-title {
-  margin: 10px 12px 2px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--fg-subtle);
 }
 
 /* SC 面板的二级视图：一次只渲染「正在显示」或「历史」其中一个列表。 */
@@ -1334,10 +1227,6 @@ body.is-resizing-chat .room-chat {
 .chat-line.system {
   color: rgba(255, 255, 255, 0.38);
   font-size: 11.5px;
-}
-
-.chat-line.gift {
-  color: var(--warning);
 }
 
 /* 聊天区里的 SC：底色由 room.js 把 SC 档位色写成两个变量（--sc-bg / --sc-bg-strong），

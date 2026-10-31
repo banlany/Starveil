@@ -97,11 +97,6 @@ export function formatCount(value) {
   return String(number);
 }
 
-export function currentClock(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
 export function timeAgo(timestamp) {
   const diff = Date.now() - Number(timestamp || 0);
   if (diff < 60_000) return '刚刚';

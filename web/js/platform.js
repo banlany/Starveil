@@ -6,14 +6,14 @@
 
 const ua = navigator.userAgent || '';
 
-export const IS_ANDROID = /Android/i.test(ua);
-export const IS_IOS = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+const IS_ANDROID = /Android/i.test(ua);
+const IS_IOS = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
 
 /// 移动端（触屏 + 系统状态栏）——决定是否隐藏自绘标题栏、把侧栏挪到底部。
 export const IS_MOBILE = IS_ANDROID || IS_IOS;
 
 /// 当前宿主平台：`android` / `ios` / `desktop`。
-export const PLATFORM = IS_ANDROID ? 'android' : IS_IOS ? 'ios' : 'desktop';
+const PLATFORM = IS_ANDROID ? 'android' : IS_IOS ? 'ios' : 'desktop';
 
 /// 把平台写到 `<html>` 与 `<body>` 上，供 CSS 选择器使用。
 /// 重复调用无害（head 内联脚本可能已经打过标）。
