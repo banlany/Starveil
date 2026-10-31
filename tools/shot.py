@@ -166,12 +166,33 @@ def click(process: str, frac_x: float, frac_y: float, pause: float = 1.2):
     print(f"click frac=({frac_x:.3f},{frac_y:.3f}) -> screen({x},{y}) window={width}x{height}")
 
 
+def scroll(process: str, frac_x: float, frac_y: float, notches: int, pause: float = 0.8):
+    """在窗口内相对位置滚轮：notches > 0 向下滚（Windows 一格 = 120）。"""
+    _area, hwnd, rect = find_window_by_process(process)
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.5)
+    x = rect.left + int(frac_x * width)
+    y = rect.top + int(frac_y * height)
+    user32.SetCursorPos(x, y)
+    time.sleep(0.3)
+    step = -120 if notches > 0 else 120
+    for _ in range(abs(notches)):
+        user32.mouse_event(0x0800, 0, 0, step, 0)
+        time.sleep(0.12)
+    time.sleep(pause)
+    print(f"scroll frac=({frac_x:.3f},{frac_y:.3f}) notches={notches} -> screen({x},{y})")
+
+
 def main():
     action = sys.argv[1]
     if action == "shot":
         shot(sys.argv[2], sys.argv[3], "--maximize" in sys.argv)
     elif action == "click":
         click(sys.argv[2], float(sys.argv[3]), float(sys.argv[4]))
+    elif action == "scroll":
+        scroll(sys.argv[2], float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5]))
     else:
         raise SystemExit(__doc__)
 
