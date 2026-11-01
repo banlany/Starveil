@@ -12,6 +12,12 @@
 *.pdb
 *.log
 
+# Android release 签名：keystore 及其密码绝不入库。
+# 泄漏的后果不是「别人能看你的包」，而是「别人能发一个同包名、同签名、能覆盖升级的假包」，
+# 安卓也没法吊销（除非上 Play 的签名密钥轮换，侧载更没有这回事）。
+/src-tauri/gen/android/keystore/
+/src-tauri/gen/android/keystore.properties
+
 # 构建产物（dist/ 只保留随包分发的说明文件，可执行文件不入库）
 /dist/*
 !/dist/README.txt

@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -25,6 +26,37 @@ val appVersionCode: Int = appVersion
     .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
     .let { (it.getOrNull(0) ?: 0) * 10_000_000 + (it.getOrNull(1) ?: 0) * 100_000 + (it.getOrNull(2) ?: 0) * 1_000 }
 
+// ── release 签名 ────────────────────────────────────────────────────────────
+//
+// 以前这里没配 signingConfigs，CI 每次跑都现造一个 debug keystore 去签——
+// runner 是干净环境，`~/.android/debug.keystore` 每次都是新的密钥对，
+// 于是每个版本的签名都不同。安卓覆盖安装要求「包名 + 签名都相同」，
+// 结果是用户每次升级都得先卸载（数据一起没了），报错还只说「应用未安装」。
+//
+// 现在固定用 keystore/starveil-release.jks（36500 天有效期，够用一辈子）：
+//   本地 → keystore.properties 指路（两份都不入库）
+//   CI   → Secrets 里的 base64 jks 解成文件，用 STARVEIL_* 环境变量指路
+// 两样都没有时 release 仍出 unsigned（本地 `cargo tauri android build` 不因此报错），
+// 但 CI 那边会直接失败：签不出固定指纹的包就别发。
+val keystoreProps = Properties()
+run {
+    val propsFile = rootProject.file("keystore.properties")
+    if (propsFile.exists()) propsFile.inputStream().use { keystoreProps.load(it) }
+}
+
+// 环境变量优先（CI），其次 keystore.properties（本地）。
+fun signingValue(propKey: String, envKey: String): String? =
+    System.getenv(envKey)?.takeIf { it.isNotBlank() }
+        ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
+
+val releaseKeystore: File? = signingValue("storeFile", "STARVEIL_KEYSTORE_FILE")?.let { raw ->
+    val f = File(raw)
+    // 相对路径按 gen/android 解析，和 keystore.properties 里写的一致。
+    if (f.isAbsolute) f else rootProject.file(raw)
+}
+
+val hasReleaseKeystore: Boolean = releaseKeystore?.exists() == true
+
 android {
     compileSdk = 34
     namespace = "com.banlany.starveil"
@@ -35,6 +67,20 @@ android {
         targetSdk = 34
         versionCode = appVersionCode
         versionName = appVersion
+    }
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = releaseKeystore!!
+                storePassword = signingValue("storePassword", "STARVEIL_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "STARVEIL_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "STARVEIL_KEY_PASSWORD")
+                // minSdk 24 只认 v2 就够，v1 顺手开着，防个别老 ROM 的校验器。
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -49,6 +95,14 @@ android {
             }
         }
         getByName("release") {
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "release 没有配置签名（缺 keystore.properties / STARVEIL_* 环境变量），" +
+                        "产物会是 unsigned，装不上；CI 里这属于致命错误。"
+                )
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

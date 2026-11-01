@@ -272,18 +272,50 @@ jobs:
           echo "CXX_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
 
-      # 没配正式签名时 tauri 用 debug keystore 签 release 包，
-      # runner 上默认没有这个文件，先手工生成一个（等同 Android Studio 的自动生成）。
-      - name: 准备 debug 签名
+      # 正式签名，密钥来自仓库 Secrets：
+      #   ANDROID_KEYSTORE_BASE64    keystore/starveil-release.jks 的 base64
+      #   ANDROID_KEYSTORE_PASSWORD  storePassword（未单独设 KEY_PASSWORD 时 keyPassword 同值）
+      #   ANDROID_KEY_ALIAS          默认 starveil
+      #   ANDROID_KEY_PASSWORD       可选，仅当 keyPassword ≠ storePassword
+      #
+      # 为什么必须固定：这里以前是 `keytool -genkeypair` 现造一个 debug keystore，
+      # 而 runner 每次都是干净环境、没有缓存 `~/.android`，于是**每跑一次构建就换一把钥匙**。
+      # 安卓覆盖安装要求包名和签名都相同，签名变了系统就当成另一个应用，
+      # 只能先卸载旧版（数据一起没），报错还只说「应用未安装」。
+      # 现在一把钥匙用到 2126 年，v0.6.4 之后从旧 debug 签名换过来仍需卸载最后一次，
+      # 再往后就能直接覆盖升级。
+      - name: 恢复正式签名
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.android"
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" \
-              -storepass android -keypass android -alias androiddebugkey \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          if [ -z "${KS_B64:-}" ] || [ -z "${KS_PASS:-}" ]; then
+            echo "::error::缺少 ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD，签不出固定指纹的包"
+            exit 1
           fi
+          echo "::add-mask::$KS_PASS"
+          KEY_PASS="${KEY_PASS:-$KS_PASS}"
+          echo "::add-mask::$KEY_PASS"
+
+          KS_FILE="$RUNNER_TEMP/starveil-release.jks"
+          # printf 不用 echo：secret 里的反斜杠不该被解释。base64 解码忽略换行。
+          printf '%s' "$KS_B64" | base64 -d > "$KS_FILE"
+          test -s "$KS_FILE"
+
+          {
+            echo "STARVEIL_KEYSTORE_FILE=$KS_FILE"
+            echo "STARVEIL_KEYSTORE_PASSWORD=$KS_PASS"
+            echo "STARVEIL_KEY_ALIAS=${KEY_ALIAS:-starveil}"
+            echo "STARVEIL_KEY_PASSWORD=$KEY_PASS"
+          } >> "$GITHUB_ENV"
+
+          # 指纹打进发布日志：以后核对「这版和上版是不是同一把钥匙」用得上。
+          # 用 $JAVA_HOME 里的 keytool，不指望它已经在 PATH 上。
+          "$JAVA_HOME/bin/keytool" -list -v -keystore "$KS_FILE" -storepass "$KS_PASS" 2>/dev/null \
+            | grep -E "Alias name|SHA256:" || true
 
       - name: 读取版本号
         id: version
@@ -324,18 +356,17 @@ jobs:
           set -euo pipefail
           VERSION=${{ steps.version.outputs.version }}
           OUT_DIR=src-tauri/gen/android/app/build/outputs/apk
-          # 实测 tauri 只出 unsigned（gradle 的 release 没配 signingConfig），
-          # 所以先找它自己签；万一以后 CLI 自己签了，就退回那个已签的。
-          UNSIGNED=$(find "$OUT_DIR" -name "*unsigned*.apk" | head -1 || true)
-          APK=""
-          if [ -z "$UNSIGNED" ]; then
-            APK=$(find "$OUT_DIR" -name "*.apk" | head -1 || true)
-          fi
-          if [ -z "$APK" ] && [ -z "$UNSIGNED" ]; then
-            echo "没找到 APK，输出目录内容："
-            find src-tauri/gen/android/app/build/outputs -type f || true
+          # signingConfig 配好后 gradle 直接出已签名的 app-universal-release.apk。
+          # 拿不到就说明签名没注入成功——这里**故意不用 debug key 兜底**：
+          # 那样打出来的包指纹又变了，发出去又是一个「必须卸载才能装」的版本，
+          # 比构建失败更难发现。
+          APK=$(find "$OUT_DIR" -name "*release*.apk" ! -name "*unsigned*" | head -1 || true)
+          if [ -z "$APK" ]; then
+            echo "::error::没找到已签名的 release APK，检查上一步「恢复正式签名」"
+            find "$OUT_DIR" -type f -name "*.apk" || true
             exit 1
           fi
+          echo "APK: $APK"
 
           # 先找 Linux/macOS 那个无扩展名的 `apksigner`；Windows 的 build-tools 里只有
           # apksigner.bat，所以留个回退。不能直接写 `-name "apksigner*"`：Linux 的
@@ -345,16 +376,11 @@ jobs:
             APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name "apksigner.bat" | sort | tail -1)
           fi
           echo "apksigner: $APKSIGNER"
-          OUT="Starveil_${VERSION}_arm64.apk"
-          if [ -n "$UNSIGNED" ]; then
-            "$APKSIGNER" sign --ks "$HOME/.android/debug.keystore" \
-              --ks-pass pass:android --key-pass pass:android \
-              --ks-key-alias androiddebugkey --out "$OUT" "$UNSIGNED"
-          else
-            cp "$APK" "$OUT"
-          fi
 
-          # 装不上的包不如不传，先验一遍签名。
+          OUT="Starveil_${VERSION}_arm64.apk"
+          cp "$APK" "$OUT"
+
+          # 装不上的包不如不传：验签顺带把证书指纹写进日志。
           "$APKSIGNER" verify --print-certs "$OUT"
           echo "path=$OUT" >> "$GITHUB_OUTPUT"
           ls -lh "$OUT"

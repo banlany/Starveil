@@ -204,22 +204,33 @@ cargo tauri android build --apk --target aarch64          # 真机 / 发布
 产物在 `src-tauri/gen/android/app/build/outputs/apk/`。`gen/android` 已入库；
 **改包名后必须删掉重新 `cargo tauri android init`**（CLI 不迁移包名）。
 
-`--target aarch64` 打的是 release 包，但 **tauri 不会替你签名**：产物是
-`app-universal-release-unsigned.apk`，直接装会被系统拒绝。要用 debug keystore 补签：
+**签名**：`app/build.gradle.kts` 里配了 `signingConfigs.release`，密钥文件是
+`src-tauri/gen/android/keystore/starveil-release.jks`（有效期 36500 天）：
 
-```bash
-APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner*" ! -name "*.jar" | sort | tail -1)
-"$APKSIGNER" sign --ks ~/.android/debug.keystore --ks-pass pass:android \
-  --key-pass pass:android --ks-key-alias androiddebugkey \
-  --out Starveil_arm64.apk app-universal-release-unsigned.apk
-```
+- 本地：`gen/android/keystore.properties` 指路（`storeFile` 相对 `gen/android`）
+- CI：仓库 Secrets 里的 base64 版本解到 `$RUNNER_TEMP`，用环境变量注入
+  `STARVEIL_KEYSTORE_FILE` / `STARVEIL_KEYSTORE_PASSWORD` / `STARVEIL_KEY_ALIAS` / `STARVEIL_KEY_PASSWORD`
+  （对应 Secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、
+  `ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`）
+
+两份 keystore 与密码都在 `.gitignore` 里。**这两个文件就是应用的身份证，丢了或泄漏都没法补救**：
+泄漏意味着别人能发一个同包名同签名、能覆盖升级的假包，安卓侧没有吊销手段；
+丢失则所有已装用户从此只能卸载重装（数据一起没）。找个密码管理器备份一份。
+
+没配签名时构建仍能过，产物是 `app-universal-release-unsigned.apk`，但装不上；
+CI 那一步会直接报错，不会用 debug key 糊一个签名漂移的包出来。
+
+> 0.6.4 及以前是 CI 每次 `keytool -genkeypair` 现造 debug keystore（runner 干净、
+> 没有缓存 `~/.android`），所以每个版本签名都不同——用户升级必须卸载。
+> 从那些版本换到现在的固定签名，**还需要卸载最后一次**，之后就能直接覆盖安装了。
 
 release 包还有两个必须记住的坑（CI 已经处理，本地改构建配置时要一起带上）：
 默认禁止明文 HTTP，而 FLV 走的是本机流代理，所以 `res/xml/network_security_config.xml`
 只给 `127.0.0.1` / `localhost` 开了口子、并在 manifest 里引用；
 R8 会把 `MainActivity` 的静态方法改名，而 Rust 侧是按名字调的，
 `proguard-rules.pro` 里必须 `-keepclassmembers` 保住它们。
-CI 跑的也是这条命令，产物挂到 Release 的 `Starveil_<版本>_arm64.apk`。
+CI 产物改名成 `Starveil_<版本>_arm64.apk` 并 `apksigner verify --print-certs` 验一遍，
+指纹打在日志里，挂到 Release 上。
 
 调试界面用 DevTools 协议（同一个端口在 Edge 上是可用的）：
 
