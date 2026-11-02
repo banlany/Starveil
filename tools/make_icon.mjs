@@ -11,7 +11,8 @@
 // 需要本机有 cargo：脚本会调 `cargo tauri icon` 生成 icns 与各尺寸 png，
 // 再用自己逐档渲染的 ico 覆盖它生成的那份（tauri 的 ico 是把大图缩下来的）。
 import { spawn, spawnSync } from 'node:child_process';
-import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -115,16 +116,47 @@ async function buildIco(out) {
   console.log(`${ICO_SIZES.join('/')} -> ${path.relative(root, out)}（${images.length} 档，逐档渲染）`);
 }
 
+// 安卓启动图标。`cargo tauri icon` 只在 icons/ 下留一套 10/29 的旧图，
+// `gen/android/.../res` 它更是从来不碰（只有 `android init` 会拷），
+// 所以两处都在这儿按实际显示尺寸重渲染。
+const DENSITIES = [
+  ['mdpi', 48, 108],
+  ['hdpi', 72, 162],
+  ['xhdpi', 96, 216],
+  ['xxhdpi', 144, 324],
+  ['xxxhdpi', 192, 432],
+];
+
+async function buildAndroid() {
+  const bases = [
+    path.join(root, 'src-tauri', 'icons', 'android'),
+    path.join(root, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'res'),
+  ];
+  for (const [density, launch, fg] of DENSITIES) {
+    for (const base of bases) {
+      // gen/android 只有做过 android init 的机器上才有，缺席时跳过
+      if (!existsSync(base)) continue;
+      const dir = path.join(base, `mipmap-${density}`);
+      await mkdir(dir, { recursive: true });
+      await render(launch, path.join(dir, 'ic_launcher.png'));
+      await render(launch, path.join(dir, 'ic_launcher_round.png'));
+      await render(fg, path.join(dir, 'ic_launcher_foreground.png'));
+    }
+  }
+  console.log('安卓 mipmap：五档 × launcher/round/foreground 已更新');
+}
+
 await send('Page.navigate', { url: `file:///${TMP_HTML.replace(/\\/g, '/')}` });
 await sleep(900);
 
 if (!onlyLogo) {
   await render(1024, ICON_OUT);
   // tauri 的 icon 命令顺带生成 icns 与各尺寸 png，但它自己打的 ico 是从 1024 缩下来的，
-  // 所以先让它跑完，再用逐档渲染的 ico 覆盖回去。
+  // 所以先让它跑完，再用逐档渲染的 ico 覆盖回去，最后补安卓 mipmap。
   const tauri = spawnSync('cargo', ['tauri', 'icon', ICON_OUT], { cwd: root, stdio: 'inherit', shell: true });
   if (tauri.status !== 0) console.warn('cargo tauri icon 失败，icon.ico 只包含逐档渲染的位图');
   await buildIco(ICO_OUT);
+  await buildAndroid();
 }
 await render(256, LOGO_OUT);
 
