@@ -137,6 +137,8 @@ export const DEFAULT_SETTINGS = {
     autoRefresh: false,
     threads: 0,
     pageSize: 200,
+    // 关注页排序窗口（天）。7 = 近 7 天进房次数，0 = 用累计次数。
+    sortWindow: 7,
   },
   timer: {
     enabled: false,
@@ -648,6 +650,29 @@ export function aggregateStats(range = 'all', now = Date.now()) {
   }
   rooms.sort((a, b) => b.ms - a.ms || b.visits - a.visits);
   return { range, start, totalMs, totalVisits, activeDays: activeDays.size, rooms };
+}
+
+/// 最近 `days` 天每个房间的进房次数，关注页排序用。
+///
+/// 数据源是统计里的按天 `visits`（`bumpStatsVisit` 每次进房都会记），
+/// 不是 follow 上的累计 `clicks`：累计值不随时间衰减，半年前刷过的房间会一直
+/// 压在近期常看的前面。返回 `Map<platform:roomId, 次数>`。
+export function recentVisitCounts(days = 7, now = Date.now()) {
+  const windowDays = Math.max(1, Math.floor(Number(days) || 7));
+  const cutoff = now - windowDays * 86400000;
+  const counts = new Map();
+  const stats = loadStats();
+  for (const [key, entry] of Object.entries(stats.rooms)) {
+    let visits = 0;
+    for (const [day, bucket] of Object.entries(entry.daily || {})) {
+      const timestamp = Date.parse(`${day}T00:00:00`);
+      // 按「日」存的数据，跨过 cutoff 那天的白天也算进来，不然近 7 天会少一天。
+      if (Number.isNaN(timestamp) || timestamp + 86400000 <= cutoff) continue;
+      visits += Number(bucket?.visits) || 0;
+    }
+    if (visits > 0) counts.set(key, visits);
+  }
+  return counts;
 }
 
 // ---------------------------------------------------------------- 搜索历史

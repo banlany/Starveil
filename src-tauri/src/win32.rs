@@ -100,9 +100,43 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 用资源管理器打开目录。
+///
+/// 和 `open_in_browser` 是同一个 `ShellExecuteW`，区别只是目标换成路径：
+/// 对目录传 "open" 会直接开出那个文件夹，而不是拿浏览器去解析 `file://`。
+#[cfg(windows)]
+pub fn open_folder(path: &str) -> Result<(), String> {
+    use platform::*;
+
+    let mut target: Vec<u16> = path.encode_utf16().collect();
+    target.push(0);
+    let mut operation: Vec<u16> = "open".encode_utf16().collect();
+    operation.push(0);
+
+    unsafe {
+        let result = ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1, // SW_SHOWNORMAL
+        );
+        if result.is_null() || (result as isize) <= 32 {
+            return Err("打开目录失败".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(not(windows))]
 pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
     Err("当前平台暂不支持写入剪贴板".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn open_folder(_path: &str) -> Result<(), String> {
+    Err("当前平台暂不支持打开目录".to_string())
 }
 
 #[cfg(not(windows))]

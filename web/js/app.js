@@ -230,6 +230,29 @@ function placePlatformUnderline(active) {
   }
 }
 
+/// 旋转屏幕、拖窗口、改界面密度都会改变标签的宽度与偏移，
+/// 而色条的位置是按 `offsetLeft/offsetWidth` 量出来写死的，不重量就停在旧位置
+/// （横竖屏的标签宽度本来就不一样，看起来就是「转个屏色条跑到隔壁」）。
+///
+/// 用 ResizeObserver 盯标签条本身（容器变宽即触发），再兜底监听 resize /
+/// orientationchange：安卓 WebView 旋转时，resize 事件和布局稳定不是同一帧，
+/// 只靠 resize 会量到中间值。debounce 120ms 让那几帧抖动先过去，
+/// 过渡动画（0.26s）自己会把色条滑到新位置。
+function initUnderlineTracking() {
+  let timer = 0;
+  const sync = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      // 直播间里顶栏是 display:none，量出来全是 0，跳过这一轮。
+      if (!platformTabs.offsetWidth) return;
+      syncPlatformTabs();
+    }, 120);
+  };
+  window.addEventListener('resize', sync);
+  window.addEventListener('orientationchange', sync);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(sync).observe(platformTabs);
+}
+
 function syncPlatformTabs() {
   let active = null;
   for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
@@ -791,6 +814,7 @@ function init() {
   initGlobalShortcuts();
   initPullRefresh();
   initSwipe();
+  initUnderlineTracking();
   state.page = 'home';
   state.routeParams = {};
   render({ keepScroll: false });

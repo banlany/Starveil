@@ -206,13 +206,18 @@ export function renderRoom(ctx, params = {}) {
     playerReady: false,
     lastUiWake: 0,
     lastVolume: 0.8,
-    reconnectAttempts: 0,
     lineFailures: 0,
     // 直播流「一直没有进展」时连续自动重试的次数。主播下播后画面会永久停住，
     // 不设上限的话卡顿检测会每隔几秒重取一次流、弹一次 toast，永远停不下来。
     stallRetries: 0,
     // 自动重连已经放弃（下播/流彻底没了）。用户手动刷新时清掉。
     streamDead: false,
+    // 断流重连：error 与 ended 共用这套计数。斗鱼的 FLV 直链一个多小时就过期，
+    // CDN 也会主动掐长连接，出画后清零，连续失败 3 次才把错误页交给用户。
+    errorRetries: 0,
+    reconnecting: false,
+    // 斗鱼地址续签定时器（见 startStreamRenew）。
+    renewTimer: 0,
     playStartedAt: 0,
     stallTimer: 0,
     lastProgressTime: 0,
@@ -1073,6 +1078,25 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  // 横竖屏旋转、拖窗口宽度都会改标签的实际宽度（横屏更宽、SC 计数还会撑开一格），
+  // 色条位置是量出来写死的，不重量就停在旧位置。和首页平台标签同一套做法：
+  // ResizeObserver 盯容器 + resize/orientationchange 兜底，debounce 让旋转时的抖动先过去。
+  const chatTabsBox = page.querySelector('#chat-tabs');
+  let chatUnderlineTimer = 0;
+  const onChatUnderlineResize = () => {
+    clearTimeout(chatUnderlineTimer);
+    chatUnderlineTimer = setTimeout(() => {
+      if (chatTabsBox?.offsetWidth) syncChatTabUnderline();
+    }, 120);
+  };
+  window.addEventListener('resize', onChatUnderlineResize);
+  window.addEventListener('orientationchange', onChatUnderlineResize);
+  let chatTabsObserver = null;
+  if (typeof ResizeObserver === 'function' && chatTabsBox) {
+    chatTabsObserver = new ResizeObserver(onChatUnderlineResize);
+    chatTabsObserver.observe(chatTabsBox);
+  }
+
   // 发送弹幕的输入框默认隐藏（设置 → 弹幕设置 → 允许发送弹幕），
   // 只在「聊天」标签下显示，避免挡住 SC/关注/设置面板。
   function updateComposer() {
@@ -1359,11 +1383,64 @@ export function renderRoom(ctx, params = {}) {
 
   // 线路播放失败时的统一处理：能自动换线就换，换不了才把提示交给用户。
   // FLV 与 HLS 走同一套逻辑，避免两条路径给出不一致的行为。
+  /// 自动重连一轮，返回 false 表示已经放弃（调用方去显示错误页）。
+  ///
+  /// 一次断流会连发好几个 ERROR 事件，没有 `reconnecting` 挡着就会同时发起三四个
+  /// `refreshStream()`，最后互相把对方的播放器拆掉，表现是「越重连越黑屏」。
+  /// 退避 700ms × 次数，第三轮失败后把选择权交给用户。
+  function scheduleReconnect() {
+    if (session.reconnecting) return true;
+    if (session.errorRetries >= 3) return false;
+    session.errorRetries += 1;
+    session.reconnecting = true;
+    const attempt = session.errorRetries;
+    setTimeout(() => {
+      if (session.destroyed) return;
+      session.reconnecting = false;
+      toast(attempt === 1 ? '直播流断开，正在重连…' : `正在第 ${attempt} 次重连…`);
+      refreshStream();
+    }, 700 * attempt);
+    return true;
+  }
+
+  /// 斗鱼 FLV 直链带 wsTime/wsSecret，有效期通常一小时出头；过期后哪怕当前连接还在，
+  /// 下一次重连也只会拿到 403，重试三次全是同一个过期地址。
+  /// 每 40 分钟静默续一次地址池：正在播的那条连接不动（换掉会中断），
+  /// 只保证真断流时手里用的是新签名。
+  const STREAM_RENEW_MS = 40 * 60 * 1000;
+  function startStreamRenew() {
+    clearInterval(session.renewTimer);
+    session.renewTimer = 0;
+    if (session.platform !== 'douyu') return;
+    session.renewTimer = setInterval(async () => {
+      if (session.destroyed) return;
+      try {
+        const payload = await api.play(session.key, session.qualityIndex);
+        if (session.destroyed) return;
+        const lines = buildLines(payload);
+        if (!lines.length) return;
+        session.lines = lines;
+        session.headers = payload.headers || session.headers;
+        if (session.lineIndex >= lines.length) session.lineIndex = 0;
+      } catch {
+        /* 续签失败不打扰用户，下一轮再来 */
+      }
+    }, STREAM_RENEW_MS);
+  }
+
   function onLineError(detail) {
     if (session.destroyed) return;
+    console.warn('[room] 线路报错', detail);
     if (state.settings.player.autoSwitchLine && session.lineIndex + 1 < session.lines.length) {
       toast('当前线路播放失败，正在切换线路…');
-      setTimeout(() => playLine(session.lineIndex + 1), 300);
+      setTimeout(() => {
+        if (!session.destroyed) playLine(session.lineIndex + 1);
+      }, 300);
+      return;
+    }
+    // 线路用尽：斗鱼 CDN 掐连接、地址过期都在这里兜住，不再让用户点重试。
+    if (scheduleReconnect()) {
+      setHint({ spinner: true, text: '直播流断开，正在重新获取地址…' });
       return;
     }
     setHint({
@@ -1538,6 +1615,8 @@ export function renderRoom(ctx, params = {}) {
       session.lineIndex = 0;
       session.lineFailures = 0;
       setQualityLabel();
+      // 斗鱼的地址有有效期，进房就排上续签（其它平台这个函数直接返回）。
+      startStreamRenew();
       if (!session.lines.length) {
         setHint({ text: '这个房间暂时没有可用的播放地址（可能未开播或限制地区）', actions: '<button class="btn" id="hint-retry">重试</button>' });
         bindHintActions();
@@ -1673,6 +1752,9 @@ export function renderRoom(ctx, params = {}) {
     setHint(null);
     updatePlayIcon();
     session.failed = false;
+    // 出画 = 这一轮重连成功，计数清零；否则几次小抖动累加满 3 次之后就再也不自动重连了。
+    session.errorRetries = 0;
+    session.reconnecting = false;
     session.playStartedAt = Date.now();
     session.lastProgressTime = video.currentTime;
     session.lastProgressAt = Date.now();
@@ -1681,19 +1763,15 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('is-portrait-video', video.videoHeight > video.videoWidth);
     // 真正出画了才开始计观看时长。
     startWatchClock();
-    setTimeout(() => {
-      if (!session.destroyed && !video.paused && video.currentTime > 3) session.reconnectAttempts = 0;
-    }, 5000);
   });
   video.addEventListener('ended', () => {
     if (session.destroyed) return;
     // 流断了就不该继续累计时长，重连上会由 playing 重新开始计时。
     stopWatchClock();
     // 有些线路第一次会返回一个只有几百毫秒的失效分片，自动重取一次。
-    if (session.reconnectAttempts < 2) {
-      session.reconnectAttempts += 1;
+    // 斗鱼长连接被 CDN 掐掉时也是这条路径（mpegts 正常收尾 → ended）。
+    if (scheduleReconnect()) {
       setHint({ spinner: true, text: '直播流意外结束，正在重新连接…' });
-      setTimeout(() => refreshStream(), 700);
       return;
     }
     setHint({
@@ -2464,11 +2542,17 @@ export function renderRoom(ctx, params = {}) {
     clearInterval(session.watchTimer);
     window.removeEventListener('pagehide', flushWatchOnHide);
     document.removeEventListener('visibilitychange', resumeWatchOnShow);
+    // 聊天标签色条的尺寸监听也要跟着房间一起撤掉，否则每进出一次就叠一对监听。
+    window.removeEventListener('resize', onChatUnderlineResize);
+    window.removeEventListener('orientationchange', onChatUnderlineResize);
+    chatTabsObserver?.disconnect();
+    clearTimeout(chatUnderlineTimer);
     clearTimeout(session.idleTimer);
     clearInterval(session.clockTimer);
     clearInterval(session.statsTimer);
     clearInterval(session.infoTimer);
     clearInterval(session.stallTimer);
+    clearInterval(session.renewTimer);
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
     clearInterval(session.scSweep);

@@ -235,6 +235,10 @@ export const api = {
   openUrl(url) {
     return call('open_url', { url });
   },
+  // 运行日志：Windows 打开所在目录，安卓弹分享面板（私有目录用户进不去）。
+  openLogDir() {
+    return call('open_log_dir');
+  },
   resolveInput(current, input) {
     return call('resolve_input', { current, input });
   },

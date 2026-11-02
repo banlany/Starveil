@@ -62,7 +62,7 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 - **关闭即退出**：点关闭 / Alt+F4 / 任务栏关闭都直接结束进程，不驻留后台、没有托盘图标；
   **可以多开**，多个窗口是互不影响的独立进程。
 - 左侧竖向图标栏（首页 / 关注 / 分类 / 设置）+ 顶部平台 Tab（哔哩哔哩 / 斗鱼 / 虎牙 / 抖音 / 快手）。
-- 深浅色主题、8 色主题色板、界面密度、首次启动免责声明、全局提示、骨架屏与错误重试。
+- 深浅色主题、8 色预设 + 自定义色值（`#RRGGBB`）、界面密度、首次启动免责声明、全局提示、骨架屏与错误重试。
 
 **Android**
 
@@ -319,8 +319,10 @@ Android 端在同一套 localStorage 键名下，位于应用私有目录（`/da
   （`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`）；沙箱正常的机器不受影响。
   需要手动控制时：`STARVEIL_FORCE_GPU_SANDBOX=1` 强制保留，
   `STARVEIL_DISABLE_GPU_SANDBOX=1` 强制关闭。
-- **运行日志**：`%LOCALAPPDATA%\Starveil\starveil.log`，记录启动、窗口地址、
-  前端初始化与 GPU 沙箱的判定结果；反馈问题时请附上这个文件。
+- **运行日志**：Windows 是 `%LOCALAPPDATA%\Starveil\starveil.log`，安卓是应用私有目录下的
+  `logs/starveil.log`（`app_data_dir()/logs`）。记录启动、窗口地址、前端初始化与 GPU 沙箱的判定结果。
+  设置 → 其他 → 维护里可以直接打开：Windows 弹资源管理器，安卓弹系统分享面板
+  （私有目录文件管理器进不去，分享出去才是能用的形式）。反馈问题时请附上这个文件。
 - **拿 Chromium 自己的日志**（排查 WebView2 问题最有效的手段）：
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging --v=1 --log-file=<路径>`。
   该变量里的参数是**追加**到配置 `additionalBrowserArgs` 之后的，不会覆盖它。

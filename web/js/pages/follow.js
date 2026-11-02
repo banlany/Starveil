@@ -1,7 +1,7 @@
 // 关注页：本地关注列表、标签与平台筛选。
 import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
-import { collectAccounts, followKey, loadFollow, removeFollow, restoreAccounts, saveFollow, state, updateFollow } from '../store.js';
+import { collectAccounts, followKey, loadFollow, recentVisitCounts, removeFollow, restoreAccounts, saveFollow, state, updateFollow } from '../store.js';
 import { IS_MOBILE } from '../platform.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
@@ -132,11 +132,26 @@ export function renderFollow(ctx) {
     }
   }
 
-  /// 直播中的排前面，其次按“进房次数”排，最后用最近访问时间和昵称兜底。
+  /// 排序用的「热度」：默认取近 N 天的进房次数（设置 → 关注设置 → 排序）。
+  /// 关注页一次可能排几百条，而聚合统计是 O(房间×天数)，每次 compare 都读一遍
+  /// 会让翻页明显发顿，所以整页只算一次；`0` 表示用 follow 上的累计次数。
+  let heatCache;
+  let heatIsTotal = false;
+  function heatFor(item) {
+    if (heatCache === undefined) {
+      const windowDays = Number(state.settings?.follow?.sortWindow ?? 7) || 0;
+      heatIsTotal = windowDays <= 0;
+      heatCache = heatIsTotal ? null : recentVisitCounts(windowDays);
+    }
+    if (heatIsTotal) return Number(item.clicks) || 0;
+    return heatCache.get(followKey(item.platform, item.room_id)) || 0;
+  }
+
+  /// 直播中的排前面，其次按「热度」排，最后用最近访问时间和昵称兜底。
   function sortFollows(list) {
     return list.slice().sort((a, b) => {
       if (Boolean(a.live) !== Boolean(b.live)) return a.live ? -1 : 1;
-      const clicks = (Number(b.clicks) || 0) - (Number(a.clicks) || 0);
+      const clicks = heatFor(b) - heatFor(a);
       if (clicks) return clicks;
       const visit = (Number(b.lastVisit) || 0) - (Number(a.lastVisit) || 0);
       if (visit) return visit;

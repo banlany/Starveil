@@ -13,9 +13,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
-#[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -2205,19 +2203,41 @@ fn webview_data_dir() -> PathBuf {
     }
 }
 
-/// 运行时日志：写到 `%LOCALAPPDATA%\Starveil\starveil.log`，
+/// 运行时日志目录，启动时确定一次（见 `setup`）。
+///
+/// Windows 沿用 `%LOCALAPPDATA%\Starveil`（老用户手上已经有这个路径的日志）；
+/// 安卓用应用私有目录下的 `logs/`，通过 FileProvider 分享出去——
+/// 手机上没有「打开日志目录」这回事，直接分享文件才是用户真能拿到的形式。
+static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+fn log_dir() -> Option<&'static Path> {
+    if let Some(dir) = LOG_DIR.get() {
+        return Some(dir.as_path());
+    }
+    // setup 之前（窗口还没建好就出错）也得能记下来，Windows 用老路径兜底。
+    #[cfg(windows)]
+    {
+        static FALLBACK: OnceLock<PathBuf> = OnceLock::new();
+        let local = std::env::var("LOCALAPPDATA").ok()?;
+        Some(FALLBACK.get_or_init(|| Path::new(&local).join("Starveil")))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// 运行时日志：写到 `%LOCALAPPDATA%\Starveil\starveil.log`（安卓在私有目录的 `logs/`），
 /// 出问题（比如窗口空白）时用户可以直接把这个文件发过来。
 fn log_line(message: &str) {
-    // 移动端没有 %LOCALAPPDATA%：统一打到标准输出，Android 上会进 logcat
-    // （`adb logcat -s RustStdoutStderr`）。
+    // 移动端同时打到标准输出，Android 上会进 logcat（`adb logcat -s RustStdoutStderr`）。
     if cfg!(not(windows)) {
         println!("[starveil] {message}");
     }
-    let dir = match std::env::var("LOCALAPPDATA") {
-        Ok(local) => Path::new(&local).join("Starveil"),
-        Err(_) => return,
+    let Some(dir) = log_dir() else {
+        return;
     };
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::create_dir_all(dir);
     let line = format!(
         "[{}] {message}\n",
         std::time::SystemTime::now()
@@ -2239,6 +2259,50 @@ fn log_line(message: &str) {
 #[tauri::command]
 fn frontend_log(message: String) {
     log_line(&format!("[web] {message}"));
+}
+
+/// 打开运行日志。
+///
+/// - Windows：用资源管理器打开日志目录，用户可以直接把 `starveil.log` 拖出来发过来。
+/// - Android：没有「打开目录」这回事（应用私有目录连文件管理器都看不到），
+///   改成把日志文件走系统分享面板发出去——微信、邮件、存到文件都行，
+///   这比给一个用户根本进不去的路径有用。
+#[tauri::command]
+fn open_log_dir(app: AppHandle) -> Result<String, String> {
+    let dir = log_dir().ok_or_else(|| "当前平台没有日志目录".to_string())?;
+    let _ = std::fs::create_dir_all(dir);
+
+    #[cfg(target_os = "android")]
+    {
+        let file = dir.join("starveil.log");
+        if !file.exists() {
+            return Err("还没有日志文件，用一会儿再来".to_string());
+        }
+        let path = file.to_string_lossy().to_string();
+        // 闭包要 move 一份进去（返回值里还要用 path），这里先克隆。
+        let argument = path.clone();
+        let shared = run_on_main_activity(&app, move || {
+            call_activity_static_str("shareLog", &argument)
+        })?;
+        if shared {
+            Ok(path)
+        } else {
+            Err("分享日志失败".to_string())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = &app;
+        #[cfg(windows)]
+        {
+            win32::open_folder(&dir.to_string_lossy())?;
+            Ok(dir.to_string_lossy().to_string())
+        }
+        #[cfg(not(windows))]
+        {
+            Err("当前平台暂不支持打开目录".to_string())
+        }
+    }
 }
 
 // ---------------------------------------------------------------- WebDAV 同步
@@ -2582,6 +2646,18 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
+            // 日志目录在这里定下来：安卓是私有目录（分享出去），Windows 是老路径。
+            let log_dir = if cfg!(windows) {
+                std::env::var("LOCALAPPDATA")
+                    .ok()
+                    .map(|local| Path::new(&local).join("Starveil"))
+            } else {
+                app.path().app_data_dir().ok().map(|dir| dir.join("logs"))
+            };
+            if let Some(dir) = log_dir {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = LOG_DIR.set(dir);
+            }
             // 启动后记录一次 webview 的真实状态，便于排查窗口空白之类的问题。
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(3));
@@ -2630,6 +2706,7 @@ pub fn run() {
             bili_qr_generate,
             bili_qr_poll,
             frontend_log,
+            open_log_dir,
             webdav_test,
             webdav_upload,
             webdav_download,

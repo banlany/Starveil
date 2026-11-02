@@ -864,6 +864,29 @@
   transform: scale(1.06);
 }
 
+/* 自定义色：虚线格子 + 加号，选过之后底色就是当前色，和预设一样打勾。
+   active 时要把加号藏掉，否则勾和加号叠在一起。 */
+.swatch-custom {
+  background: transparent;
+  color: var(--dim);
+  border: 1px dashed var(--line, rgba(255, 255, 255, 0.18));
+  box-shadow: none;
+}
+
+.swatch-custom:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.swatch-custom.active {
+  color: #fff;
+  border: 1px solid transparent;
+}
+
+.swatch-custom.active svg {
+  display: none;
+}
+
 .swatch.active::after {
   content: "";
   width: 11px;

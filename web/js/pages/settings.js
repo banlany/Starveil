@@ -45,7 +45,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.6.4';
+const FALLBACK_VERSION = '0.6.5';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -327,6 +327,34 @@ function buildRow(config, repaint, ctx) {
       });
       swatches.appendChild(swatch);
     }
+    // 自定义色：预设就 8 个，想跟壁纸/头像配色对上时没得选。
+    // 走同一个 `appearance.accent`，和预设色完全等价（自定义色不在预设里时，
+    // 这一格自己显示当前颜色并带选中框，否则用户看不出现在是哪一色）。
+    const custom = !ACCENTS.some((color) => color.toLowerCase() === current);
+    const picker = document.createElement('button');
+    picker.className = `swatch swatch-custom${custom ? ' active' : ''}`;
+    picker.title = custom ? `自定义：${current}` : '自定义颜色';
+    if (custom) picker.style.background = current;
+    picker.insertAdjacentHTML('beforeend', icon('plus', 14));
+    picker.addEventListener('click', async () => {
+      const input = await promptDialog({
+        title: '自定义主题色',
+        text: '输入十六进制色值，例如 #7C4DFF（也可以不写 #）',
+        placeholder: '#7C4DFF',
+        value: custom ? current : '',
+      });
+      if (input === null) return;
+      const color = normalizeHex(input);
+      if (!color) {
+        toast('色值格式不对，需要 3 位或 6 位十六进制，比如 #7C4DFF');
+        return;
+      }
+      setSetting('appearance.accent', color);
+      setSetting('accent', color);
+      applyTheme();
+      repaint();
+    });
+    swatches.appendChild(picker);
     return swatches;
   } else if (config.type === 'textarea') {
     const wrap = document.createElement('div');
@@ -580,6 +608,14 @@ function detailSections(key, ctx, repaint) {
             { type: 'select', key: 'follow.pageSize', title: '关注每页数量', numeric: true, valueMap: { 50: '50', 100: '100', 150: '150', 200: '200', 300: '300', 400: '400' } },
           ],
         },
+        {
+          label: '排序',
+          rows: [
+            // 累计次数会把半年前刷过的房间一直顶在前面，近期常看的反而沉底；
+            // 直播中的永远排最前，这一项只决定「都在播」或「都没播」时的先后。
+            { type: 'select', key: 'follow.sortWindow', title: '按进房热度排序', numeric: true, valueMap: { 7: '近 7 天的进房次数', 15: '近 15 天的进房次数', 0: '累计进房次数' }, desc: '直播中的主播始终排在前面；这一项决定其余情况下的顺序。' },
+          ],
+        },
       ];
     case 'timer': {
       const info = ctx.sleepTimer?.() || { enabled: false, minutes: getSetting('timer.minutes'), remaining: 0 };
@@ -632,7 +668,24 @@ function detailSections(key, ctx, repaint) {
                 toast('已恢复默认设置', 'success');
               },
             },
-            { type: 'action', icon: 'info', title: '打开日志目录', desc: '查看 Tauri 运行日志', onClick: () => toast('日志目录：%LOCALAPPDATA%\\Starveil') },
+            {
+              type: 'action',
+              icon: 'info',
+              // 安卓上应用私有目录连文件管理器都进不去（Android 11+ 连 Android/data 都封了），
+              // 所以那边落地成「分享日志文件」：系统分享面板发到微信/邮件/本地文件。
+              title: IS_MOBILE ? '分享日志文件' : '打开日志目录',
+              desc: IS_MOBILE
+                ? '把运行日志通过系统分享发出去，便于反馈播放问题'
+                : '在资源管理器里打开运行日志所在的文件夹',
+              onClick: async () => {
+                try {
+                  const path = await api.openLogDir();
+                  if (!IS_MOBILE) toast(`已打开：${path}`, 'success');
+                } catch (error) {
+                  toast(String(error), 'error');
+                }
+              },
+            },
           ],
         },
       ];
@@ -826,7 +879,21 @@ function formatBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/// 把用户输入规整成 `#rrggbb`。接受 `#RGB` / `#RRGGBB` / 不带 `#`，
+/// 其它一律返回 null——不去猜「红」「red」这类颜色名，猜错比报错更难受。
+function normalizeHex(input) {
+  const raw = String(input || '').trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(raw)) {
+    return `#${raw.split('').map((ch) => ch + ch).join('')}`.toLowerCase();
+  }
+  if (/^[0-9a-f]{6}$/i.test(raw)) return `#${raw.toLowerCase()}`;
+  return null;
+}
+
 /// 把毫秒转成「2 小时 13 分」这类人话，统计卡片和排行都用它。
+///
+/// 最大单位固定到小时：用量到 30 小时时写「1 天 6 小时」，用户还得在脑子里换算，
+/// 而这个统计本来就是「看了多少小时」的直观量，超过 24 小时也照写 30 小时。
 function formatWatchTime(ms) {
   const seconds = Math.round((Number(ms) || 0) / 1000);
   if (seconds < 60) return `${seconds} 秒`;
@@ -834,10 +901,7 @@ function formatWatchTime(ms) {
   if (minutes < 60) return `${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
   const restMinutes = minutes % 60;
-  if (hours < 24) return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`;
-  const days = Math.floor(hours / 24);
-  const restHours = hours % 24;
-  return restHours ? `${days} 天 ${restHours} 小时` : `${days} 天`;
+  return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`;
 }
 
 /// 同步包范围说明。WebDAV 与局域网打包的是同一份 `buildBundle()`，

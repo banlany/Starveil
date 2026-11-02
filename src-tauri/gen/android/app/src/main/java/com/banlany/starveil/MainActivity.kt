@@ -142,6 +142,42 @@ class MainActivity : TauriActivity() {
         }
 
         /**
+         * 分享运行日志（对应设置里「分享日志文件」）。
+         *
+         * 安卓没有「打开应用私有目录」的通用方式（Android 11 之后连 Android/data 都不让翻），
+         * 所以这里落地成系统分享面板：文件通过 FileProvider 授权给接收方，
+         * 用户可以直接发到微信 / 邮件，或存到本机文件。
+         *
+         * path 必须落在 `res/xml/file_paths.xml` 声明的目录里（files/ 与 cache/），
+         * 否则 getUriForFile 会抛 IllegalArgumentException，这里一律吞掉返回 false，
+         * 由 Rust 侧转成一句「分享日志失败」。
+         */
+        @JvmStatic
+        fun shareLog(path: String): Boolean {
+            val activity = instance ?: return false
+            val file = java.io.File(path)
+            if (!file.exists()) return false
+            return try {
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    activity,
+                    "${activity.packageName}.fileprovider",
+                    file,
+                )
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    // .log 没有公认的 MIME，写 text/plain 时微信/QQ 会拒收，用 */* 最稳。
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "星幕直播日志")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                activity.startActivity(Intent.createChooser(intent, "分享日志"))
+                true
+            } catch (error: Exception) {
+                false
+            }
+        }
+
+        /**
          * 系统栏配色跟随前端主题。
          *
          * `color` 是 ARGB int，`light` 为 1 表示背景是浅色、状态栏图标要用深色。
