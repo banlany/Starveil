@@ -55,11 +55,11 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "当前版本：$VERSION"
 
-      # 自己打包而不用 tauri-action，是因为 productName 是中文「星幕直播」：
-      # NSIS bundler 生成的文件名会过滤掉非 ASCII 字符，
-      # 装出来是 `_0.6.5_x64-setup.exe`（没有产品名前缀）。
-      # 这里先打包，再统一改成 `starveil-<版本>-x64-setup.exe`，最后上传。
-      # 发布资产一律走小写连字符（与本地 dist/ 一致），别再混用 `Starveil_` 那种写法。
+      # 自己打包而不用 tauri-action：productName 现在是 ASCII 的 Starveil，
+      # NSIS 会生成 `Starveil_<版本>_x64-setup.exe`，但发布资产统一走小写连字符，
+      # 所以这里先打包，再改名成 `starveil-<版本>-x64-setup.exe`。
+      # （早期 productName 是中文时，NSIS 会把前缀整个过滤掉，只剩 `_0.6.5_x64-setup.exe`；
+      # 下面上传后的清理逻辑还留着兜这类旧资产。）
       - name: 打包 NSIS 安装包
         run: cargo tauri build --bundles nsis
 
@@ -94,7 +94,7 @@ jobs:
           set -euo pipefail
           VERSION=${{ steps.version.outputs.version }}
           TAG=${{ steps.version.outputs.tag }}
-          TITLE="星幕直播 v${VERSION}"
+          TITLE="Starveil v${VERSION}"
           NOTES="$RELEASE_NOTES"
 
           # 用 gh CLI 而不是 softprops/action-gh-release：
@@ -399,7 +399,7 @@ jobs:
           set -euo pipefail
           VERSION=${{ steps.version.outputs.version }}
           TAG=${{ steps.version.outputs.tag }}
-          TITLE="星幕直播 v${VERSION}"
+          TITLE="Starveil v${VERSION}"
           # 与 windows job 共用顶层 env 的那份说明：两个 job 并行，谁先跑到谁创建 Release。
           NOTES="$RELEASE_NOTES"
 

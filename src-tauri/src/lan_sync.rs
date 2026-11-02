@@ -1,4 +1,4 @@
-//! 局域网同步：UDP 广播发现 + 本机 HTTP 服务，同一 Wi-Fi 下的星幕直播互相收发配置包。
+//! 局域网同步：UDP 广播发现 + 本机 HTTP 服务，同一 Wi-Fi 下的 Starveil 互相收发配置包。
 //!
 //! 做法照搬 dart_simple_live：一端广播 `{"type":"hello"}`，收到的设备回一份自己的信息，
 //! 双方各自记下对方的 IP，之后用 HTTP 交换数据。区别只有两点：
@@ -28,7 +28,7 @@ pub const HTTP_PORT: u16 = 23244;
 /// UDP 发现广播用。
 pub const UDP_PORT: u16 = 23245;
 
-const APP_NAME: &str = "星幕直播 Starveil";
+const APP_NAME: &str = "Starveil";
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(3);
 /// 超过这个时间没再收到广播就把对方从列表里去掉（广播每 3 秒一次）。
 const PEER_TTL: Duration = Duration::from_secs(16);
@@ -431,7 +431,7 @@ fn peer_name(stream: &TcpStream) -> String {
 
 fn port_error(error: &std::io::Error, port: u16, what: &str) -> String {
     if error.kind() == std::io::ErrorKind::AddrInUse {
-        format!("{port} 端口已被占用：请关闭另一个星幕直播窗口或占用该端口的程序后重试")
+        format!("{port} 端口已被占用：请关闭另一个 Starveil 窗口或占用该端口的程序后重试")
     } else {
         format!("{what}启动失败：{error}")
     }
@@ -606,7 +606,7 @@ pub fn push(address: &str, port: u16, content: &str) -> Result<PushResult, Strin
     })
 }
 
-/// 手动填地址时先问一句「你是谁」，确认对方真的是星幕直播。
+/// 手动填地址时先问一句「你是谁」，确认对方真的是 Starveil。
 pub fn probe(address: &str, port: u16) -> Result<Peer, String> {
     let base = base_url(address, port);
     if base.is_empty() {
@@ -617,14 +617,14 @@ pub fn probe(address: &str, port: u16) -> Result<Peer, String> {
     let response = client.get(&url).send().map_err(|error| explain(error, &url))?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        return Err(format!("对方返回 {status}，可能不是星幕直播的同步服务"));
+        return Err(format!("对方返回 {status}，可能不是 Starveil 的同步服务"));
     }
     let value: Value = response
         .json()
         .map_err(|error| format!("对方信息无法解析：{error}"))?;
     let id = value["id"].as_str().unwrap_or("").to_string();
     if id.is_empty() {
-        return Err("对方不是星幕直播的同步服务（缺少设备标识）".to_string());
+        return Err("对方不是 Starveil 的同步服务（缺少设备标识）".to_string());
     }
     Ok(Peer {
         id,

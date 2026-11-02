@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "星幕直播",
+  "productName": "Starveil",
   "version": "0.6.5",
   "identifier": "com.banlany.starveil",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "星幕直播",
+        "title": "Starveil",
         "width": 1280,
         "height": 800,
         "minWidth": 1080,

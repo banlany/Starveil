@@ -100,7 +100,7 @@ export function buildBundle() {
   const { includeHistory, includeAccounts } = bundleOptions();
   const bundle = {
     version: BUNDLE_VERSION,
-    app: '星幕直播 Starveil',
+    app: 'Starveil',
     exportedAt: new Date().toISOString(),
     settings,
     follow: loadFollow().map((item) => ({

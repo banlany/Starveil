@@ -423,7 +423,7 @@ function showDisclaimer() {
   if (state.settings.disclaimerAccepted) return;
   const body = document.createElement('div');
   body.innerHTML = `
-    <p class="modal-text">欢迎使用星幕直播。本应用是一个聚合直播客户端，用于学习和研究桌面端开发。</p>
+    <p class="modal-text">欢迎使用 Starveil。本应用是一个聚合直播客户端，用于学习和研究桌面端开发。</p>
     <p class="modal-text" style="margin-top:10px">应用不提供、不存储、不转播任何直播内容；所有视频流、弹幕、封面与商标均归各直播平台及主播所有。请遵守所在地区法律法规和各平台服务条款。</p>
     <p class="modal-text" style="margin-top:10px">继续使用即表示你已阅读并同意上述说明。若你不希望自己的直播间被展示，请通过平台渠道处理。</p>`;
   openModal({
@@ -440,7 +440,7 @@ function showDisclaimer() {
           state.settings.disclaimerAccepted = true;
           state.settings.firstRun = false;
           saveSettings();
-          toast('欢迎使用星幕直播', 'success');
+          toast('欢迎使用 Starveil', 'success');
         },
       },
     ],

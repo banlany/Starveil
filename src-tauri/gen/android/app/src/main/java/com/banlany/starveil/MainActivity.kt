@@ -167,7 +167,7 @@ class MainActivity : TauriActivity() {
                     // .log 没有公认的 MIME，写 text/plain 时微信/QQ 会拒收，用 */* 最稳。
                     type = "*/*"
                     putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "星幕直播日志")
+                    putExtra(Intent.EXTRA_SUBJECT, "Starveil 日志")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 activity.startActivity(Intent.createChooser(intent, "分享日志"))

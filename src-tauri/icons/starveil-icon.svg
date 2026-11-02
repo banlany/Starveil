@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="星幕直播">
-  <title>星幕直播 Starveil</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Starveil">
+  <title>Starveil</title>
 
   <!-- 白色圆角底。圆角外是透明的，放在深色任务栏/启动器里不会变成一个白方块。 -->
   <rect width="1024" height="1024" rx="228" fill="#ffffff" />

@@ -107,7 +107,7 @@ const DETAIL_TITLES = {
   other: '其他设置',
   disclaimer: '免责声明',
   licenses: '许可与致谢',
-  about: '关于星幕直播',
+  about: '关于 Starveil',
 };
 
 export function renderSettings(ctx) {
@@ -116,9 +116,9 @@ export function renderSettings(ctx) {
   page.innerHTML = `
     <div class="settings-shell">
       <div class="profile-row" id="profile-row">
-        <div class="profile-logo"><img src="assets/logo.png" alt="星幕直播" /></div>
+        <div class="profile-logo"><img src="assets/logo.png" alt="Starveil" /></div>
         <div class="profile-text">
-          <h2>星幕直播</h2>
+          <h2>Starveil</h2>
           <p>把喜欢的直播，放在同一幕</p>
         </div>
         <span class="chev">${icon('chevron', 18)}</span>
@@ -1012,7 +1012,7 @@ function paintSync(content, ctx, repaint) {
   backup.querySelector('#sync-export').addEventListener('click', async () => {
     const payload = {
       version: 2,
-      app: '星幕直播 Starveil',
+      app: 'Starveil',
       exportedAt: new Date().toISOString(),
       settings: state.settings,
       shield: {
@@ -1527,8 +1527,8 @@ function paintAbout(content, ctx) {
   card.className = 'settings-group about-card';
   card.innerHTML = `
     <div class="about-logo"><img src="assets/logo.png" alt="" /></div>
-    <h2>星幕直播</h2>
-    <p>Starveil · 聚合客户端 · Tauri 2 + ${IS_MOBILE ? 'WebView' : 'WebView2'}</p>
+    <h2>Starveil</h2>
+    <p>聚合直播客户端 · Tauri 2 + ${IS_MOBILE ? 'WebView' : 'WebView2'}</p>
     <span class="about-version" id="about-version">${FALLBACK_VERSION}</span>
     <div class="settings-group" style="margin-top:22px;text-align:left">
       <div class="setting-row"><div class="setting-info"><div class="setting-title">协议层</div><div class="setting-desc">哔哩哔哩 / 斗鱼 / 虎牙（Rust live_core）</div></div></div>
@@ -1634,7 +1634,7 @@ function paintLicenses(content, ctx) {
   intro.className = 'tool-card';
   intro.innerHTML = `
     <h3>授权说明</h3>
-    <p>星幕直播本身以 GPL-3.0 发布。下面列出的是本项目依赖或移植的上游项目，
+    <p>Starveil 本身以 GPL-3.0 发布。下面列出的是本项目依赖或移植的上游项目，
        各自的授权不因本项目而改变。</p>
     <div class="pill-note">${icon('info', 16)}<div>直播平台的取流与弹幕均为各站私有接口，
       本项目没有从零逆向，协议实现移植自上表所列的开源项目。</div></div>`;

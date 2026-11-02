@@ -1826,7 +1826,7 @@ export function renderRoom(ctx, params = {}) {
       `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
       (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '') +
       guardBit;
-    document.title = `${detail.title || '直播间'} · 星幕直播`;
+    document.title = `${detail.title || '直播间'} · Starveil`;
     if (cover) {
       $('stage-bg').style.backgroundImage = `url("${cover}")`;
     }
@@ -2590,7 +2590,7 @@ export function renderRoom(ctx, params = {}) {
       api.setImmersive(false).catch(() => {});
       api.setScreenOrientation(state.settings.appearance?.orientation || 'auto').catch(() => {});
     }
-    document.title = '星幕直播';
+    document.title = 'Starveil';
     state.room = null;
   };
 }
