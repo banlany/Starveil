@@ -16,9 +16,9 @@ env:
   RELEASE_NOTES: |
     聚合直播客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
 
-    - Windows 安装包：`Starveil_<版本>_x64-setup.exe`（NSIS）
-    - Windows 免安装：解压 `starveil-portable.zip` 直接运行 `starveil.exe`
-    - Android：`Starveil_<版本>_arm64.apk`（arm64-v8a，Android 8.0+）
+    - Windows 安装包：`starveil-<版本>-x64-setup.exe`（NSIS）
+    - Windows 免安装：解压 `starveil-<版本>-portable.zip` 直接运行 `starveil.exe`
+    - Android：`starveil-<版本>-arm64.apk`（arm64-v8a，Android 8.0+）
     - 变更详情见仓库的 CHANGELOG.md
 
 jobs:
@@ -57,8 +57,9 @@ jobs:
 
       # 自己打包而不用 tauri-action，是因为 productName 是中文「星幕直播」：
       # NSIS bundler 生成的文件名会过滤掉非 ASCII 字符，
-      # 装出来是 `_0.4.1_x64-setup.exe`（没有产品名前缀）。
-      # 这里先打包，再把文件改成 ASCII 名，最后统一上传。
+      # 装出来是 `_0.6.5_x64-setup.exe`（没有产品名前缀）。
+      # 这里先打包，再统一改成 `starveil-<版本>-x64-setup.exe`，最后上传。
+      # 发布资产一律走小写连字符（与本地 dist/ 一致），别再混用 `Starveil_` 那种写法。
       - name: 打包 NSIS 安装包
         run: cargo tauri build --bundles nsis
 
@@ -70,8 +71,8 @@ jobs:
           cd src-tauri/target/release/bundle/nsis
           for f in *.exe; do
             [ -e "$f" ] || continue
-            mv "$f" "Starveil_${VERSION}_x64-setup.exe"
-            echo "重命名：$f -> Starveil_${VERSION}_x64-setup.exe"
+            mv "$f" "starveil-${VERSION}-x64-setup.exe"
+            echo "重命名：$f -> starveil-${VERSION}-x64-setup.exe"
           done
 
       # 除了安装包，再单独提供免安装版，方便不想装东西的人。
@@ -79,10 +80,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          VERSION=${{ steps.version.outputs.version }}
           mkdir -p portable
           cp src-tauri/target/release/starveil.exe portable/
           cp dist/README.txt portable/ 2>/dev/null || true
-          7z a -tzip "starveil-portable.zip" ./portable/* > /dev/null
+          7z a -tzip "starveil-${VERSION}-portable.zip" ./portable/* > /dev/null
 
       - name: 创建 Release 并上传
         shell: bash
@@ -106,14 +108,19 @@ jobs:
           # 先传新的，再删旧的：反过来做的话，一旦上传失败就会出现
           # 「旧的已删、新的没传上」的空档，Release 里一个安装包都不剩。
           gh release upload "$TAG" \
-            "src-tauri/target/release/bundle/nsis/Starveil_${VERSION}_x64-setup.exe" \
-            "starveil-portable.zip" \
+            "src-tauri/target/release/bundle/nsis/starveil-${VERSION}-x64-setup.exe" \
+            "starveil-${VERSION}-portable.zip" \
             --clobber
 
-          # 早期版本用中文 productName 直接打包，资产名会变成 `_0.4.0_x64-setup.exe`。
-          # 新的传上去了，再把这种旧名字的删掉，免得两个安装包同时挂在 Release 上。
+          # 清掉历史命名，免得同一个 Release 上挂着两份同内容资产：
+          #   早期用中文 productName 直接打包 → `_0.4.0_x64-setup.exe`
+          #   0.6.4 及以前 → `Starveil_<版本>_x64-setup.exe`、`starveil-portable.zip`
+          # 新资产已经传上去了，这里删的只可能是旧名。
           for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true); do
-            if echo "$asset" | grep -qE '^_[0-9].*_x64-setup\.exe$'; then
+            case "$asset" in
+              starveil-"$VERSION"-x64-setup.exe|starveil-"$VERSION"-portable.zip) continue ;;
+            esac
+            if echo "$asset" | grep -qE '^(_[0-9]|Starveil_[0-9])|^starveil-portable\.zip$'; then
               echo "删除旧资产：$asset"
               gh release delete-asset "$TAG" "$asset" || true
             fi
@@ -128,7 +135,7 @@ jobs:
           name: starveil-windows-${{ steps.version.outputs.version }}
           path: |
             src-tauri/target/release/starveil.exe
-            starveil-portable.zip
+            starveil-${{ steps.version.outputs.version }}-portable.zip
           if-no-files-found: warn
 
   # 安卓只出 arm64-v8a：真机全是 arm64，模拟器（x86_64）自己本地编就行，
@@ -377,7 +384,7 @@ jobs:
           fi
           echo "apksigner: $APKSIGNER"
 
-          OUT="Starveil_${VERSION}_arm64.apk"
+          OUT="starveil-${VERSION}-arm64.apk"
           cp "$APK" "$OUT"
 
           # 装不上的包不如不传：验签顺带把证书指纹写进日志。
@@ -408,6 +415,17 @@ jobs:
 
           gh release upload "$TAG" "${{ steps.apk.outputs.path }}" --clobber
 
+          # 旧命名（`Starveil_<版本>_arm64.apk`）在同一个 tag 重跑时会残留，
+          # 和新包内容一样却占两份下载，这里一并清掉。
+          CURRENT="starveil-${VERSION}-arm64.apk"
+          for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true); do
+            [ "$asset" = "$CURRENT" ] && continue
+            if echo "$asset" | grep -qE '^Starveil_[0-9].*_arm64\.apk$'; then
+              echo "删除旧资产：$asset"
+              gh release delete-asset "$TAG" "$asset" || true
+            fi
+          done
+
           echo "=== Release 资产 ==="
           gh release view "$TAG" --json assets --jq '.assets[] | "  \(.name)  \(.size) bytes"'
 
@@ -415,5 +433,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: starveil-android-arm64-${{ steps.version.outputs.version }}
-          path: Starveil_*_arm64.apk
+          path: starveil-*-arm64.apk
           if-no-files-found: warn

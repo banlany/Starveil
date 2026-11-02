@@ -229,7 +229,7 @@ release 包还有两个必须记住的坑（CI 已经处理，本地改构建配
 只给 `127.0.0.1` / `localhost` 开了口子、并在 manifest 里引用；
 R8 会把 `MainActivity` 的静态方法改名，而 Rust 侧是按名字调的，
 `proguard-rules.pro` 里必须 `-keepclassmembers` 保住它们。
-CI 产物改名成 `Starveil_<版本>_arm64.apk` 并 `apksigner verify --print-certs` 验一遍，
+CI 产物改名成 `starveil-<版本>-arm64.apk` 并 `apksigner verify --print-certs` 验一遍，
 指纹打在日志里，挂到 Release 上。
 
 调试界面用 DevTools 协议（同一个端口在 Edge 上是可用的）：

@@ -1,7 +1,7 @@
 星幕直播 · Starveil
 ===================
 
-双击 Starveil.exe 即可运行。
+双击 starveil.exe 即可运行。
 程序未做代码签名，Windows SmartScreen 可能提示未知发布者，选择「更多信息 → 仍要运行」即可。
 
 本文件随程序一起分发，只说明运行相关的事；版本变更见仓库的 CHANGELOG.md。
