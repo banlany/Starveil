@@ -120,12 +120,12 @@ function back() {
     }
     state.page = 'home';
     state.routeParams = {};
-    render();
+    render({ dir: 'back' });
     return;
   }
   state.page = previous.route;
   state.routeParams = previous.params;
-  render({ keepScroll: true });
+  render({ keepScroll: true, dir: 'back' });
 }
 
 function exitRoom() {
@@ -138,7 +138,7 @@ function exitRoom() {
   }
   state.page = roomRoot && PAGES[roomRoot] ? roomRoot : 'home';
   state.routeParams = roomRoot && PAGES[roomRoot] ? roomRootParams : {};
-  render({ keepScroll: true });
+  render({ keepScroll: true, dir: 'back' });
 }
 
 function openRoom(platform, roomId) {
@@ -296,12 +296,10 @@ function initSwipe() {
   bindHorizontalSwipe(view, (direction) => {
     if (state.page !== 'home' && state.page !== 'category') return false;
     // 有浮层时手势归浮层，别在下面偷偷切平台。
-    if (document.querySelector('.modal-overlay, .menu-overlay')) return false;
+    if (document.querySelector('.modal-overlay, .menu-overlay:not(.closing)')) return false;
     if (!cyclePlatform(direction)) return false;
-    view.classList.remove('swipe-in');
-    // 连续两次滑动时，先去掉类再回流，动画才会重新播。
-    void view.offsetWidth;
-    view.classList.add('swipe-in');
+    // 新页面的入场动画统一由 render() 的 .page-enter 负责，这里不再叠一层
+    // swipe-in：两层 opacity 动画同时跑，滑动切页会比点标签明显更慢。
     return true;
   });
 }
@@ -326,7 +324,7 @@ function renderChrome() {
   syncPlatformTabs();
 }
 
-function render({ keepScroll = false } = {}) {
+function render({ keepScroll = false, dir = 'forward' } = {}) {
   // 路由切换时关掉可能还没关的浮层菜单，避免它跟着进入下一个页面。
   for (const overlay of document.querySelectorAll('.menu-overlay')) overlay.remove();
   if (cleanup) {
@@ -358,6 +356,14 @@ function render({ keepScroll = false } = {}) {
     requestAnimationFrame(() => {
       view.scrollTop = target;
     });
+  }
+  // 页面入场：整页淡入 + 轻微位移。直播间跳过——它一进来就是视频铺满，
+  // 淡入只会把「点了之后要等一下」的感觉放大，而且播放器自己就有加载态。
+  const pageEl = view.firstElementChild;
+  if (pageEl && state.page !== 'room') {
+    pageEl.classList.add('page-enter');
+    // 返回上一层从上方落下，前进则从下方浮起，方向对得上操作。
+    if (dir === 'back') pageEl.classList.add('back');
   }
 }
 
@@ -492,7 +498,7 @@ function setSleepTimer(minutes) {
 ///
 /// 顺序：关浮层 → 退全屏 → 出直播间 → 返回栈上一页 → 回首页 → 结束应用。
 function handleAndroidBack() {
-  const menu = document.querySelector('.menu-overlay');
+  const menu = document.querySelector('.menu-overlay:not(.closing)');
   if (menu) {
     // 菜单的「点外面关闭」是监听在 document 上的 mousedown，这里补一个同样的事件。
     menu.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -539,7 +545,7 @@ function initGlobalShortcuts() {
       // 有弹窗/下拉菜单开着时，Escape 只关浮层，不要再退一页。
       // 浮层的 keydown 是后注册的，靠它 stopPropagation 拦不住这里（同节点需要
       // stopImmediatePropagation 且先注册），所以在源头判一下。
-      if (document.querySelector('.modal-overlay, .menu-overlay')) return;
+      if (document.querySelector('.modal-overlay, .menu-overlay:not(.closing)')) return;
       event.preventDefault();
       back();
     }

@@ -317,7 +317,7 @@ export function renderRoom(ctx, params = {}) {
         document.fullscreenElement ||
         page.classList.contains('is-theater') ||
         (!video.paused && !session.chatCollapsed);
-      if (canHide && !document.querySelector('.menu-overlay')) {
+      if (canHide && !document.querySelector('.menu-overlay:not(.closing)')) {
         page.classList.add('ui-idle');
       }
     }, 2800);
@@ -2507,7 +2507,7 @@ export function renderRoom(ctx, params = {}) {
     wake();
     if (active) {
       setTimeout(() => {
-        if (document.fullscreenElement && !document.querySelector('.menu-overlay')) {
+        if (document.fullscreenElement && !document.querySelector('.menu-overlay:not(.closing)')) {
           page.classList.add('ui-idle');
         }
       }, 3000);

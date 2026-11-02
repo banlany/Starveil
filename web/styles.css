@@ -1050,6 +1050,23 @@ html[data-theme="light"] .menu {
   }
 }
 
+/* 关菜单时补个退场：原来 overlay 是直接 remove 的，点一下瞬间消失，
+   和它出场那 120ms 完全不对称。 */
+@keyframes menu-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+.menu-overlay.closing {
+  pointer-events: none;
+}
+
+.menu-overlay.closing .menu {
+  animation: menu-out 0.13s ease forwards;
+}
+
 .menu-item {
   width: 100%;
   min-height: 34px;
@@ -1294,4 +1311,94 @@ body.is-maximized .resize-handle,
 body.is-fullscreen .resize-handle,
 .no-titlebar .resize-handle {
   display: none;
+}
+
+/* ------------------------------------------------------------ 动效 */
+
+/* 页面入场：路由切换时整页淡入并轻微上移。
+   填充模式一律用 backwards 而不是 both/forwards —— 后者会让 transform 常驻，
+   页面里任何 position: fixed 的后代（控制条、悬浮层）都会改按这个元素定位。
+   backwards 只在动画播放期间生效，结束的一帧回到 none，视觉上没有跳变。 */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 返回上一层时从上方落下来，方向感才对得上「往回退」。 */
+@keyframes page-in-back {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-enter {
+  animation: page-in 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.page-enter.back {
+  animation-name: page-in-back;
+}
+
+/* 卡片逐张浮起。只给前 10 张排队，后面的本来就在屏幕外，同时出现也看不出来。
+   delay 只作用在 backwards 填充的首帧上，所以第 11 张不会整体往后拖。
+   骨架卡片排除在外：它自己已经有 shimmer 在动，再浮一次会显得页面在抖。 */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+
+.room-grid > .room-card:not(.skeleton-card) {
+  animation: card-in 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.room-grid > .room-card:not(.skeleton-card):nth-child(2) { animation-delay: 0.025s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(3) { animation-delay: 0.05s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(4) { animation-delay: 0.075s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(5) { animation-delay: 0.1s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(6) { animation-delay: 0.125s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(7) { animation-delay: 0.15s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(8) { animation-delay: 0.175s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(9) { animation-delay: 0.2s; }
+.room-grid > .room-card:not(.skeleton-card):nth-child(10) { animation-delay: 0.225s; }
+
+/* 关注页自己造卡片容器（网格/列表两种视图），结构跟 room-grid 不一样，
+   只统一做淡入不排队——这两处的卡片数量由用户关注数决定，排到第几十张
+   反而会拖成长龙，一起浮上来更利落。 */
+.follow-grid > .follow-card,
+.follow-list-view > .follow-card {
+  animation: card-in 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+/* 触屏上没有 hover，卡片按下去要有一点「压下去」的回馈，
+   否则点完到跳转之间那两百毫秒完全没反应。 */
+.room-card:active {
+  transform: scale(0.985);
+}
+
+/* 用户开了「减弱动态效果」就把所有装饰性动画关掉。
+   用 0.01ms 而不是 0，是因为部分 WebView 对 animation: none 的元素
+   不会触发 animationend，靠它收尾的逻辑会卡住。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

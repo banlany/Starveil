@@ -292,10 +292,16 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
     });
     menu.appendChild(button);
   }
+  let closed = false;
   const close = () => {
-    overlay.remove();
+    if (closed) return;
+    closed = true;
     document.removeEventListener('mousedown', outside, true);
     document.removeEventListener('keydown', onKey);
+    // 先播退场再摘节点。closing 同时把这个 overlay 排除在「有菜单打开」的
+    // 判断之外，否则这 140ms 里按返回键会被当成「先关菜单」白吃一次操作。
+    overlay.classList.add('closing');
+    setTimeout(() => overlay.remove(), 140);
   };
   const outside = (event) => {
     if (!menu.contains(event.target)) close();

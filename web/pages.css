@@ -1246,6 +1246,23 @@
 
 /* ------------------------------------------------------------ 观看统计 */
 
+/* 分段控件切内容时的淡入：记录/统计、时间范围都是整块重建，硬换太突兀。
+   填充用 backwards，动画结束立刻把 transform 还回去，避免影响内部 sticky 元素。 */
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pane-in {
+  animation: pane-in 0.2s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
 /* 分段控件：观看记录/统计、本周/本月/今年/全部 共用。 */
 .segmented {
   display: inline-flex;

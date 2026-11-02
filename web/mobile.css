@@ -138,6 +138,11 @@ html.is-mobile .rail-btn .ico {
     background: var(--surface-3);
     color: var(--fg);
   }
+
+  /* 菜单项按下去先给底色，不用等菜单关掉才知道点中了哪一行。 */
+  html.is-mobile .menu-item:active {
+    background: var(--surface-3);
+  }
 }
 
 /* ------------------------------------------------------------ 顶栏 */
@@ -542,10 +547,11 @@ html.is-mobile .pull-refresh {
 }
 
 /* ------------------------------------------------------------ 左右滑动翻页 */
-/* 切完页给新内容一个极轻的淡入，免得看起来像「闪了一下」。
+/* 切完页给聊天栏一个极轻的淡入，免得看起来像「闪了一下」。
+   ｜ 整页切换（首页/分类页切平台）的入场已经由 styles.css 的 .page-enter 统一处理，
+   这里只管直播间内部切聊天标签——它不重建页面，蹭不到那条动画。
    只用 opacity，不动 transform：#view 里可能有 position: fixed 的浮层，
    transform 会让它们改成相对 #view 定位。 */
-html.is-mobile .view.swipe-in,
 html.is-mobile .chat-list.swipe-in {
   animation: swipe-fade 0.18s ease;
 }

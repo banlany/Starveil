@@ -717,7 +717,7 @@ function paintHistory(content, ctx) {
   let range = 'week';
   let shown = 120;
 
-  const paint = () => {
+  const paint = ({ animate = true } = {}) => {
     content.innerHTML = '';
     content.appendChild(
       segmented(
@@ -734,6 +734,12 @@ function paintHistory(content, ctx) {
     );
     if (view === 'stats') paintStats();
     else paintRecords();
+    if (!animate) return;
+    // 切换「记录/统计」、清空后重画，内容整块是重建的，硬换很突兀。
+    // 重放同一个 class 才能让动画重新跑一次（浏览器只在 class 新出现时触发）。
+    content.classList.remove('pane-in');
+    void content.offsetWidth;
+    content.classList.add('pane-in');
   };
 
   function paintRecords() {
@@ -851,7 +857,8 @@ function paintHistory(content, ctx) {
     content.appendChild(actions);
   }
 
-  paint();
+  // 首次进来不额外淡入：页面本身已经有入场动画，叠两层反而显得慢。
+  paint({ animate: false });
 }
 
 /// 分段控件：设置页里「记录/统计」「本周/本月…」都用它，样式见 pages.css 的 .segmented。
