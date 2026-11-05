@@ -89,18 +89,31 @@ export function renderRoom(ctx, params = {}) {
           </div>
         </div>
         <div class="player-controls" id="player-controls">
-          <div class="volume-wrap">
-            <button class="ctrl" id="ctrl-volume" title="静音">${icon('volume', 21)}</button>
-            <input type="range" id="volume-range" min="0" max="100" value="80" />
+          <!-- 三段式：音量钉在最左、全屏钉在最右，中间那截自己收。
+               以前是一整排 flex，画质写着「1080p60」这类长档位时，
+               右边一组会整体被顶出可视区，全屏按钮只剩半个。 -->
+          <div class="pc-side pc-left">
+            <div class="volume-wrap" id="volume-wrap">
+              <button class="ctrl" id="ctrl-volume" title="静音">${icon('volume', 21)}</button>
+              <!-- 音量条：桌面靠 hover 在按钮右侧展开，手机上改为按钮上方的浮层
+                   （见 mobile.css 的 .volume-pop），不再把右边的控件挤走。 -->
+              <div class="volume-pop">
+                <input type="range" id="volume-range" min="0" max="100" value="80" aria-label="音量" />
+              </div>
+            </div>
           </div>
-          <span class="clock" id="player-clock">--:--:--</span>
-          <span class="ctrl-spacer"></span>
-          <button class="ctrl-text" id="ctrl-quality">原画 ${icon('chevronUp', 13)}</button>
-          <button class="ctrl-text" id="ctrl-line">线路 1 ${icon('chevronUp', 13)}</button>
-          <button class="ctrl" id="ctrl-danmaku" title="弹幕开关">${icon('danmaku', 21)}</button>
-          <button class="ctrl" id="ctrl-settings" title="弹幕与播放设置">${icon('settings', 20)}</button>
-          <button class="ctrl" id="ctrl-pip" title="画中画">${icon('screen', 20)}</button>
-          <button class="ctrl" id="ctrl-fullscreen" title="全屏（F / 双击画面）">${icon('fullscreen', 21)}</button>
+          <div class="pc-mid" id="pc-mid">
+            <span class="clock" id="player-clock">--:--:--</span>
+            <span class="ctrl-spacer"></span>
+            <button class="ctrl-text" id="ctrl-quality"><span class="ctrl-label" id="ctrl-quality-label">原画</span> ${icon('chevronUp', 13)}</button>
+            <button class="ctrl-text" id="ctrl-line"><span class="ctrl-label" id="ctrl-line-label">线路 1</span> ${icon('chevronUp', 13)}</button>
+            <button class="ctrl" id="ctrl-danmaku" title="弹幕开关">${icon('danmaku', 21)}</button>
+            <button class="ctrl" id="ctrl-settings" title="弹幕与播放设置">${icon('settings', 20)}</button>
+            <button class="ctrl" id="ctrl-pip" title="画中画">${icon('screen', 20)}</button>
+          </div>
+          <div class="pc-side pc-right">
+            <button class="ctrl" id="ctrl-fullscreen" title="全屏（F / 双击画面）">${icon('fullscreen', 21)}</button>
+          </div>
           <div class="live-progress"></div>
         </div>
       </div>
@@ -150,7 +163,11 @@ export function renderRoom(ctx, params = {}) {
   const hint = $('stage-hint');
   const clock = $('player-clock');
   const volumeRange = $('volume-range');
+  const volumeWrap = $('volume-wrap');
   const playerControls = $('player-controls');
+  // 控制条中间那一段（时间/画质/线路/弹幕/设置/小窗）。宽度不够时收的是这里的内容，
+  // 两端的音量与全屏永远不动。
+  const pcMid = $('pc-mid');
   const roomTopbar = $('room-topbar');
   const chatList = $('chat-list');
   const chat = $('room-chat');
@@ -234,6 +251,10 @@ export function renderRoom(ctx, params = {}) {
   // 竖屏（手机上竖着拿）控制条放不下全部控件，但不是一刀切全藏起来：
   // 按「线路 → 画质 → 时间」的优先级逐级收起，后面的越常用、越晚收。
   // 收起来的项在「更多」菜单里始终有入口（showMoreMenu 无条件显示）。
+  //
+  // 量的是中间那一段（.pc-mid）：两端的音量与全屏是钉死的，中间塞不下只影响中间，
+  // 绝不会像以前那样把全屏顶到屏幕外。画质/线路的文字放在 .ctrl-label 里，
+  // 真的没地方时先允许它缩写（省略号），再由下面的循环整项收起。
   const portraitQuery = window.matchMedia('(orientation: portrait)');
   const CONTROL_FADE = [
     ['ctrl-hide-line', 'ctrl-line'],
@@ -243,11 +264,11 @@ export function renderRoom(ctx, params = {}) {
 
   function applyControlDensity() {
     for (const [cls] of CONTROL_FADE) page.classList.remove(cls);
-    if (!IS_MOBILE || !playerControls.clientWidth) return;
+    if (!IS_MOBILE || !pcMid.clientWidth) return;
     // spacer 会先吃掉多余空间，真的塞不下时 scrollWidth 才会超出 clientWidth，
     // 每收一项就重新量一次，刚好放得下就停手。
     for (const [cls] of CONTROL_FADE) {
-      if (playerControls.scrollWidth <= playerControls.clientWidth + 1) break;
+      if (pcMid.scrollWidth <= pcMid.clientWidth + 1) break;
       page.classList.add(cls);
     }
   }
@@ -255,13 +276,32 @@ export function renderRoom(ctx, params = {}) {
   // ------------------------------------------------------------ 基础 UI
 
   // 从直播间进入另一个直播间时，返回应该回到一级界面，而不是回到上一个直播间。
-  $('room-back').addEventListener('click', () => ctx.exitRoom());
-  $('ctrl-volume').addEventListener('click', toggleMute);
+  // 全屏（桌面 Fullscreen API / 安卓剧场模式）时先退全屏：这个位置在用户眼里
+  // 就是「退一层」，直接退出直播间太粗暴，也容易误触。
+  $('room-back').addEventListener('click', () => {
+    if (isPlayerFullscreen()) {
+      exitPlayerFullscreen();
+      return;
+    }
+    ctx.exitRoom();
+  });
+  // 音量：桌面是「点=静音、悬停展开滑条」；手机没有 hover，点一下在按钮**上方**
+  // 弹出竖直滑条（再点收起），拖动时不再像以前那样把右边的控件挤出去。
+  $('ctrl-volume').addEventListener('click', () => {
+    if (IS_MOBILE) {
+      setVolumePop(!volumeWrap.classList.contains('is-open'));
+      return;
+    }
+    toggleMute();
+  });
+  // 点别处收起音量浮层。用捕获阶段，免得被控制条/画面上的别的处理截走。
+  document.addEventListener('pointerdown', onVolumeOutside, true);
   volumeRange.addEventListener('input', () => {
     video.volume = Number(volumeRange.value) / 100;
     video.muted = video.volume === 0;
     session.lastVolume = video.volume || 0.8;
     updateVolumeIcon();
+    wake();
   });
   // 注意：这两个函数带默认参数（anchor = 控制条按钮），直接当监听器用会把 Event
   // 当成 anchor 传进去，`anchor.getBoundingClientRect` 抛 TypeError，表现就是「点了没反应」。
@@ -314,9 +354,10 @@ export function renderRoom(ctx, params = {}) {
       // 全屏（桌面 Fullscreen API / 安卓剧场模式）时聊天栏已隐藏，即使视频正在缓冲
       // 也要让顶部浮层和底部控制条自动收起，不然暂停在广告画面上就是两块常驻黑条。
       const canHide =
-        document.fullscreenElement ||
-        page.classList.contains('is-theater') ||
-        (!video.paused && !session.chatCollapsed);
+        !volumeWrap.classList.contains('is-open') &&
+        (document.fullscreenElement ||
+          page.classList.contains('is-theater') ||
+          (!video.paused && !session.chatCollapsed));
       if (canHide && !document.querySelector('.menu-overlay:not(.closing)')) {
         page.classList.add('ui-idle');
       }
@@ -1134,6 +1175,8 @@ export function renderRoom(ctx, params = {}) {
       page.classList.remove('ui-idle');
       renderChatTab();
     }
+    // 收起/展开聊天栏会改画面宽度（横屏与平板），控制条放不放得下要重新算。
+    requestAnimationFrame(applyControlDensity);
   }
 
   // ------------------------------------------------------------ 聊天栏宽度
@@ -1239,8 +1282,12 @@ export function renderRoom(ctx, params = {}) {
     // 线路标签带上协议：用户能一眼看出当前是 FLV 还是 HLS，排查问题也省得猜。
     const line = session.lines[session.lineIndex];
     const suffix = line?.protocol === 'hls' ? ' · HLS' : '';
-    $('ctrl-quality').innerHTML = `${escapeHtml(quality || '清晰度')} ${icon('chevronUp', 13)}`;
-    $('ctrl-line').innerHTML = `线路 ${session.lineIndex + 1}${suffix} ${icon('chevronUp', 13)}`;
+    // 只改文字，不动按钮里的箭头图标；文字单独一层才做得出省略号。
+    $('ctrl-quality-label').textContent = quality || '清晰度';
+    $('ctrl-line-label').textContent = `线路 ${session.lineIndex + 1}${suffix}`;
+    // 档位名长短差很多（「原画」→「1080p60」），标签一长就可能把中间那段挤爆。
+    // 换完文字立刻重量一次，够不够放得下按新的宽度判断。
+    applyControlDensity();
   }
 
   function showQualityMenu(anchor = $('ctrl-quality'), placement = 'top') {
@@ -1645,8 +1692,40 @@ export function renderRoom(ctx, params = {}) {
     volumeRange.value = String(Math.round((muted ? 0 : video.volume) * 100));
   }
 
+  /// 手机上的音量浮层开关（桌面不用，靠 :hover）。
+  function setVolumePop(open) {
+    volumeWrap.classList.toggle('is-open', Boolean(open));
+    $('ctrl-volume').classList.toggle('active', Boolean(open));
+  }
+
+  /// 点浮层外面收起音量条；点按钮自己不算「外面」，否则一次点击会被这里先关掉。
+  function onVolumeOutside(event) {
+    if (!volumeWrap.classList.contains('is-open')) return;
+    if (volumeWrap.contains(event.target)) return;
+    setVolumePop(false);
+  }
+
   function updatePlayIcon() {
     page.classList.toggle('is-paused', video.paused);
+  }
+
+  /// 当前是不是「铺满画面」的状态。
+  ///
+  /// 桌面上是浏览器 Fullscreen API（document.fullscreenElement），安卓 WebView 不支持它，
+  /// 走的是 CSS 剧场模式（html.is-theater）。这两条路的判断以前散在各处，
+  /// 「全屏里点设置 → 弹幕设置没反应」「全屏按返回直接退出直播间」都是只看
+  /// document.fullscreenElement 造成的——安卓上它永远是 null。
+  function isPlayerFullscreen() {
+    return Boolean(document.fullscreenElement) || page.classList.contains('is-theater');
+  }
+
+  /// 退出铺满状态（不离开直播间）。
+  function exitPlayerFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+      return;
+    }
+    if (page.classList.contains('is-theater')) setTheater(false);
   }
 
   /// 安卓的「全屏」。
@@ -1659,6 +1738,9 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('is-theater', active);
     document.documentElement.classList.toggle('is-theater', active);
     $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
+    // 顶部返回按钮在全屏里表示「退全屏」，标题跟着改，免得点了才发现不是退出直播间。
+    const back = $('room-back');
+    back.title = active ? '退出全屏' : '返回';
     api.setImmersive(active).catch(() => {});
     const setting = state.settings.appearance?.orientation || 'auto';
     const target = active ? (setting === 'portrait' ? 'portrait' : 'landscape') : setting;
@@ -2144,7 +2226,10 @@ export function renderRoom(ctx, params = {}) {
         label: '弹幕设置',
         icon: 'text',
         onClick: () => {
-          if (document.fullscreenElement) {
+          // 铺满状态（桌面全屏 / 安卓剧场）下聊天栏是隐藏的，切到聊天栏的「设置」标签
+          // 用户什么也看不到——以前判的是 document.fullscreenElement，安卓上恒为 null，
+          // 于是全屏里点这一项就是「没反应」。两种全屏都走弹窗。
+          if (isPlayerFullscreen()) {
             openDanmakuSettingsModal();
           } else {
             setChatCollapsed(false);
@@ -2469,8 +2554,14 @@ export function renderRoom(ctx, params = {}) {
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
     if (event.key === 'Escape') {
+      // 桌面全屏交给浏览器自己处理 Esc（它会退出 Fullscreen API）。
       if (document.fullscreenElement) return;
       event.preventDefault();
+      // 安卓剧场模式没有浏览器那一层，Esc（外接键盘）自己退全屏，别一把退出直播间。
+      if (page.classList.contains('is-theater')) {
+        setTheater(false);
+        return;
+      }
       ctx.exitRoom();
       return;
     }
@@ -2503,6 +2594,7 @@ export function renderRoom(ctx, params = {}) {
     const active = Boolean(document.fullscreenElement);
     page.classList.toggle('is-fullscreen', active);
     $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
+    $('room-back').title = active ? '退出全屏' : '返回';
     if (!active) page.classList.remove('ui-idle');
     wake();
     if (active) {
@@ -2568,6 +2660,7 @@ export function renderRoom(ctx, params = {}) {
     session.resizerCleanup = null;
     video.removeEventListener('timeupdate', purgeExpiredSc);
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('pointerdown', onVolumeOutside, true);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     window.removeEventListener('resize', onControlResize);
     portraitQuery.removeEventListener?.('change', onControlResize);

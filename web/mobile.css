@@ -349,14 +349,63 @@ html.is-mobile .chat-resizer {
     padding: 6px 10px 8px;
   }
 
+  html.is-mobile .room-page .player-controls .pc-side,
+  html.is-mobile .room-page .player-controls .pc-mid {
+    gap: 2px;
+  }
+
   html.is-mobile .room-page .player-controls .ctrl {
     width: 40px;
     height: 40px;
   }
 
-  /* 音量条在窄屏上收窄，给其余按钮留位置。 */
-  html.is-mobile .room-page .volume-wrap input[type='range'] {
-    max-width: 64px;
+  /* 档位名最长给到 5 个字左右（「1080p60」放得下，「蓝光 4M · HLS」会缩写），
+     再长就让省略号收尾——绝不让文字把中间那段撑爆。 */
+  html.is-mobile .room-page .player-controls .ctrl-label {
+    max-width: 4.6em;
+  }
+
+  /* 音量条在窄屏上不再往右展开（那会把右边的按钮顶出去），
+     改成按钮正上方的竖条浮层，点按钮开关、点别处自动收起。 */
+  html.is-mobile .room-page .volume-wrap {
+    position: relative;
+    gap: 0;
+  }
+
+  html.is-mobile .room-page .volume-wrap .volume-pop {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    width: 44px;
+    height: 112px;
+    border-radius: 22px;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 收起时整块不可点也不可见，但仍然留着做过渡；不占布局（absolute）。 */
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(6px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+    z-index: 9;
+  }
+
+  html.is-mobile .room-page .volume-wrap.is-open .volume-pop {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* 竖直滑条：range 转 -90° 比 writing-mode 兼容性好（老 WebView 也认）。 */
+  html.is-mobile .room-page .volume-wrap .volume-pop input[type='range'] {
+    width: 92px;
+    max-width: none;
+    margin: 0;
+    opacity: 1;
+    transform: rotate(-90deg);
   }
 }
 

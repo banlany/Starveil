@@ -509,7 +509,12 @@ function handleAndroidBack() {
     modal.querySelector('.modal-close')?.click();
     return;
   }
-  if (document.documentElement.classList.contains('is-theater')) {
+  // 全屏先退全屏，别一把退出直播间。两处都判：类挂在 <html>（布局用）和
+  // .room-page（room.js 自己判断状态用）上，只认一处时漏一个就退错层。
+  if (
+    document.documentElement.classList.contains('is-theater') ||
+    document.querySelector('.room-page.is-theater')
+  ) {
     window.dispatchEvent(new CustomEvent('simple-live:exit-theater'));
     return;
   }

@@ -294,6 +294,24 @@
   flex: none;
 }
 
+/* 三段式布局：音量钉左、全屏钉右，中间 `.pc-mid` 自己收。
+   中间这段允许被压缩（min-width:0），所以画质档位再长也顶不动两端的按钮。 */
+.player-controls .pc-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.player-controls .pc-mid {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .player-controls .ctrl:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.12);
@@ -323,6 +341,15 @@
   color: #fff;
 }
 
+/* 档位名单独一层：文字才做得出省略号（按钮本身是 inline-flex，直接截断没用）。
+   宽度上限在 mobile.css 里给，桌面空间够，不设限。 */
+.player-controls .ctrl-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .player-controls .clock {
   color: rgba(255, 255, 255, 0.68);
   font-size: 12px;
@@ -335,6 +362,13 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* 音量条的容器：桌面是内联的（hover 时按钮右侧展开），
+   手机上整体改成按钮上方的浮层，见 mobile.css。 */
+.volume-pop {
+  display: flex;
+  align-items: center;
 }
 
 .volume-wrap input[type="range"] {

@@ -5,12 +5,14 @@ import { collectAccounts, followKey, loadFollow, recentVisitCounts, removeFollow
 import { IS_MOBILE } from '../platform.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
-/// 上次刷新完成的时间。
+/// 「进入页面自动刷新」的防循环标记。
 ///
-/// 刷新结束会 `ctx.go('follow')` 重进本页，「进入页面自动刷新」如果只看开关，
-/// 就会变成刷新→重进→再刷新 的死循环。所以 5 分钟内只自动刷一次。
-const AUTO_REFRESH_COOLDOWN = 5 * 60 * 1000;
-let lastRefreshFinishedAt = 0;
+/// 刷新结束会 `ctx.go('follow')` 重进本页，如果只看开关，就会变成
+/// 刷新 → 重进 → 再刷新 的死循环。原来靠「5 分钟内只自动刷一次」压这个循环，
+/// 副作用是 5 分钟内**再次真正进入关注页也不刷了**，看起来就是「只会刷新一次」。
+/// 现在改成显式标记：只有本页自己触发的重建（刷新完成、改标签、取关）才跳过，
+/// 用户从别处进来的每一次都照常自动刷。
+let skipAutoRefreshOnce = false;
 
 export function renderFollow(ctx) {
   const page = document.createElement('section');
@@ -302,6 +304,8 @@ export function renderFollow(ctx) {
   }
 
   function refresh() {
+    // 改标签、取消关注这类操作之后的自我重建，不算「用户进入页面」。
+    skipAutoRefreshOnce = true;
     ctx.go('follow');
   }
 
@@ -410,10 +414,10 @@ export function renderFollow(ctx) {
       );
     }
     refreshing = false;
-    lastRefreshFinishedAt = Date.now();
     if (!alive) return;
     button?.classList.remove('is-loading');
     toast('关注直播状态已刷新', 'success');
+    skipAutoRefreshOnce = true;
     ctx.go('follow');
   }
 
@@ -439,11 +443,10 @@ export function renderFollow(ctx) {
   document.getElementById('view').appendChild(page);
   renderAll();
   // 设置里打开「进入页面自动刷新」才自动拉一次；默认关闭，手动刷是主路径。
-  if (
-    state.settings.follow?.autoRefresh &&
-    follows.length &&
-    Date.now() - lastRefreshFinishedAt > AUTO_REFRESH_COOLDOWN
-  ) {
+  // 每次真正进入本页都会刷（以前被 5 分钟冷却压成「只刷一次」）。
+  const skipAutoRefresh = skipAutoRefreshOnce;
+  skipAutoRefreshOnce = false;
+  if (state.settings.follow?.autoRefresh && follows.length && !skipAutoRefresh) {
     // 放到下一帧再发请求：页面已经挂上，用户能先看到列表和刷新图标转起来。
     requestAnimationFrame(() => {
       if (alive) refreshFollowStatus();
