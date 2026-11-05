@@ -107,7 +107,9 @@ export const DEFAULT_SETTINGS = {
     opacity: 95,
     stroke: true,
     strokeWidth: 2,
-    fps: 60,
+    // 帧率上限：0 = 跟随屏幕（默认）。高刷屏上弹幕跟着刷新率走最顺；
+    // 觉得费电或有卡顿再降到 60/30——抽帧是按 vsync 计数做的，降下来也是均匀的。
+    fps: 0,
     emoji: true,
     // 大表情（B 站收藏集那类只能单独发送的）占几行：1~5，1 行 = 一个弹幕轨道高。
     // 行数既决定画多大，也决定轨道算法给它留几条轨道（弹幕层会按它抬高 maxGrade），

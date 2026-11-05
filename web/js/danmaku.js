@@ -50,30 +50,35 @@ export const BIG_EMOJI_LINE_OPTIONS = [1, 2, 3, 4, 5];
 const DEFAULT_BIG_EMOJI_LINES = 2;
 
 /// 性能档位：只改**绘制成本**与实例上限，不动用户设定的字号、颜色、区域。
-/// canvas 上最贵的是阴影和描边，所以档位越高越倾向把它们关掉；
-/// DPR 是第二贵的因素（画布面积按 dpr² 增长），极速档把它压到 1；
+/// canvas 上最贵的是描边，所以档位越高越倾向把它关掉；
+/// DPR 是第二贵的因素（画布面积按 dpr² 增长），极速档把它压到 1.25；
 /// sendScale < 1 表示「发送间隔放大」，档位越高每秒进的弹幕越少，绘制压力更小。
+///
+/// **阴影一律不开**（以前「平衡」档是 shadowBlur 2）。两个原因：
+/// 一是库会把 shadow* 常驻在绘制上下文上，于是每帧每个 drawImage 都要过一次
+/// 高斯模糊；二是弹幕走的是「预渲染成位图再贴」的路径，模糊在生成位图时已经烘进去
+/// 一次，贴在画布上再来一遍等于双份。实测关掉省 30% 单帧绘制时间，字也更干净。
 ///
 /// 移动端默认就把 DPR 压到 2：安卓手机的 devicePixelRatio 常见 2.75~3，
 /// 而库每帧要「清离屏画布 → 画弹幕 → 清主画布 → 整屏合成」，
 /// 填充量按 dpr² 走，3 降到 2 直接省掉一半多，20px 的字在 2 倍下依然锐利。
 const PERF_PROFILES = {
-  balanced: { maxStored: 1500, dprCap: IS_MOBILE ? 2 : 0, shadowBlur: 2, minSpace: 26, sendScale: 1, noStroke: false },
-  smooth: { maxStored: 1000, dprCap: 1.75, shadowBlur: 0, minSpace: 22, sendScale: 0.8, noStroke: false },
-  ultra: { maxStored: 700, dprCap: 1.25, shadowBlur: 0, minSpace: 18, sendScale: 0.6, noStroke: true },
+  balanced: { maxStored: 1500, dprCap: IS_MOBILE ? 2 : 0, minSpace: 26, sendScale: 1, noStroke: false },
+  smooth: { maxStored: 1000, dprCap: 1.75, minSpace: 22, sendScale: 0.8, noStroke: false },
+  ultra: { maxStored: 700, dprCap: 1.25, minSpace: 18, sendScale: 0.6, noStroke: true },
 };
 
 /// 性能档位与帧率上限的选项表。
 /// 设置页与直播间弹幕设置弹层都从这里取，避免两处各写一份导致取值/文案不一致。
 export const PERF_OPTIONS = [
-  { value: 'balanced', label: '平衡（默认）', desc: '保留阴影与描边' },
-  { value: 'smooth', label: '流畅', desc: '关阴影，降低画布精度' },
+  { value: 'balanced', label: '平衡（默认）', desc: '保留描边' },
+  { value: 'smooth', label: '流畅', desc: '降低画布精度' },
   { value: 'ultra', label: '极速', desc: '再关描边，每秒进入的弹幕更少' },
 ];
 
 export const FPS_OPTIONS = [
   { value: 0, label: '跟随屏幕', desc: '不限制重绘频率' },
-  { value: 60, label: '60 帧', desc: '常规上限' },
+  { value: 60, label: '60 帧', desc: '按屏幕刷新率间隔抽帧' },
   { value: 30, label: '30 帧', desc: '省电档' },
 ];
 
@@ -234,6 +239,30 @@ export function createDanmakuLayer(container, video, config = null) {
     host.innerHTML = '';
   }
 
+  /// 把绘制位置吸附到**设备像素栅格**。
+  ///
+  /// 弹幕是一条条预渲染好的位图，每帧 `drawImage(bitmap, left, top, w, h)`。
+  /// 库给的位置是连续浮点，而画布上下文带一层 `scale(dpr)`，于是 `left * dpr`
+  /// 几乎每帧都落在小数设备像素上——Canvas 2D 对非整数目标会走双线性重采样，
+  /// 文字边缘的灰度因此逐帧变化。实测：落在半个设备像素上比整数位置边缘对比度低 11%，
+  /// 位置一路连续变化，观感就是**字一边移动一边轻微发虚/发毛**，
+  /// 越是慢速、细字越明显（这也是「画面不放卡，但弹幕看着不流畅」的主因之一）。
+  ///
+  /// 吸附后源位图与目标矩形是 1:1 整数像素，走的是快速 blit，边缘稳定不抖。
+  /// 代价是运动量化到 1 个设备像素（dpr 2 上等于 0.5 CSS px），
+  /// 弹幕每帧要走好几个设备像素，这点量化看不出来。
+  /// 库保证 `left` 每帧都会按当前进度重算，所以这里改写不会累积漂移。
+  function snapToDevicePixels({ br, barrage }) {
+    const dpr = Number(br?.dpr) || 1;
+    // 每帧位移不到 1.5 个设备像素时不要吸附：那种速度下量化会从「连续微抖」
+    // 变成「隔一帧跳 1 像素」，反而更难看。按 60fps 估最坏情况（帧率越低位移越大）。
+    // 滚动弹幕才带 speed，顶部/底部固定弹幕没有，它们不动，吸附一次就一直准。
+    const speed = Number(barrage?.speed);
+    if (Number.isFinite(speed) && speed > 0 && (speed * dpr) / 60 < 1.5) return;
+    if (typeof barrage?.left === 'number') barrage.left = Math.round(barrage.left * dpr) / dpr;
+    if (typeof barrage?.top === 'number') barrage.top = Math.round(barrage.top * dpr) / dpr;
+  }
+
   function build() {
     if (!Renderer) return;
     session.renderer = new Renderer({
@@ -242,6 +271,7 @@ export function createDanmakuLayer(container, video, config = null) {
       renderConfig: buildRenderConfig(),
       // 库把这份数组按引用存下来，之后 push 新表情不需要重建渲染器。
       barrageImages: session.images,
+      beforeBarrageRender: snapToDevicePixels,
     });
     session.sent = 0;
     primeTracks();
@@ -461,7 +491,7 @@ export function createDanmakuLayer(container, video, config = null) {
       height * Math.max(10, Math.min(100, Number(config.area) || 40)) / 100,
       Math.max(lineHeight, (Number(config.lines) || 10) * lineHeight)
     );
-    // 极速档无视用户的描边开关：描边 + 阴影是弹幕卡顿的主因。
+    // 极速档无视用户的描边开关：描边是剩下最贵的一项（阴影已经全局关掉）。
     const strokeWidth = perf.noStroke ? 0 : config.stroke ? Math.max(0, Number(config.strokeWidth) || 0) : 0;
     // 用户设定的「滚动速度」是**弹幕持续秒数**（越小越快）。
     // 固定时长模式：所有弹幕都用这段时间穿过画面，(画布宽 + 弹幕宽) / 时长 得到每条的速度，
@@ -484,10 +514,12 @@ export function createDanmakuLayer(container, video, config = null) {
       lineCap: 'round',
       lineJoin: 'round',
       miterLimit: 10,
-      shadowColor: 'rgba(0, 0, 0, 0.45)',
-      shadowBlur: strokeWidth > 0 ? perf.shadowBlur : 0,
+      // 阴影一律关（见 PERF_PROFILES 的说明）。这里显式写成 0 而不是省略字段：
+      // 库会把这几个值直接赋给 ctx.shadow*，缺字段会赋成 undefined。
+      shadowColor: 'rgba(0, 0, 0, 0)',
+      shadowBlur: 0,
       shadowOffsetX: 0,
-      shadowOffsetY: 1,
+      shadowOffsetY: 0,
     };
   }
 
@@ -515,37 +547,48 @@ export function createDanmakuLayer(container, video, config = null) {
   /// 帧率上限：库的渲染循环是裸 rAF，没有节流开关，这里包一层 `_render`。
   /// 跳帧时必须自己把下一帧排上，否则链条会断（续帧写在原函数末尾）。
   ///
-  /// 判定要留余量：60Hz 屏的 rAF 间隔本来就在 16.67ms 上下抖，若写成
-  /// 「小于 interval 就跳过」，几乎每帧都会被判成太早，于是隔一帧画一次，
-  /// 实际帧率掉到一半（60 档变 30、30 档变 20，看着就是「一卡一卡」）。
-  /// 留 1/4 帧容差后，与屏幕同频的档位是满帧，跨档位（120Hz 屏选 60）才真正抽帧。
+  /// **按帧计数，不按时间阈值**。旧实现是「距上次绘制不足 0.75 个间隔就跳过」，
+  /// 表面上能到目标帧率，实际步长是「16.7ms、16.7ms、25ms」这种不均匀序列——
+  /// 位置是按真实时间算的，步长一不均，弹幕就是一顿一顿地往前挪。
+  /// 现在改成先量出屏幕的刷新周期，再算「每隔几个 vsync 画一次」：
+  /// 120Hz 屏选 60 → 严格每 2 帧画一次，每步都是 16.67ms，均匀。
+  /// 刷新率与目标不整除时（90Hz 选 60）只能取最接近的整数倍，45 帧，
+  /// 但仍然是均匀的——均匀的 45 比忽快忽慢的 60 看着顺。
   function applyFrameLimit() {
     const renderer = session.renderer;
     if (!renderer) return;
-    const fps = Number((session.config || FALLBACK_CONFIG).fps) || 0;
-    if (!fps) {
-      // 跟随屏幕：把包过的函数还原成原型上的原版。
-      if (renderer.__starveilRender) {
-        try {
-          delete renderer._render;
-        } catch {
-          /* 忽略 */
-        }
-      }
-      return;
-    }
     const original = renderer.__starveilRender || renderer._render;
     renderer.__starveilRender = original;
-    const interval = 1000 / Math.max(10, fps);
-    const threshold = interval * 0.75;
-    let last = 0;
-    renderer._render = function throttledRender() {
+    const fps = Number((session.config || FALLBACK_CONFIG).fps) || 0;
+    const interval = fps >= 10 ? 1000 / fps : 0;
+    // 刷新周期用 rAF 间隔的滑动平均来估：rAF 回调紧跟 vsync，间隔就是刷新周期。
+    // 不用「取最小间隔」——主线程偶尔挤一下会把个别间隔压短，最小值一偏低就会
+    // 多抽一帧。平均更稳，而且万一估大了只是多画几帧，不会少画。
+    let period = 0;
+    let lastCall = 0;
+    let skip = 0;
+    renderer._render = function limitedRender() {
       const now = performance.now();
-      if (now - last < threshold) {
-        requestAnimationFrame(() => this._render());
-        return;
+      if (!interval) {
+        lastCall = now;
+        return original.call(this);
       }
-      last = now;
+      if (lastCall) {
+        const delta = now - lastCall;
+        if (delta > 0 && delta < 100) period = period ? period * 0.8 + delta * 0.2 : delta;
+      }
+      lastCall = now;
+      // 还量不到刷新周期时先按 60Hz 估，抽帧逻辑不会因此跑偏太多。
+      const refresh = period || 1000 / 60;
+      const step = Math.max(1, Math.round(interval / refresh));
+      if (step > 1) {
+        skip += 1;
+        if (skip < step) {
+          requestAnimationFrame(() => this._render());
+          return;
+        }
+        skip = 0;
+      }
       return original.call(this);
     };
   }

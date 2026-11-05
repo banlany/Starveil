@@ -552,7 +552,7 @@ function detailSections(key, ctx, repaint) {
               type: 'select',
               key: 'danmaku.perf',
               title: '性能档位',
-              desc: '弹幕密集时卡顿就往下调：流畅档关阴影，极速档还会关描边并降低画布精度',
+              desc: '弹幕密集时卡顿就往下调：流畅档降低画布精度，极速档还会关描边并少放一些弹幕',
               valueMap: PERF_MAP,
             },
           ],
