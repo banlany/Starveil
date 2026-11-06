@@ -49,7 +49,7 @@ hls.js（HLS），协议层是 Rust 写的 [`live_core`](src-tauri/vendor/live_c
 
 | 桌面：自绘标题栏（深色） | 桌面：自绘标题栏（浅色） |
 | --- | --- |
-| ![标题栏深色](docs/img/titlebar-dark.png) | ![标题栏浅色](docs/img/titlebar-light.png) |
+| ![标题栏深色](docs/img/dark.png) | ![标题栏浅色](docs/img/light.png) |
 
 > 其余界面截图（登录、外观、弹幕参数等）见 [docs/img/](docs/img)。
 
