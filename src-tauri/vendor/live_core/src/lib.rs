@@ -26,6 +26,6 @@ pub use error::LiveError;
 pub use http::HttpSession;
 pub use model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
-    QualityData,
+    QualityData, QuerySign,
 };
 pub use site::{LiveCore, LiveSite};

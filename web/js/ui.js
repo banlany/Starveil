@@ -73,7 +73,7 @@ export function roomCard(room, options = {}) {
       <div class="cover-fallback"><span>${escapeHtml(title.slice(0, 18))}</span></div>
       <div class="cover-top">
         <span class="live-badge" title="${room.live === false ? '未开播' : '直播中'}">${platformIcon(platform, 17)}</span>
-        ${options.favorite ? `<button class="cover-fav${options.favorite(room) ? ' active' : ''}" title="收藏">${icon('heart', 15)}</button>` : ''}
+        ${options.favorite ? `<button class="cover-fav${options.favorite(room) ? ' active' : ''}" title="收藏">${icon('follow', 15)}</button>` : ''}
       </div>
     </div>
     <h3 class="room-title" title="${escapeHtml(title)}">${escapeHtml(title)}</h3>

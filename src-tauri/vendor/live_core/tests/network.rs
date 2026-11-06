@@ -20,7 +20,7 @@ fn 三站搜索都能返回结果() {
     for platform in Platform::ALL {
         let started = std::time::Instant::now();
         let items = core
-            .search(platform, "英雄联盟")
+            .search(platform, "英雄联盟", &Default::default())
             .unwrap_or_else(|error| panic!("{} 搜索失败：{error}", platform.name()));
         println!(
             "{} 搜索到 {} 条，耗时 {:?}",
@@ -77,7 +77,7 @@ fn 三站房间头可读() {
 fn b站与虎牙取流链路() {
     let core = core();
     for platform in [Platform::Bilibili, Platform::Huya] {
-        let items = core.search(platform, "英雄联盟").expect("搜索");
+        let items = core.search(platform, "英雄联盟", &Default::default()).expect("搜索");
         let mut done = false;
 
         for item in items.iter().take(8) {
@@ -120,7 +120,7 @@ fn b站与虎牙取流链路() {
 #[ignore]
 fn 斗鱼取流或给出降级提示() {
     let core = core();
-    let items = core.search(Platform::Douyu, "英雄联盟").expect("搜索");
+    let items = core.search(Platform::Douyu, "英雄联盟", &Default::default()).expect("搜索");
     for item in items.iter().take(8) {
         let Ok(detail) = core.detail(Platform::Douyu, &item.room_id) else {
             continue;

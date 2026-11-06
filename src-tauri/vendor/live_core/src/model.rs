@@ -277,3 +277,32 @@ impl PlayUrls {
         self
     }
 }
+
+/// 平台要求请求携带的动态签名。
+///
+/// 目前只有抖音用得上：它的 REST 接口（分区房间、搜索）要验 `a_bogus`，
+/// 而算法是一段只能在 JS 引擎里跑的脚本，所以由 WebView 侧算好后传进来。
+/// 其它平台收到空结构体，忽略即可。
+#[derive(Clone, Debug, Default)]
+pub struct QuerySign {
+    /// 抖音要求查询串里带一个 107 位的 `msToken`；它就是签名的一部分，
+    /// 必须和签名时的串一模一样，否则验签失败。
+    pub ms_token: String,
+    /// `a_bogus` 的值，签名脚本按「查询串」算出。
+    pub a_bogus: String,
+}
+
+impl QuerySign {
+    pub fn new(ms_token: impl Into<String>, a_bogus: impl Into<String>) -> Self {
+        Self {
+            ms_token: ms_token.into(),
+            a_bogus: a_bogus.into(),
+        }
+    }
+
+    /// 没有签名时返回 true。抖音会据此给出「需要签名」的明确错误，
+    /// 而不是抛一句看不懂的解析失败。
+    pub fn is_empty(&self) -> bool {
+        self.a_bogus.trim().is_empty()
+    }
+}

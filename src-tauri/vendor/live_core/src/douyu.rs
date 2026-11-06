@@ -9,7 +9,7 @@ use crate::error::LiveError;
 use crate::http::HttpSession;
 use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
-    QualityData, RoomExtra,
+    QualityData, QuerySign, RoomExtra,
 };
 use crate::site::LiveSite;
 use crate::util::{decode_entities, dig, hot_count, strip_tags, text, u32_of, u64_of};
@@ -300,7 +300,12 @@ impl LiveSite for DouyuSite {
         Platform::Douyu
     }
 
-    fn search(&self, http: &HttpSession, keyword: &str) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn search(
+        &self,
+        http: &HttpSession,
+        keyword: &str,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let value = http.get_json(
             "https://www.douyu.com/japi/search/api/searchShow",
             &[("kw", keyword), ("page", "1"), ("pageSize", "20")],
@@ -338,7 +343,12 @@ impl LiveSite for DouyuSite {
         parse_qualities(&value)
     }
 
-    fn recommend(&self, http: &HttpSession, page: u32) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn recommend(
+        &self,
+        http: &HttpSession,
+        page: u32,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let value = http.get_json(
             &format!("https://www.douyu.com/japi/weblist/apinc/allpage/6/{page}"),
             &[],
@@ -361,6 +371,7 @@ impl LiveSite for DouyuSite {
         http: &HttpSession,
         category: &LiveSubCategory,
         page: u32,
+        _sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let value = http.get_json(
             &format!(

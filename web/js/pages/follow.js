@@ -1,7 +1,8 @@
 // 关注页：本地关注列表、标签与平台筛选。
 import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
-import { collectAccounts, followKey, loadFollow, recentVisitCounts, removeFollow, restoreAccounts, saveFollow, state, updateFollow } from '../store.js';
+import { applyTheme, collectAccounts, followKey, loadFollow, loadLogin, recentVisitCounts, removeFollow, saveFollow, state, updateFollow } from '../store.js';
+import { importData } from '../importer.js';
 import { IS_MOBILE } from '../platform.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
@@ -204,7 +205,7 @@ export function renderFollow(ctx) {
     if (!follows.length) {
       body.replaceChildren(
         emptyState({
-          iconName: 'heart',
+          iconName: 'follow',
           title: '还没有关注的主播',
           text: '进入任意直播间，点一下关注；关注的主播会出现在这里，支持按平台和标签整理。',
           actionLabel: '去首页发现主播',
@@ -486,26 +487,32 @@ function importFollow(after) {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      if (Array.isArray(data.follows)) {
-        localStorage.setItem('simple-live.follow.v2', JSON.stringify(data.follows));
-      }
+      // 本页导出的文件把关键词屏蔽单独放在 `shield` 里（沿用 dart 的命名），
+      // importData 只认 settings.danmaku.blockKeywords / blockUsers，这里先搬过去。
       if (data.shield) {
         data.settings = data.settings || {};
         data.settings.danmaku = data.settings.danmaku || {};
         if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
         if (!data.settings.danmaku.blockUsers) data.settings.danmaku.blockUsers = data.shield.users || '';
       }
-      if (data.settings) {
-        localStorage.setItem('simple-live.settings.v2', JSON.stringify(data.settings));
+      // 走和「设置 → 数据同步 → 导入」同一条路（importData），不再自己往
+      // localStorage 里塞原文：旧写法既不合并、也不刷新内存里的 state，
+      // 还不把 Cookie 注回后端，导入完设置页显示的还是旧值、登录看着成功却是游客。
+      // importData 认得本页导出的文件（follows/history/accounts）和
+      // 设置页导出的包（follow/history/stats），两种都能吃。
+      const summary = importData(data);
+      for (const platform of summary.accounts || []) {
+        const login = loadLogin(platform);
+        if (login?.cookie) await api.setCookie(platform, login.cookie).catch(() => {});
       }
-      if (Array.isArray(data.history)) {
-        localStorage.setItem('simple-live.history.v2', JSON.stringify(data.history));
-      }
-      const restored = restoreAccounts(data.accounts);
-      toast(restored.length ? `导入成功（含 ${restored.length} 个平台登录信息）` : '导入成功，正在刷新…', 'success');
+      applyTheme();
+      const parts = [`关注 ${summary.follows} 个`];
+      if (summary.history) parts.push(`记录 ${summary.history} 条`);
+      if (summary.accounts?.length) parts.push(`${summary.accounts.length} 个平台登录`);
+      toast(`导入完成：${parts.join('，')}`, 'success');
       after?.();
     } catch (error) {
-      toast(`导入失败：${error}`, 'error');
+      toast(`导入失败：${error?.message || error}`, 'error');
     }
   });
   input.click();

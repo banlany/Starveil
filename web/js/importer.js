@@ -22,7 +22,7 @@ import {
   loadStats,
   merge,
   replaceSearchHistory,
-  replaceStats,
+  mergeStats,
   saveFollow,
   saveHistory,
   saveLogin,
@@ -35,6 +35,14 @@ const DART_SCHEMA = 'simple_live_profile';
 /// 中立包/备份的版本号，改结构时递增，导入侧按版本做兼容。
 /// v2 起补上了搜索历史与观看统计（v1 只有关注 / 记录 / 设置）。
 const BUNDLE_VERSION = 2;
+/// 清单里显示的平台名，只用于文案。真正决定带谁的是 store 的 ACCOUNT_PLATFORMS。
+const PLATFORM_LABELS = {
+  bilibili: '哔哩哔哩',
+  douyu: '斗鱼',
+  douyin: '抖音',
+  kuaishou: '快手',
+  huya: '虎牙',
+};
 
 /// 同步包里到底有什么、为什么有些东西不在里面。
 ///
@@ -48,7 +56,10 @@ export function bundleScope() {
   const included = ['设置（不含 WebDAV 口令）', '关注列表'];
   if (includeHistory) included.push('观看记录');
   included.push('搜索历史', '观看统计');
-  if (includeAccounts) included.push('登录 Cookie（哔哩哔哩 / 斗鱼）');
+  // 平台名从 ACCOUNT_PLATFORMS 派生：以前这里写死「哔哩哔哩 / 斗鱼」，
+  // 后来抖音、快手也能登录了，清单却还只写两个——用户会以为它们不进包。
+  const accountNames = ACCOUNT_PLATFORMS.map((platform) => PLATFORM_LABELS[platform] || platform).join(' / ');
+  if (includeAccounts) included.push(`登录 Cookie（${accountNames}）`);
 
   const excluded = [
     // 凭据：WebDAV 口令永远不进包，它本身是上传通道的钥匙。
@@ -445,14 +456,15 @@ function importBundle(data, options = {}) {
     settingsCount = Object.keys(patch).length;
   }
 
-  // 搜索历史与观看统计：只在包里带了这两段时才覆盖本机（v1 的包没有）。
+  // 搜索历史与观看统计：只在包里带了这两段时才动本机（v1 的包没有）。
+  // 统计走 mergeStats——按房间按天取大值，和观看记录一样「只增不减」。
   let searchCount = 0;
   if (Array.isArray(data.search)) {
     searchCount = replaceSearchHistory(data.search);
   }
   let statsCount = 0;
   if (data.stats && typeof data.stats === 'object') {
-    statsCount = replaceStats(data.stats);
+    statsCount = mergeStats(data.stats);
   }
 
   // 登录信息：本机备份走 options.accounts，同步包（用户开了「同步登录信息」才会有）

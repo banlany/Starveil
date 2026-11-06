@@ -1,4 +1,6 @@
 // Tauri 命令封装。浏览器里直接打开 web/ 时退化为演示数据，方便单独调样式。
+import { douyinMsToken, signDouyinQuery } from './douyin-sign.js';
+
 const TAURI = window.__TAURI__;
 const hasTauri = Boolean(TAURI?.core?.invoke);
 const invoke = hasTauri ? TAURI.core.invoke : null;
@@ -129,13 +131,32 @@ function listCall(command, args, platform) {
   return platform === 'huya' ? callWithRetry(command, args) : call(command, args);
 }
 
+// ---------------------------------------------------------------- 抖音列表签名
+//
+// 抖音的分区房间接口（首页推荐 / 分类房间共用）验 `a_bogus`，签名脚本只能在
+// WebView 里跑。查询串交给后端拼（`douyin_query`），保证「签名用的串」和
+// 「真正发出去的串」逐字符一致；前端只负责算 msToken 和签名值。
+async function douyinSign({ kind, page = 1, partition = '' }) {
+  // 浏览器演示模式（直接打开 web/）没有后端，签名拿不到查询串，直接跳过。
+  if (!invoke) return {};
+  const msToken = douyinMsToken();
+  const query = await call('douyin_query', { kind, partition, page, msToken });
+  const aBogus = await signDouyinQuery(query);
+  return { msToken, aBogus };
+}
+
 // ---------------------------------------------------------------- 命令
 
 export const api = {
-  recommend(platform, page = 1) {
+  async recommend(platform, page = 1) {
+    if (platform === 'douyin') {
+      const sign = await douyinSign({ kind: 'recommend', page });
+      return listCall('recommend', { platform, page, ...sign }, platform);
+    }
     return listCall('recommend', { platform, page }, platform);
   },
   search(platform, keyword) {
+    // 抖音搜索不需要 a_bogus（实测带了也一样），但要登录态。
     return listCall('search', { platform, keyword }, platform);
   },
   searchAnchors(platform, keyword, page = 1) {
@@ -144,7 +165,15 @@ export const api = {
   categories(platform) {
     return listCall('categories', { platform }, platform);
   },
-  categoryRooms(platform, parentId, subId, name, page = 1) {
+  async categoryRooms(platform, parentId, subId, name, page = 1) {
+    if (platform === 'douyin') {
+      const sign = await douyinSign({ kind: 'category', page, partition: subId });
+      return listCall(
+        'category_rooms',
+        { platform, parentId, subId, name, page, ...sign },
+        platform
+      );
+    }
     return listCall('category_rooms', { platform, parentId, subId, name, page }, platform);
   },
   async openRoom(platform, roomId) {

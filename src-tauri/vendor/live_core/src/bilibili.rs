@@ -10,7 +10,7 @@ use crate::error::LiveError;
 use crate::http::{HttpSession, check_code};
 use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
-    QualityData, RoomExtra,
+    QualityData, QuerySign, RoomExtra,
 };
 use crate::site::LiveSite;
 use crate::util::{absolute, dig, strip_tags, text, u32_of, u64_of};
@@ -410,7 +410,12 @@ impl LiveSite for BilibiliSite {
         Platform::Bilibili
     }
 
-    fn search(&self, http: &HttpSession, keyword: &str) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn search(
+        &self,
+        http: &HttpSession,
+        keyword: &str,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let cookie = self.cookie_header(http)?;
         let value = http.get_json(
             "https://api.bilibili.com/x/web-interface/search/type",
@@ -489,7 +494,12 @@ impl LiveSite for BilibiliSite {
         parse_qualities(&playurl)
     }
 
-    fn recommend(&self, http: &HttpSession, page: u32) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn recommend(
+        &self,
+        http: &HttpSession,
+        page: u32,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let cookie = self.cookie_header(http)?;
         let page = page.to_string();
         let url = self.signed_url(
@@ -534,6 +544,7 @@ impl LiveSite for BilibiliSite {
         http: &HttpSession,
         category: &LiveSubCategory,
         page: u32,
+        _sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let cookie = self.cookie_header(http)?;
         let page = page.to_string();

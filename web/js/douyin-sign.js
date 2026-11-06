@@ -115,3 +115,59 @@ export async function signDouyinDanmaku(roomId) {
   }
   return { signature, userId };
 }
+
+// ------------------------------------------------------------ a_bogus（REST 接口）
+
+// 抖音的列表类接口（首页推荐、分区房间）验的是 `a_bogus`，和上面弹幕握手用的
+// `signature` 是两套算法：前者是一段 17KB 的纯函数（SM3 + RC4），后者是
+// 600KB 的 webmssdk。脚本在 `vendor/douyin-abogus.js`，算法来源见该文件头。
+const ABOGUS_SCRIPT = 'vendor/douyin-abogus.js';
+
+let abogusPromise = null;
+
+function compileAbogus(source) {
+  // 和 webmssdk 那份一样，用 `new Function` 把它关进函数作用域：
+  // 脚本里有浏览器分支判断，直接当 `<script>` 注入会拿到真实 DOM 行为。
+  const factory = new Function(`${source}\n;return getABogus;`);
+  const sign = factory();
+  if (typeof sign !== 'function') throw new Error('a_bogus 脚本没有导出 getABogus');
+  return sign;
+}
+
+async function ensureAbogus() {
+  if (abogusPromise) return abogusPromise;
+  abogusPromise = (async () => {
+    const response = await fetch(ABOGUS_SCRIPT, { cache: 'force-cache' });
+    if (!response.ok) throw new Error(`a_bogus 脚本加载失败（HTTP ${response.status}）`);
+    return compileAbogus(await response.text());
+  })();
+  abogusPromise.catch(() => {
+    abogusPromise = null;
+  });
+  return abogusPromise;
+}
+
+/// 抖音要求查询串里带一个 107 位的 `msToken`，它同时是签名的输入之一。
+/// 长度和字符集与网页端一致（大小写字母 + 数字），长度不对会被判成伪造。
+export function douyinMsToken() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let index = 0; index < 107; index += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+/**
+ * 给一条查询串算 `a_bogus`。
+ * @param {string} query 不含 `?`、也不含 `a_bogus` 的原始查询串
+ * @returns {Promise<string>} 要追加到 URL 末尾的 `a_bogus` 值
+ */
+export async function signDouyinQuery(query) {
+  const text = String(query || '').trim();
+  if (!text) throw new Error('抖音签名缺少查询串');
+  const sign = await ensureAbogus();
+  const value = String(sign(text, DOUYIN_UA) || '');
+  if (!value) throw new Error('a_bogus 生成失败（签名脚本没有返回结果）');
+  return value;
+}

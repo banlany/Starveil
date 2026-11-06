@@ -9,6 +9,7 @@ use crate::huya::HuyaSite;
 use crate::kuaishou::KuaishouSite;
 use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
+    QuerySign,
 };
 use crate::url_parser;
 
@@ -18,7 +19,15 @@ pub trait LiveSite: Send + Sync {
     fn platform(&self) -> Platform;
 
     /// 按关键词搜索直播间。
-    fn search(&self, http: &HttpSession, keyword: &str) -> Result<Vec<LiveRoomItem>, LiveError>;
+    ///
+    /// `sign` 只有抖音用得上（它的搜索/分区接口要验 `a_bogus`），
+    /// 其它平台收到空结构体直接忽略。
+    fn search(
+        &self,
+        http: &HttpSession,
+        keyword: &str,
+        sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError>;
 
     /// 读取房间头信息。
     fn detail(&self, http: &HttpSession, room_id: &str) -> Result<LiveRoomDetail, LiveError>;
@@ -31,7 +40,12 @@ pub trait LiveSite: Send + Sync {
     ) -> Result<Vec<PlayQuality>, LiveError>;
 
     /// 按热度推荐（首页用）。
-    fn recommend(&self, http: &HttpSession, page: u32) -> Result<Vec<LiveRoomItem>, LiveError>;
+    fn recommend(
+        &self,
+        http: &HttpSession,
+        page: u32,
+        sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError>;
 
     /// 一级 / 二级分类。
     fn categories(&self, http: &HttpSession) -> Result<Vec<LiveCategory>, LiveError>;
@@ -42,6 +56,7 @@ pub trait LiveSite: Send + Sync {
         http: &HttpSession,
         category: &LiveSubCategory,
         page: u32,
+        sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError>;
 
     /// 按清晰度取直链。
@@ -113,12 +128,13 @@ impl LiveCore {
         &self,
         platform: Platform,
         keyword: &str,
+        sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let keyword = keyword.trim();
         if keyword.is_empty() {
             return Err(LiveError::parse("搜索关键词不能为空"));
         }
-        self.site(platform)?.search(&self.http, keyword)
+        self.site(platform)?.search(&self.http, keyword, sign)
     }
 
     pub fn detail(
@@ -137,8 +153,9 @@ impl LiveCore {
         &self,
         platform: Platform,
         page: u32,
+        sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
-        self.site(platform)?.recommend(&self.http, page)
+        self.site(platform)?.recommend(&self.http, page, sign)
     }
 
     pub fn categories(&self, platform: Platform) -> Result<Vec<LiveCategory>, LiveError> {
@@ -150,8 +167,10 @@ impl LiveCore {
         platform: Platform,
         category: &LiveSubCategory,
         page: u32,
+        sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
-        self.site(platform)?.category_rooms(&self.http, category, page)
+        self.site(platform)?
+            .category_rooms(&self.http, category, page, sign)
     }
 
     pub fn qualities(

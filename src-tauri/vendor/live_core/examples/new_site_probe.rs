@@ -53,7 +53,7 @@ fn main() {
         Err(error) => println!("详情失败：{error}"),
     }
 
-    match core.recommend(platform, 1) {
+    match core.recommend(platform, 1, &Default::default()) {
         Ok(items) => {
             println!("推荐 {} 条", items.len());
             for item in items.iter().take(3) {
@@ -78,7 +78,7 @@ fn main() {
                         .join(" ")
                 );
                 if let Some(sub) = list.iter().find_map(|category| category.children.first()) {
-                    match core.category_rooms(platform, sub, 1) {
+                    match core.category_rooms(platform, sub, 1, &Default::default()) {
                         Ok(items) => println!("分区 {} 房间 {} 条", sub.name, items.len()),
                         Err(error) => println!("分区失败：{error}"),
                     }
@@ -86,7 +86,7 @@ fn main() {
             }
             Err(error) => println!("分类失败：{error}"),
         }
-        match core.search(platform, "英雄联盟") {
+        match core.search(platform, "英雄联盟", &Default::default()) {
             Ok(items) => println!("搜索 {} 条", items.len()),
             Err(error) => println!("搜索失败：{error}"),
         }

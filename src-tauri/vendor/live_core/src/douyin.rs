@@ -17,7 +17,7 @@ use crate::error::LiveError;
 use crate::http::HttpSession;
 use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
-    QualityData, RoomExtra,
+    QualityData, QuerySign, RoomExtra,
 };
 use crate::site::LiveSite;
 use serde_json::Value;
@@ -98,6 +98,41 @@ impl DouyinSite {
             ("cookie", cookie.to_string()),
             ("accept", "application/json, text/plain, */*".to_string()),
         ]
+    }
+
+    /// 拉一页分区房间（首页推荐与分类房间共用）。
+    ///
+    /// 没签名时直接给出能照做的提示：抖音在这种请求上会回 HTTP 200 + 空
+    /// body，如果只说「解析失败」，用户完全不知道该去哪儿处理。
+    fn partition_rooms(
+        http: &HttpSession,
+        partition: &str,
+        partition_type: &str,
+        page: u32,
+        sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
+        if sign.is_empty() {
+            return Err(LiveError::unsupported(
+                "抖音列表需要请求签名，但这一页没能算出 a_bogus。请退出再进一次页面；\
+                 仍然不行的话重启应用（签名脚本可能没加载成功）",
+            ));
+        }
+        let cookie = Self::cookie(http)?;
+        let headers = vec![
+            ("user-agent", UA),
+            ("referer", REFERER),
+            ("cookie", cookie.as_str()),
+            ("accept", "application/json, text/plain, */*"),
+        ];
+        let offset = page.saturating_sub(1) * PAGE_SIZE;
+        // 查询串必须和交给签名脚本的那一份逐字符一致，所以统一由 `partition_query` 拼。
+        let query = partition_query(partition, partition_type, offset, &sign.ms_token);
+        let url = format!(
+            "{REFERER}/webcast/web/partition/detail/room/v2/?{query}&a_bogus={}",
+            urlencode(sign.a_bogus.trim())
+        );
+        let value = http.get_json_raw(&url, &headers)?;
+        parse_partition_rooms(&value)
     }
 
     /// 通过 web_rid（网页房间号）进房。
@@ -206,75 +241,77 @@ impl DouyinSite {
             .map(|(_, label, _)| label.to_string())
             .unwrap_or_else(|| name.to_string())
     }
+}
 
-    /// 推荐流的一页。
-    ///
-    /// 抖音这个接口**没有真正的分页游标**：`count` 写多少都只回 6 条，
-    /// `offset` 也被忽略。能做的是带 `max_time`（上一批里最早的开播时间戳减一），
-    /// 让服务端把「更早开播」的直播间排上来。返回的第二个值是下一次要用的游标。
-    fn feed_page(
-        http: &HttpSession,
-        cursor: Option<u64>,
-    ) -> Result<(Vec<LiveRoomItem>, Option<u64>), LiveError> {
-        let cookie = Self::cookie(http)?;
-        let headers = Self::request_headers(&cookie, REFERER);
-        let borrowed: Vec<(&str, &str)> = headers
-            .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .collect();
-        let max_time = cursor.map(|value| value.to_string()).unwrap_or_default();
-        let value = http.get_json(
-            "https://live.douyin.com/webcast/feed/",
-            &[
-                ("aid", "6383"),
-                ("app_name", "douyin_web"),
-                ("live_id", "1"),
-                ("device_platform", "web"),
-                ("language", "zh-CN"),
-                ("enter_from", "web_live"),
-                ("count", "20"),
-                ("offset", "0"),
-                ("max_time", max_time.as_str()),
-                ("channel", "web_live_default"),
-                ("screen_mode", "0"),
-                ("server_type", "toutiao_live"),
-                ("version_code", "180800"),
-            ],
-            &borrowed,
-        )?;
-        let list = value
-            .get("data")
-            .and_then(Value::as_array)
-            .ok_or_else(|| LiveError::protocol("抖音推荐流返回格式异常"))?;
-        let mut items = Vec::new();
-        let mut oldest: Option<u64> = None;
-        for entry in list {
-            let room = entry.get("data").unwrap_or(&Value::Null);
-            if room.get("status").and_then(Value::as_i64) != Some(2) {
-                continue;
-            }
-            let owner = room.get("owner").cloned().unwrap_or(Value::Null);
-            // 推荐流不带 web_rid，只能用 room_id 进房（reflow 接口接受它）。
-            let room_id = text_of(room, "id_str");
-            if room_id.is_empty() {
-                continue;
-            }
-            if let Some(created) = room.get("create_time").and_then(Value::as_u64)
-                && created > 0
-            {
-                oldest = Some(oldest.map_or(created, |now: u64| now.min(created)));
-            }
-            items.push(LiveRoomItem {
-                platform: Platform::Douyin,
-                room_id,
-                title: text_of(room, "title"),
-                user_name: text_of(&owner, "nickname"),
-                cover: url_of(room, "cover"),
-                online: room.get("user_count").and_then(Value::as_u64).unwrap_or(0),
-            });
+/// 每页条数。分区接口按 15 一页给，翻页靠 `offset`。
+pub const PAGE_SIZE: u32 = 15;
+
+/// 分区房间接口的查询串（首页推荐与「分类 → 房间」共用这一套）。
+///
+/// 抖音这套接口要验 `a_bogus`，而签名是对**查询串**算的：同一串既交给 WebView
+/// 去签，也要原样发出去，所以拼串只在这里做一次。字段顺序不是随便排的——
+/// 改动后必须重新跑一遍 `a_bogus` 联调，别只改 Rust 忘了 JS 那一侧。
+pub fn partition_query(
+    partition: &str,
+    partition_type: &str,
+    offset: u32,
+    ms_token: &str,
+) -> String {
+    format!(
+        "aid=6383&app_name=douyin_web&live_id=1&device_platform=web&language=zh-CN\
+         &enter_from=link_share&cookie_enabled=true&screen_width=1980&screen_height=1080\
+         &browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome\
+         &browser_version=125.0.0.0&browser_online=true&count={PAGE_SIZE}&offset={offset}\
+         &partition={partition}&partition_type={partition_type}&req_from=2&msToken={ms_token}"
+    )
+}
+
+/// 首页「推荐」用的分区：`720` 是抖音网页版的推荐流（`partition_type=1`）。
+const RECOMMEND_PARTITION: (&str, &str) = ("720", "1");
+
+/// 把 `data.data[]` 里的房间转成列表项。
+///
+/// 分区接口每项形如 `{ web_rid, room: { title, owner, cover, room_view_stats } }`；
+/// `web_rid` 是主播的固定房间号（11~12 位），比一次性 room_id 更适合当外键。
+fn parse_partition_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> {
+    let rooms = value
+        .get("data")
+        .and_then(|data| data.get("data"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| LiveError::protocol("抖音分区接口返回格式异常（可能触发了风控）"))?;
+    let mut items = Vec::with_capacity(rooms.len());
+    for entry in rooms {
+        let room = entry.get("room").unwrap_or(&Value::Null);
+        let owner = room.get("owner").cloned().unwrap_or(Value::Null);
+        let web_rid = text_of(entry, "web_rid");
+        let room_id = if web_rid.is_empty() {
+            text_of(room, "id_str")
+        } else {
+            web_rid
+        };
+        if room_id.is_empty() {
+            continue;
         }
-        Ok((items, oldest.map(|value| value.saturating_sub(1))))
+        // 在线人数在 `room_view_stats.display_value`；偶尔是字符串，两种都认。
+        let online = room
+            .get("room_view_stats")
+            .and_then(|stats| stats.get("display_value"))
+            .map(|value| match value {
+                Value::Number(number) => number.as_u64().unwrap_or(0),
+                Value::String(text) => text.parse().unwrap_or(0),
+                _ => 0,
+            })
+            .unwrap_or(0);
+        items.push(LiveRoomItem {
+            platform: Platform::Douyin,
+            room_id,
+            title: text_of(room, "title"),
+            user_name: text_of(&owner, "nickname"),
+            cover: url_of(room, "cover"),
+            online,
+        });
     }
+    Ok(items)
 }
 
 impl Default for DouyinSite {
@@ -289,6 +326,79 @@ fn text_of(value: &Value, key: &str) -> String {
         Some(Value::Number(number)) => number.to_string(),
         _ => String::new(),
     }
+}
+
+/// 等价于 JS 的 `encodeURIComponent`。
+///
+/// 查询串里的值（关键词、a_bogus）在签名/发送时必须和浏览器同一套转义规则：
+/// a_bogus 里会出现 `=`、`+`、`/`，原样塞进 URL 会被服务端解析成另一个值。
+fn urlencode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3);
+    for byte in text.as_bytes() {
+        match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => out.push(*byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// 搜索结果的每项是 `{ lives: { rawdata: "<房间 JSON 字符串>" } }`，
+/// rawdata 偶尔直接是对象，两种都认。
+fn parse_search_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> {
+    if value.get("status_code").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        let code = value.get("status_code").and_then(Value::as_i64).unwrap_or(0);
+        return Err(LiveError::protocol(format!("抖音搜索返回异常 status_code={code}")));
+    }
+    let data = value.get("data").and_then(Value::as_array);
+    let mut items = Vec::new();
+    for entry in data.into_iter().flatten() {
+        let raw = entry.get("lives").and_then(|live| live.get("rawdata"));
+        let room = match raw {
+            Some(Value::String(text)) => serde_json::from_str::<Value>(text).ok(),
+            Some(node) if node.is_object() => Some(node.clone()),
+            _ => None,
+        };
+        let Some(room) = room else { continue };
+        let owner = room.get("owner").cloned().unwrap_or(Value::Null);
+        let room_id = text_of(&owner, "web_rid");
+        if room_id.is_empty() {
+            continue;
+        }
+        let online = room
+            .get("stats")
+            .and_then(|stats| stats.get("total_user"))
+            .or_else(|| {
+                room.get("room_view_stats")
+                    .and_then(|stats| stats.get("display_value"))
+            })
+            .map(|value| match value {
+                Value::Number(number) => number.as_u64().unwrap_or(0),
+                Value::String(text) => text.parse().unwrap_or(0),
+                _ => 0,
+            })
+            .unwrap_or(0);
+        items.push(LiveRoomItem {
+            platform: Platform::Douyin,
+            room_id,
+            title: text_of(&room, "title"),
+            user_name: text_of(&owner, "nickname"),
+            cover: url_of(&room, "cover"),
+            online,
+        });
+    }
+    Ok(items)
 }
 
 /// 覆盖图/头像这类字段是 `{ url_list: [...] }`。
@@ -308,10 +418,75 @@ impl LiveSite for DouyinSite {
         Platform::Douyin
     }
 
-    fn search(&self, _http: &HttpSession, _keyword: &str) -> Result<Vec<LiveRoomItem>, LiveError> {
-        Err(LiveError::unsupported(
-            "抖音搜索需要平台签名，当前版本暂不支持，请直接粘贴直播间链接或房间号",
-        ))
+    fn search(
+        &self,
+        http: &HttpSession,
+        keyword: &str,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
+        // 搜索走的是 `www.douyin.com` 的 web 接口，实测不验 `a_bogus`
+        // （dart 版那行 `getAbogusUrl` 也是注释掉的），但**要求登录态**：
+        // 匿名请求一律回 `status_code: 2483`。
+        let cookie = Self::cookie(http)?;
+        let keyword = keyword.trim();
+        let referer = format!("https://www.douyin.com/search/{}?type=live", urlencode(keyword));
+        let offset = 0u32.to_string();
+        let count = 10u32.to_string();
+        let value = http.get_json(
+            "https://www.douyin.com/aweme/v1/web/live/search/",
+            &[
+                ("device_platform", "webapp"),
+                ("aid", "6383"),
+                ("channel", "channel_pc_web"),
+                ("search_channel", "aweme_live"),
+                ("keyword", keyword),
+                ("search_source", "switch_tab"),
+                ("query_correct_type", "1"),
+                ("is_filter_search", "0"),
+                ("from_group_id", ""),
+                ("offset", offset.as_str()),
+                ("count", count.as_str()),
+                ("pc_client_type", "1"),
+                ("version_code", "170400"),
+                ("version_name", "17.4.0"),
+                ("cookie_enabled", "true"),
+                ("screen_width", "1980"),
+                ("screen_height", "1080"),
+                ("browser_language", "zh-CN"),
+                ("browser_platform", "Win32"),
+                ("browser_name", "Chrome"),
+                ("browser_version", "125.0.0.0"),
+                ("browser_online", "true"),
+                ("engine_name", "Blink"),
+                ("engine_version", "125.0.0.0"),
+                ("os_name", "Windows"),
+                ("os_version", "10"),
+                ("cpu_core_num", "12"),
+                ("device_memory", "8"),
+                ("platform", "PC"),
+                ("downlink", "10"),
+                ("effective_type", "4g"),
+                ("round_trip_time", "100"),
+                ("webid", "7382872326016435738"),
+            ],
+            &[
+                ("user-agent", UA),
+                ("accept", "application/json, text/plain, */*"),
+                ("accept-language", "zh-CN,zh;q=0.9,en;q=0.8"),
+                ("cookie", cookie.as_str()),
+                ("referer", referer.as_str()),
+                ("sec-fetch-dest", "empty"),
+                ("sec-fetch-mode", "cors"),
+                ("sec-fetch-site", "same-origin"),
+            ],
+        )?;
+        // 2483 = 需要登录。匿名搜索就是这个码，直说原因，别让用户以为是网络问题。
+        if value.get("status_code").and_then(Value::as_i64) == Some(2483) {
+            return Err(LiveError::protocol(
+                "抖音搜索需要登录：请在「设置 → 账号登录」里登录抖音后再搜",
+            ));
+        }
+        parse_search_rooms(&value)
     }
 
     fn detail(&self, http: &HttpSession, room_id: &str) -> Result<LiveRoomDetail, LiveError> {
@@ -427,37 +602,14 @@ impl LiveSite for DouyinSite {
             .collect())
     }
 
-    fn recommend(&self, http: &HttpSession, page: u32) -> Result<Vec<LiveRoomItem>, LiveError> {
-        // 游标是「上一批最老的开播时间」，放在进程内共享；首页刷新（page=1）时重置。
-        static CURSOR: OnceLock<Mutex<Option<u64>>> = OnceLock::new();
-        let cursor = CURSOR.get_or_init(|| Mutex::new(None));
-        if page <= 1
-            && let Ok(mut guard) = cursor.lock()
-        {
-            *guard = None;
-        }
-        // 一次只给 6 条，而首页一屏要十几张卡，所以在后端连拉几页、
-        // 去重后一起返回。最多 4 次（≈1.5 秒），拿不到新内容就提前停。
-        const TARGET: usize = 12;
-        let mut items: Vec<LiveRoomItem> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for _ in 0..4 {
-            let current = cursor.lock().ok().and_then(|guard| *guard);
-            let (batch, next) = Self::feed_page(http, current)?;
-            for room in batch {
-                if seen.insert(room.room_id.clone()) {
-                    items.push(room);
-                }
-            }
-            if let Ok(mut guard) = cursor.lock() {
-                *guard = next;
-            }
-            // 没有新游标说明这一批全是没有开播时间的房间，再拉也是同一批。
-            if items.len() >= TARGET || next.is_none() || next == current {
-                break;
-            }
-        }
-        Ok(items)
+    fn recommend(
+        &self,
+        http: &HttpSession,
+        page: u32,
+        sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
+        let (partition, partition_type) = RECOMMEND_PARTITION;
+        Self::partition_rooms(http, partition, partition_type, page, sign)
     }
 
     /// 分区树。
@@ -479,15 +631,19 @@ impl LiveSite for DouyinSite {
 
     fn category_rooms(
         &self,
-        _http: &HttpSession,
-        _category: &LiveSubCategory,
-        _page: u32,
+        http: &HttpSession,
+        category: &LiveSubCategory,
+        page: u32,
+        sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
-        // 分类能列出来，但「某个分区下的房间列表」那个接口要 a_bogus 签名，
-        // 目前没有可用的免签名替代（feed 接口会忽略 partition 参数，回的是同一份推荐流）。
-        Err(LiveError::unsupported(
-            "抖音按分区看房间需要平台签名，当前版本只支持分类列表；可以在首页或关注页浏览",
-        ))
+        // 分类 id 存的是 `"{id_str},{type}"`（见 `parse_home_categories`）：
+        // 抖音的分区接口要 `partition` 和 `partition_type` 两个参数，缺一不可。
+        let (partition, partition_type) = category
+            .id
+            .split_once(',')
+            .map(|(id, kind)| (id.trim(), kind.trim()))
+            .unwrap_or((category.id.trim(), "1"));
+        Self::partition_rooms(http, partition, partition_type, page, sign)
     }
 
     fn play(
@@ -553,6 +709,20 @@ impl LiveSite for DouyinSite {
     }
 }
 
+/// 分区节点的 `"{id_str},{type}"` 键。缺字段时退回 `"{id_str},1"`。
+fn partition_key(node: &Value) -> String {
+    let id = text_of(node, "id_str");
+    if id.is_empty() {
+        return String::new();
+    }
+    let kind = node
+        .get("type")
+        .and_then(Value::as_i64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "1".to_string());
+    format!("{id},{kind}")
+}
+
 /// 从抖音首页 HTML 里抠出内嵌的分区树。
 ///
 /// 首页的分类数据长这样（是 JS 字符串里的 JSON，引号被转义成 `\"`）：
@@ -609,30 +779,33 @@ fn parse_home_categories(html: &str) -> Option<Vec<LiveCategory>> {
         if id.is_empty() || name.is_empty() {
             continue;
         }
-        let children = item
-            .get("sub_partition")
-            .and_then(Value::as_array)
-            .map(|subs| {
-                subs.iter()
-                    .filter_map(|sub| {
-                        let node = sub.get("partition")?;
-                        let child_id = text_of(node, "id_str");
-                        let child_name = text_of(node, "title");
-                        if child_id.is_empty() || child_name.is_empty() {
-                            return None;
-                        }
-                        Some(LiveSubCategory {
-                            id: child_id,
-                            name: child_name,
-                            parent_id: id.clone(),
-                            // 抖音的分区没有图标，前端会自动退回首字占位。
-                            pic: String::new(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        categories.push(LiveCategory { id, name, children });
+        // 分区 id 记成 `"{id_str},{type}"`：拉房间列表时抖音要同时传
+        // `partition` 和 `partition_type`，只存 id_str 会让一级/二级分区
+        // 用错类型（1 = 二级、4 = 一级），列表要么空要么是别的分区。
+        let parent_key = partition_key(node);
+        let mut children = Vec::new();
+        collect_subs(item, &parent_key, &mut children);
+        // 抖音首页 SSR 只给「游戏」带了二级分区，聊天 / 音乐 / 二次元 这些的
+        // `sub_partition` 全是空数组（二级分区是前端再请求接口拿的）。
+        // 照搬的话这些节只剩一个标题、底下没有任何可点的入口。所以把分区自己
+        // 插到子分类最前面：点它就是这个分区的全部房间——`partition_type=4`
+        // 直接请求有效，分页也正常（实测 offset 0/15/30 各回 15 条不重复）。
+        // dart 版也是这么做的（`subs.insert(0, ...)`），顺带解释了「第一个入口」。
+        children.insert(
+            0,
+            LiveSubCategory {
+                id: parent_key.clone(),
+                name: name.clone(),
+                parent_id: parent_key.clone(),
+                // 抖音的分区没有图标，前端会自动退回首字占位。
+                pic: String::new(),
+            },
+        );
+        categories.push(LiveCategory {
+            id: parent_key,
+            name,
+            children,
+        });
     }
     if categories.is_empty() {
         None
@@ -641,9 +814,78 @@ fn parse_home_categories(html: &str) -> Option<Vec<LiveCategory>> {
     }
 }
 
+/// 把 `sub_partition` 递归摊平成一个列表（抖音目前最多两层，但字段是嵌套的，
+/// 层级再深也不会丢入口）。摊平后的顺序就是接口给的顺序，不重排。
+fn collect_subs(item: &Value, parent_key: &str, out: &mut Vec<LiveSubCategory>) {
+    let Some(subs) = item.get("sub_partition").and_then(Value::as_array) else {
+        return;
+    };
+    for sub in subs {
+        let Some(node) = sub.get("partition") else { continue };
+        let child_name = text_of(node, "title");
+        let child_key = partition_key(node);
+        if child_key.is_empty() || child_name.is_empty() {
+            continue;
+        }
+        out.push(LiveSubCategory {
+            id: child_key.clone(),
+            name: child_name,
+            parent_id: parent_key.to_string(),
+            pic: String::new(),
+        });
+        collect_subs(sub, &child_key, out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 分区查询串字段顺序固定() {
+        // a_bogus 是对这个串做的哈希：字段顺序、空格、缺字段都会让签名失效。
+        // 这里把首尾和中间的关键字段钉住，改参数时至少要意识到会影响签名。
+        let query = partition_query("720", "1", 15, "TOKEN");
+        assert!(query.starts_with("aid=6383&app_name=douyin_web&live_id=1"));
+        assert!(query.ends_with("&partition=720&partition_type=1&req_from=2&msToken=TOKEN"));
+        assert!(query.contains("&count=15&offset=15&partition="));
+        assert!(!query.contains(' '), "续行不能留下空格：{query}");
+        assert!(!query.contains('\n'));
+    }
+
+    #[test]
+    fn 分区键带上类型() {
+        let value = serde_json::json!({"id_str":"1011032","type":1});
+        assert_eq!(partition_key(&value), "1011032,1");
+        // 缺 type 时按二级分区兜底，至少还能请求。
+        let value = serde_json::json!({"id_str":"720"});
+        assert_eq!(partition_key(&value), "720,1");
+        assert_eq!(partition_key(&serde_json::json!({})), "");
+    }
+
+    #[test]
+    fn 解析搜索结果的原始串() {
+        let value = serde_json::json!({
+            "status_code": 0,
+            "data": [{
+                "lives": {
+                    "rawdata": "{\"title\":\"标题\",\"owner\":{\"web_rid\":\"123456\",\"nickname\":\"主播\"},\"cover\":{\"url_list\":[\"https://a/1.jpg\"]},\"stats\":{\"total_user\":88}}"
+                }
+            }]
+        });
+        let items = parse_search_rooms(&value).expect("应当解析出房间");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].room_id, "123456");
+        assert_eq!(items[0].user_name, "主播");
+        assert_eq!(items[0].online, 88);
+    }
+
+    #[test]
+    fn 搜索结果需要登录时给出明确错误() {
+        let value = serde_json::json!({"status_code": 2483});
+        let error = parse_search_rooms(&value).unwrap_err();
+        assert!(error.to_string().contains("2483"));
+    }
 
     #[test]
     fn 识别一次性房间号() {
@@ -679,10 +921,21 @@ mod tests {
         let html = r#"<script>self.__pace_f.push([1,"{\"categoryData\":[{\"partition\":{\"id_str\":\"101\",\"type\":4,\"title\":\"聊天\"},\"sub_partition\":[]},{\"partition\":{\"id_str\":\"103\",\"type\":4,\"title\":\"游戏\"},\"sub_partition\":[{\"partition\":{\"id_str\":\"1011032\",\"type\":1,\"title\":\"三角洲行动\"}}]}]}"])</script>"#;
         let tree = parse_home_categories(html).expect("应当解析出分类");
         assert_eq!(tree.len(), 2);
+        // 聊天在真实首页里 `sub_partition` 是空数组：必须靠「分区自己」兜底，
+        // 否则整节只有标题、没有任何可点的入口。
+        assert_eq!(tree[0].name, "聊天");
+        assert_eq!(tree[0].children.len(), 1);
+        assert_eq!(tree[0].children[0].id, "101,4");
+        assert_eq!(tree[0].children[0].name, "聊天");
         assert_eq!(tree[1].name, "游戏");
-        assert_eq!(tree[1].children.len(), 1);
-        assert_eq!(tree[1].children[0].id, "1011032");
-        assert_eq!(tree[1].children[0].parent_id, "103");
-        assert_eq!(tree[1].children[0].name, "三角洲行动");
+        assert_eq!(tree[1].id, "103,4");
+        assert_eq!(tree[1].children.len(), 2);
+        // 分区自己排第一，点它就是这个分区的全部房间（对齐 dart 版的 insert(0)）。
+        assert_eq!(tree[1].children[0].id, "103,4");
+        assert_eq!(tree[1].children[0].name, "游戏");
+        // 分区键带上 type：拉房间列表时要同时传 partition 和 partition_type。
+        assert_eq!(tree[1].children[1].id, "1011032,1");
+        assert_eq!(tree[1].children[1].parent_id, "103,4");
+        assert_eq!(tree[1].children[1].name, "三角洲行动");
     }
 }

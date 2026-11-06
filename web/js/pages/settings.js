@@ -45,7 +45,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.6.6';
+const FALLBACK_VERSION = '0.6.7';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -85,7 +85,7 @@ const SETTINGS_ITEMS = [
   { key: 'player', icon: 'player', label: '播放页设置' },
   { key: 'live', icon: 'live', label: '直播设置' },
   { key: 'danmaku', icon: 'text', label: '弹幕设置' },
-  { key: 'follow', icon: 'heart', label: '关注设置' },
+  { key: 'follow', icon: 'follow', label: '关注设置' },
   { key: 'timer', icon: 'timer', label: '定时关闭' },
   { key: 'other', icon: 'other', label: '其他设置' },
   { key: 'disclaimer', icon: 'shield', label: '免责声明' },
@@ -1112,7 +1112,7 @@ function paintSync(content, ctx, repaint) {
           const bundle = JSON.parse(payload);
           const ok = await confirmDialog({
             title: '拉取对方的配置',
-            text: `「${peerLabel}」的${describeBundleContents(bundle)}会覆盖本机同名数据，本机独有的条目不会保留。`,
+            text: `「${peerLabel}」的${describeBundleContents(bundle)}会合并进本机：同名条目以对方为准，本机独有的保留（设置整段按对方覆盖）。`,
             okLabel: '覆盖本机',
             danger: true,
           });
@@ -1378,7 +1378,7 @@ function paintSync(content, ctx, repaint) {
       const incoming = JSON.parse(payload.content);
       const ok = await confirmDialog({
         title: '下载覆盖本机',
-        text: `云端的${describeBundleContents(incoming)}会覆盖本机同名数据，本机独有的条目不会保留。`,
+        text: `云端的${describeBundleContents(incoming)}会合并进本机：同名条目以对方为准，本机独有的保留（设置整段按对方覆盖）。`,
         okLabel: '覆盖',
         danger: true,
       });

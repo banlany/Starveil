@@ -2,6 +2,7 @@
 import { ALL_PLATFORMS, api, ENABLED_PLATFORMS, isPlatformEnabled } from './api.js';
 import { icon, PLATFORM_META, platformIcon } from './icons.js';
 import {
+  ACCOUNT_PLATFORMS,
   applyTheme,
   followKey,
   isFollowing,
@@ -373,7 +374,7 @@ function initRail() {
     refreshButton.innerHTML = icon('refresh', 19);
     refreshButton.addEventListener('click', () => homeRefreshHandler?.());
   }
-  const icons = { home: 'home', follow: 'heart', category: 'grid', settings: 'settings' };
+  const icons = { home: 'home', follow: 'follow', category: 'grid', settings: 'settings' };
   for (const button of rail.querySelectorAll('.rail-btn[data-nav]')) {
     button.innerHTML = icon(icons[button.dataset.nav], 25);
     button.addEventListener('click', () => {
@@ -792,7 +793,14 @@ async function autoPullSync() {
     const bundle = JSON.parse(payload.content);
     const remoteAt = Date.parse(bundle.exportedAt || '') || 0;
     if (!remoteAt || remoteAt <= (Number(state.settings.sync.lastSyncAt) || 0)) return;
-    importData(bundle);
+    const summary = importData(bundle);
+    // 包里带了登录信息时要把 Cookie 注回后端。少了这一步，界面显示已登录，
+    // 取流却还是游客 —— 手动导入（settings.js 的 applyImport）做了这件事，
+    // 自动拉取也必须做，否则两条路的登录态不一致。
+    for (const platform of summary.accounts || []) {
+      const login = loadLogin(platform);
+      if (login?.cookie) await api.setCookie(platform, login.cookie).catch(() => {});
+    }
     state.settings.sync.lastSyncAt = Date.now();
     saveSettings();
     toast('已从云端同步数据', 'success');
@@ -833,7 +841,9 @@ function init() {
   showDisclaimer();
   restartTimer();
   // 恢复上次登录的平台 Cookie；后端每个平台独立持有 LiveCore。
-  for (const platform of ['bilibili', 'douyu']) {
+  // 遍历 ACCOUNT_PLATFORMS 而不是写死两个：设置页四个平台都能登录，
+  // 写死会让抖音/快手的登录态在重启后静默丢掉（界面还显示已登录）。
+  for (const platform of ACCOUNT_PLATFORMS) {
     const login = loadLogin(platform);
     if (login?.cookie) {
       api.setCookie(platform, login.cookie).catch((error) => console.warn('恢复登录态失败', platform, error));

@@ -118,6 +118,12 @@ struct PlayPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hls_urls: Vec<String>,
     headers: Vec<(String, String)>,
+    /// 直链还有多少秒过期（从地址里的 `expire=` 读出来，读不到就是 None）。
+    ///
+    /// 斗鱼的匿名直链只给 300 秒，到点 CDN 直接断流——前端据此在到期前去换新地址，
+    /// 本机代理会在旧连接结束时自动接上新地址，播放器那边看不出断过。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_in: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -209,6 +215,9 @@ async fn search_anchors(
         return Err("请输入主播昵称或 ID".to_string());
     }
     let cookie = state.cookie(platform.id());
+    // 抖音那个分支要用 LiveCore，而 `State` 的生命周期进不了 'static 的阻塞任务，
+    // 所以先把 Arc<LiveCore> 取出来（其它分支自己建 HttpSession，用不到它）。
+    let core = state.core(platform);
     tauri::async_runtime::spawn_blocking(move || match platform {
         Platform::Bilibili => {
             let http = HttpSession::new();
@@ -453,8 +462,26 @@ async fn search_anchors(
             }
             Ok(items)
         }
-        // 抖音/快手没有公开的主播搜索接口，关注页的「按昵称找主播」暂不适用。
-        Platform::Douyin | Platform::Kuaishou => Err(format!(
+        // 抖音没有单独的主播搜索接口，但直播搜索的结果里带主播昵称，
+        // 直接复用房间搜索再投影成主播条目（dart 版也是这么做的）。
+        Platform::Douyin => {
+            let items = core
+                .search(platform, &keyword, &live_core::QuerySign::default())
+                .map_err(fail)?;
+            Ok(items
+                .into_iter()
+                .map(|room| AnchorItem {
+                    platform: platform.id().to_string(),
+                    room_id: room.room_id,
+                    user_name: room.user_name,
+                    avatar: room.cover,
+                    live: true,
+                    uid: String::new(),
+                })
+                .collect())
+        }
+        // 快手没有公开的主播搜索接口。
+        Platform::Kuaishou => Err(format!(
             "{}暂不支持按昵称搜索主播，请直接粘贴直播间链接",
             platform.name()
         )),
@@ -617,6 +644,29 @@ fn upstream_client() -> Option<reqwest::blocking::Client> {
         .clone()
 }
 
+/// 从直链的 `expire=` 参数读有效期（秒）。
+///
+/// 斗鱼匿名直链给的是 `expire=300`，到点 CDN 直接掐断连接——就是「看五分钟断一下」
+/// 的根源。`expire=0`（不过期）和没有这个参数都返回 None。
+fn url_expire_secs(url: &str) -> Option<u64> {
+    let query = url.split_once('?')?.1;
+    let mut shortest: Option<u64> = None;
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        if key != "expire" {
+            continue;
+        }
+        let Ok(secs) = value.parse::<u64>() else { continue };
+        if secs == 0 {
+            continue;
+        }
+        shortest = Some(shortest.map_or(secs, |current| current.min(secs)));
+    }
+    shortest
+}
+
 fn start_proxy() -> (u16, Arc<Mutex<HashMap<String, ProxyTarget>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("启动本地流代理失败");
     let port = listener.local_addr().expect("读取代理端口失败").port();
@@ -769,16 +819,72 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     // 否则浏览器切线路/关房间后，这条线程还会卡在 write 上，
     // 上游连接也一直挂着，长时间挂机线程数只增不减。
     let mut buffer = vec![0u8; 32 * 1024];
-    loop {
-        match response.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => {
-                if socket.write_all(&buffer[..count]).is_err() {
-                    break;
+    let mut current = target.clone();
+    // 连续「连上就断、一个字节都没读到」的次数。读到过数据就清零：
+    // 正常续签一次能连播 5 分钟，不该被历史上限卡死。
+    let mut reconnects = 0u32;
+    'stream: loop {
+        let mut received = 0u64;
+        loop {
+            match response.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    received += count as u64;
+                    if socket.write_all(&buffer[..count]).is_err() {
+                        return;
+                    }
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+        }
+        if received > 0 {
+            reconnects = 0;
+        }
+        // 上游结束了。斗鱼的匿名直链到期（expire=300）时 CDN 就是这样干净地断开，
+        // 以前这里的做法是关掉下游连接 → 播放器报错 → 前端重连，用户看到「断一下」。
+        //
+        // 现在换个做法：前端在到期前会用同一个 token 续一份新地址（`douyu_play`
+        // 覆盖 proxy_targets 里的条目），这里发现地址变了就**原地重连**，
+        // 继续往同一个下游连接写字节——播放器那条 HTTP 流从来没断过，
+        // 只是中间少了几百毫秒的数据。
+        if reconnects >= 3 {
+            break;
+        }
+        let Some(next) = targets.lock().ok().and_then(|map| map.get(token).cloned()) else {
+            break;
+        };
+        if next.url == current.url {
+            break;
+        }
+        reconnects += 1;
+        // 让新签名的 CDN 缓存稍微缓一下，紧接着连多半会 403。
+        std::thread::sleep(Duration::from_millis(200));
+        let Some(client) = upstream_client() else { break };
+        let fetched = client
+            .get(&next.url)
+            .header("referer", &next.referer)
+            .header("user-agent", &next.user_agent)
+            .send();
+        match fetched {
+            Ok(next_response) if next_response.status().is_success() => {
+                eprintln!("[proxy] 地址已续签，静默接上第 {reconnects} 次");
+                current = next;
+                // 必须换掉外层的 response：不然下一轮读的还是那条已经 EOF 的旧连接。
+                response = next_response;
+                continue 'stream;
+            }
+            Ok(next_response) => {
+                eprintln!(
+                    "[proxy] 续签地址 HTTP {}",
+                    next_response.status().as_u16()
+                );
+                break;
+            }
+            Err(error) => {
+                eprintln!("[proxy] 续签地址请求失败：{error}");
+                break;
+            }
         }
     }
     let _ = socket.flush();
@@ -786,15 +892,53 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
 
 // ---------------------------------------------------------------- 基础数据
 
+/// 抖音的列表接口要 `a_bogus` 签名，而签名只能由 WebView 里的脚本算。
+///
+/// 为了不把「查询串怎么拼」写两遍（Rust 拼一次、JS 再拼一次，改一处漏一处就会
+/// 验签失败），这里把**拼串**留在协议层，由 `douyin_query` 命令交给前端：
+/// 前端拿它去签名，再把签名值原样带回来，真正的请求仍按同一串拼。
+#[tauri::command]
+fn douyin_query(
+    kind: String,
+    partition: Option<String>,
+    page: Option<u32>,
+    ms_token: Option<String>,
+) -> Result<String, String> {
+    let page = page.unwrap_or(1);
+    let ms_token = ms_token.unwrap_or_default();
+    match kind.as_str() {
+        "recommend" => Ok(live_core::douyin::partition_query(
+            "720", "1", page.saturating_sub(1) * live_core::douyin::PAGE_SIZE, &ms_token,
+        )),
+        "category" => {
+            let raw = partition.unwrap_or_default();
+            let (id, kind) = raw
+                .split_once(',')
+                .map(|(id, kind)| (id.trim().to_string(), kind.trim().to_string()))
+                .unwrap_or((raw.trim().to_string(), "1".to_string()));
+            Ok(live_core::douyin::partition_query(
+                &id,
+                &kind,
+                page.saturating_sub(1) * live_core::douyin::PAGE_SIZE,
+                &ms_token,
+            ))
+        }
+        other => Err(format!("未知的抖音列表类型：{other}")),
+    }
+}
+
 #[tauri::command]
 async fn recommend(
     state: State<'_, AppState>,
     platform: String,
     page: Option<u32>,
+    ms_token: Option<String>,
+    a_bogus: Option<String>,
 ) -> Result<Vec<LiveRoomItem>, String> {
     let platform = parse_platform(&platform)?;
+    let sign = live_core::QuerySign::new(ms_token.unwrap_or_default(), a_bogus.unwrap_or_default());
     let core = state.core(platform);
-    blocking(move || core.recommend(platform, page.unwrap_or(1))).await
+    blocking(move || core.recommend(platform, page.unwrap_or(1), &sign)).await
 }
 
 #[tauri::command]
@@ -802,10 +946,13 @@ async fn search(
     state: State<'_, AppState>,
     platform: String,
     keyword: String,
+    ms_token: Option<String>,
+    a_bogus: Option<String>,
 ) -> Result<Vec<LiveRoomItem>, String> {
     let platform = parse_platform(&platform)?;
+    let sign = live_core::QuerySign::new(ms_token.unwrap_or_default(), a_bogus.unwrap_or_default());
     let core = state.core(platform);
-    blocking(move || core.search(platform, &keyword)).await
+    blocking(move || core.search(platform, &keyword, &sign)).await
 }
 
 #[tauri::command]
@@ -826,6 +973,8 @@ async fn category_rooms(
     sub_id: String,
     name: String,
     page: Option<u32>,
+    ms_token: Option<String>,
+    a_bogus: Option<String>,
 ) -> Result<Vec<LiveRoomItem>, String> {
     let platform = parse_platform(&platform)?;
     let category = live_core::LiveSubCategory {
@@ -834,8 +983,9 @@ async fn category_rooms(
         parent_id,
         pic: String::new(),
     };
+    let sign = live_core::QuerySign::new(ms_token.unwrap_or_default(), a_bogus.unwrap_or_default());
     let core = state.core(platform);
-    blocking(move || core.category_rooms(platform, &category, page.unwrap_or(1))).await
+    blocking(move || core.category_rooms(platform, &category, page.unwrap_or(1), &sign)).await
 }
 
 #[tauri::command]
@@ -1387,6 +1537,7 @@ async fn douyu_play(
     .map_err(|error| format!("任务执行失败：{error}"))??;
 
     let referer = format!("https://www.douyu.com/{}", detail.room_id);
+    let expires_in = urls.iter().filter_map(|url| url_expire_secs(url)).min();
     let mut proxy_urls = Vec::with_capacity(urls.len());
     // 锁中毒（持锁线程 panic）时用 into_inner 继续：这里如果直接跳过，
     // 所有平台的播放都会返回空地址列表，界面只显示「没有可用的播放地址」，
@@ -1416,6 +1567,7 @@ async fn douyu_play(
         urls: proxy_urls,
         hls_urls: Vec::new(),
         headers: Vec::new(),
+        expires_in,
     })
 }
 
@@ -1507,10 +1659,17 @@ async fn play(
         Platform::Douyin => format!("https://live.douyin.com/{room_id}"),
         Platform::Kuaishou => format!("https://live.kuaishou.com/u/{room_id}"),
     };
+    // 直链里的 expire= 是 CDN 自己断流的时间点：斗鱼匿名地址只有 300 秒，
+    // 其它平台可能没有这个参数。前端据此安排在到期前换新地址。
+    let expires_in = flv_urls
+        .iter()
+        .filter_map(|url| url_expire_secs(url))
+        .min();
     Ok(PlayPayload {
         urls: proxy_play_urls(&state, &key, index, flv_urls, referer.clone()),
         hls_urls,
         headers: Vec::new(),
+        expires_in,
     })
 }
 
@@ -2675,6 +2834,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            douyin_query,
             recommend,
             search,
             search_anchors,

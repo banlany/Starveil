@@ -25,8 +25,12 @@ export function saveLogin(platform, data) {
   localStorage.setItem(LOGIN_PREFIX + platform, JSON.stringify(data));
 }
 
-/// 参与备份的登录平台（虎牙目前不支持登录）。
-export const ACCOUNT_PLATFORMS = ['bilibili', 'douyu'];
+/// 参与备份/同步的登录平台。
+///
+/// 这份清单必须和设置页「账号登录」里 `canLogin: true` 的四个平台一一对应：
+/// 少一个，那个平台的 Cookie 就不会进备份、重启后也不会注回后端，
+/// 用户会看到「页面显示已登录，一取流还是游客」。虎牙目前不支持登录，不在其中。
+export const ACCOUNT_PLATFORMS = ['bilibili', 'douyu', 'douyin', 'kuaishou'];
 
 /// 收集本机已登录的平台，供“导出备份”使用。
 export function collectAccounts() {
@@ -36,18 +40,6 @@ export function collectAccounts() {
     if (login?.cookie) accounts[platform] = login;
   }
   return accounts;
-}
-
-/// 还原备份里的登录信息；返回需要重新注入后端的平台列表。
-export function restoreAccounts(accounts) {
-  const restored = [];
-  for (const platform of ACCOUNT_PLATFORMS) {
-    const login = accounts?.[platform];
-    if (!login?.cookie) continue;
-    saveLogin(platform, login);
-    restored.push(platform);
-  }
-  return restored;
 }
 
 export function clearLogin(platform) {
@@ -718,36 +710,55 @@ export function replaceSearchHistory(list) {
   return cleaned.length;
 }
 
-/// 导入时整段替换观看统计。只认结构对的包：`{v:1, rooms:{...}}`，
-/// 其它一律当空，避免一个坏包把统计写成一堆读不出来的东西。
-/// 写之前仍走 `saveStats` 的裁剪与体积保护——统计本来就是最容易顶到 5MB 上限的一项。
-export function replaceStats(stats) {
+/// 导入/同步观看统计：**按房间、按天合并**，不是整段替换。
+///
+/// 以前这里是「整段替换」，于是和观看记录的行为对不上：记录是按 key 合并的
+/// （本机新增的还在），统计却被对方的包顶掉，同步一次就少一批主播的时长。
+/// 两边的口径统一成「只增不减」：
+/// - 房间取并集；
+/// - 同一天有冲突时 `ms` / `visits` 取较大值（同一天两台设备各看一会，
+///   相加会把时间翻倍，取大值只会少算不会虚增）；
+/// - `last_at` / `total_ms` / `visits` 同样取较大值。
+/// 只认结构对的包：`{v:1, rooms:{...}}`，别的当空包，避免坏包把统计写成读不出来的东西。
+/// 写之前仍走 `saveStats` 的裁剪与体积保护。
+export function mergeStats(stats) {
   if (!stats || typeof stats !== 'object' || !stats.rooms || typeof stats.rooms !== 'object') {
     return 0;
   }
-  const rooms = {};
-  for (const [key, entry] of Object.entries(stats.rooms)) {
+  const merged = loadStats();
+  let touched = 0;
+  for (const [rawKey, entry] of Object.entries(stats.rooms)) {
     if (!entry || typeof entry !== 'object') continue;
     const platform = String(entry.platform || '').trim();
     const roomId = String(entry.room_id ?? '').trim();
     if (!platform || !roomId) continue;
-    const daily = {};
-    for (const [day, value] of Object.entries(entry.daily || {})) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !value || typeof value !== 'object') continue;
-      daily[day] = { ms: Math.max(0, Number(value.ms) || 0), visits: Math.max(0, Number(value.visits) || 0) };
-    }
-    rooms[`${platform}:${roomId}`] = {
+    const key = statsKey(platform, roomId);
+    const target = merged.rooms[key] || {
       platform,
       room_id: roomId,
-      user_name: String(entry.user_name || ''),
-      cover: String(entry.cover || ''),
-      total_ms: Math.max(0, Number(entry.total_ms) || 0),
-      visits: Math.max(0, Number(entry.visits) || 0),
-      last_at: Math.max(0, Number(entry.last_at) || 0),
-      daily,
+      user_name: '',
+      cover: '',
+      total_ms: 0,
+      visits: 0,
+      last_at: 0,
+      daily: {},
     };
+    target.user_name = String(entry.user_name || '') || target.user_name;
+    target.cover = String(entry.cover || '') || target.cover;
+    target.total_ms = Math.max(Number(target.total_ms) || 0, Number(entry.total_ms) || 0);
+    target.visits = Math.max(Number(target.visits) || 0, Number(entry.visits) || 0);
+    target.last_at = Math.max(Number(target.last_at) || 0, Number(entry.last_at) || 0);
+    for (const [day, value] of Object.entries(entry.daily || {})) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !value || typeof value !== 'object') continue;
+      const current = target.daily[day] || { ms: 0, visits: 0 };
+      target.daily[day] = {
+        ms: Math.max(Number(current.ms) || 0, Math.max(0, Number(value.ms) || 0)),
+        visits: Math.max(Number(current.visits) || 0, Math.max(0, Number(value.visits) || 0)),
+      };
+    }
+    merged.rooms[key] = target;
+    touched += 1;
   }
-  const next = { v: 1, rooms };
-  saveStats(next);
-  return Object.keys(rooms).length;
+  saveStats(merged);
+  return touched;
 }

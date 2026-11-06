@@ -12,7 +12,7 @@ use crate::error::LiveError;
 use crate::http::HttpSession;
 use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
-    QualityData, RoomExtra,
+    QualityData, QuerySign, RoomExtra,
 };
 use crate::site::LiveSite;
 use serde_json::Value;
@@ -215,7 +215,12 @@ impl LiveSite for KuaishouSite {
         Platform::Kuaishou
     }
 
-    fn search(&self, http: &HttpSession, keyword: &str) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn search(
+        &self,
+        http: &HttpSession,
+        keyword: &str,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let referer = format!("{REFERER}/search?keyword={keyword}");
         let value = Self::json(
             http,
@@ -363,7 +368,12 @@ impl LiveSite for KuaishouSite {
             .collect())
     }
 
-    fn recommend(&self, http: &HttpSession, page: u32) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn recommend(
+        &self,
+        http: &HttpSession,
+        page: u32,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         // 快手网页首页分「首屏」和「换一批」两套接口：
         // - `home/list` 是首屏，固定返回 4 个 label 分组、每组 12 个房间，
         //   **没有分页参数**，`?page=2` 也是同一份数据；
@@ -462,6 +472,7 @@ impl LiveSite for KuaishouSite {
         http: &HttpSession,
         category: &LiveSubCategory,
         page: u32,
+        _sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
         // 游戏分区的 id 是短数字，非游戏分区是长串；两个接口分开。
         let api = if category.id.len() < 7 {

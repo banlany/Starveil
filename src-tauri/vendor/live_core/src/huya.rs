@@ -9,7 +9,7 @@ use crate::error::LiveError;
 use crate::http::HttpSession;
 use crate::model::{
     HuyaBitrate, HuyaLine, LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform,
-    PlayQuality, PlayUrls, QualityData, RoomExtra,
+    PlayQuality, PlayUrls, QualityData, QuerySign, RoomExtra,
 };
 use crate::site::LiveSite;
 use crate::util::{absolute, dig, md5_hex, text, u32_of, u64_of};
@@ -227,7 +227,12 @@ impl LiveSite for HuyaSite {
         Platform::Huya
     }
 
-    fn search(&self, http: &HttpSession, keyword: &str) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn search(
+        &self,
+        http: &HttpSession,
+        keyword: &str,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let value = http.get_json(
             "https://search.cdn.huya.com/",
             &[
@@ -267,7 +272,12 @@ impl LiveSite for HuyaSite {
         parse_qualities(bitrates, !lines.is_empty())
     }
 
-    fn recommend(&self, http: &HttpSession, page: u32) -> Result<Vec<LiveRoomItem>, LiveError> {
+    fn recommend(
+        &self,
+        http: &HttpSession,
+        page: u32,
+        _sign: &QuerySign,
+    ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let value = http.get_json(
             "https://www.huya.com/cache.php",
             &[
@@ -326,6 +336,7 @@ impl LiveSite for HuyaSite {
         http: &HttpSession,
         category: &LiveSubCategory,
         page: u32,
+        _sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
         let value = http.get_json(
             "https://www.huya.com/cache.php",

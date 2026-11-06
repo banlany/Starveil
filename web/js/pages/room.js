@@ -83,7 +83,7 @@ export function renderRoom(ctx, params = {}) {
             <div class="room-sub" id="room-sub"></div>
           </div>
           <div class="room-top-actions">
-            <button class="overlay-btn follow-btn" id="room-follow">${icon('heart', 16)}<span class="label">关注</span></button>
+            <button class="overlay-btn follow-btn" id="room-follow">${icon('follow', 16)}<span class="label">关注</span></button>
             <button class="overlay-btn icon-only" id="room-share" title="分享">${icon('share', 18)}</button>
             <button class="overlay-btn icon-only" id="room-more" title="更多">${icon('more', 18)}</button>
           </div>
@@ -126,7 +126,7 @@ export function renderRoom(ctx, params = {}) {
             <div class="chat-head-meta" id="chat-meta"></div>
           </div>
           <div class="chat-head-actions">
-            <button class="icon-btn" id="chat-follow" title="关注">${icon('heart', 17)}</button>
+            <button class="icon-btn" id="chat-follow" title="关注">${icon('follow', 17)}</button>
             <button class="icon-btn" id="chat-collapse" title="收起聊天区">${icon('chevron', 17)}</button>
           </div>
         </div>
@@ -148,7 +148,7 @@ export function renderRoom(ctx, params = {}) {
     </div>
     <footer class="room-footer">
       <button class="footer-action" id="footer-refresh">${icon('refresh', 17)}<span>刷新</span></button>
-      <button class="footer-action" id="footer-follow">${icon('heart', 17)}<span>关注</span></button>
+      <button class="footer-action" id="footer-follow">${icon('follow', 17)}<span>关注</span></button>
       <button class="footer-action" id="footer-tag">${icon('tag', 17)}<span>标签</span></button>
       <div class="footer-right">
         <button class="footer-action" id="footer-share">${icon('share', 17)}<span>分享</span></button>
@@ -900,7 +900,7 @@ export function renderRoom(ctx, params = {}) {
       toolbar.querySelector('#chat-follow-refresh').addEventListener('click', refreshRoomFollowStatus);
       chatList.appendChild(toolbar);
       if (!follows.length) {
-        chatList.appendChild(placeholder(all.length ? '关注的主播都还没开播' : '你还没有关注其他主播', 'heart'));
+        chatList.appendChild(placeholder(all.length ? '关注的主播都还没开播' : '你还没有关注其他主播', 'follow'));
         return;
       }
       const grid = document.createElement('div');
@@ -1450,29 +1450,47 @@ export function renderRoom(ctx, params = {}) {
     return true;
   }
 
-  /// 斗鱼 FLV 直链带 wsTime/wsSecret，有效期通常一小时出头；过期后哪怕当前连接还在，
-  /// 下一次重连也只会拿到 403，重试三次全是同一个过期地址。
-  /// 每 40 分钟静默续一次地址池：正在播的那条连接不动（换掉会中断），
-  /// 只保证真断流时手里用的是新签名。
-  const STREAM_RENEW_MS = 40 * 60 * 1000;
-  function startStreamRenew() {
-    clearInterval(session.renewTimer);
+  /// 斗鱼直链到期前换一份新地址。
+  ///
+  /// 有效期是 CDN 在地址里写死的 `expire=` 参数：匿名地址只有 **300 秒**
+  /// （实测到点就是干净的一刀，不是网络抖动），登录后会长一些。所以续签
+  /// 必须按地址自己声明的有效期提前做，不能拍一个固定值——早了白请求，
+  /// 晚了一步就是「断流 → 立刻重连」。
+  ///
+  /// 续签只是把后端 `proxy_targets` 里这个 token 的地址换掉：正在播的那条
+  /// 上游连接照旧，等它被 CDN 断掉时，本机代理发现地址变了会原地接上，
+  /// 播放器那条 HTTP 流根本不断（见 `src-tauri/src/lib.rs` 的 `proxy_connection`）。
+  const STREAM_RENEW_FALLBACK_S = 40 * 60;
+  /// 提前量：留出一次请求 + 握手的时间，也避免和 CDN 的时钟差异撞上。
+  const STREAM_RENEW_LEAD_S = 45;
+
+  function startStreamRenew(expiresIn) {
+    clearTimeout(session.renewTimer);
     session.renewTimer = 0;
     if (session.platform !== 'douyu') return;
-    session.renewTimer = setInterval(async () => {
+    const lifetime = Number(expiresIn) > 0 ? Number(expiresIn) : STREAM_RENEW_FALLBACK_S;
+    const delay = Math.max(30, lifetime - STREAM_RENEW_LEAD_S) * 1000;
+    session.renewTimer = setTimeout(async () => {
+      session.renewTimer = 0;
       if (session.destroyed) return;
+      let nextExpires = expiresIn;
       try {
         const payload = await api.play(session.key, session.qualityIndex);
         if (session.destroyed) return;
         const lines = buildLines(payload);
-        if (!lines.length) return;
-        session.lines = lines;
-        session.headers = payload.headers || session.headers;
-        if (session.lineIndex >= lines.length) session.lineIndex = 0;
+        if (lines.length) {
+          session.lines = lines;
+          session.headers = payload.headers || session.headers;
+          if (session.lineIndex >= lines.length) session.lineIndex = 0;
+        }
+        // 新地址的有效期可能和上一份不同（登录后更长），按最新的排下一轮。
+        if (Number(payload?.expires_in) > 0) nextExpires = Number(payload.expires_in);
       } catch {
-        /* 续签失败不打扰用户，下一轮再来 */
+        /* 续签失败不打扰用户：代理那边旧连接还能撑一会儿，下次刷新会再来 */
       }
-    }, STREAM_RENEW_MS);
+      // 无论这次成没成都要排下一轮，否则一次网络抖动就再也不会续签了。
+      if (!session.destroyed) startStreamRenew(nextExpires);
+    }, delay);
   }
 
   function onLineError(detail) {
@@ -1662,8 +1680,9 @@ export function renderRoom(ctx, params = {}) {
       session.lineIndex = 0;
       session.lineFailures = 0;
       setQualityLabel();
-      // 斗鱼的地址有有效期，进房就排上续签（其它平台这个函数直接返回）。
-      startStreamRenew();
+      // 斗鱼的地址有有效期（`expires_in` 秒），进房就按它排上续签；
+      // 其它平台这个函数直接返回。
+      startStreamRenew(payload.expires_in);
       if (!session.lines.length) {
         setHint({ text: '这个房间暂时没有可用的播放地址（可能未开播或限制地区）', actions: '<button class="btn" id="hint-retry">重试</button>' });
         bindHintActions();
@@ -1940,11 +1959,11 @@ export function renderRoom(ctx, params = {}) {
     for (const button of [$('room-follow'), $('footer-follow'), $('chat-follow')]) {
       button.classList.toggle('active', session.follow);
     }
-    const heart = session.follow ? 'heartFilled' : 'heart';
-    $('room-follow').innerHTML = `${icon(heart, 16)}<span class="label">${session.follow ? '已关注' : '关注'}</span>`;
-    $('chat-follow').innerHTML = icon(heart, 17);
+    const mark = session.follow ? 'followFilled' : 'follow';
+    $('room-follow').innerHTML = `${icon(mark, 16)}<span class="label">${session.follow ? '已关注' : '关注'}</span>`;
+    $('chat-follow').innerHTML = icon(mark, 17);
     $('chat-follow').title = session.follow ? '取消关注' : '关注';
-    $('footer-follow').innerHTML = `${icon(heart, 17)}<span>${session.follow ? '已关注' : '关注'}</span>`;
+    $('footer-follow').innerHTML = `${icon(mark, 17)}<span>${session.follow ? '已关注' : '关注'}</span>`;
   }
 
   async function onFollowClick() {
@@ -2644,7 +2663,7 @@ export function renderRoom(ctx, params = {}) {
     clearInterval(session.statsTimer);
     clearInterval(session.infoTimer);
     clearInterval(session.stallTimer);
-    clearInterval(session.renewTimer);
+    clearTimeout(session.renewTimer);
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
     clearInterval(session.scSweep);

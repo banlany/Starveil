@@ -22,7 +22,7 @@ fn main() {
     let detail = match web_rid.as_deref() {
         Some(rid) => core.detail(Platform::Douyin, rid).expect("detail 失败"),
         None => {
-            let rooms = core.recommend(Platform::Douyin, 1).expect("recommend 失败");
+            let rooms = core.recommend(Platform::Douyin, 1, &Default::default()).expect("recommend 失败");
             let first = rooms.first().expect("推荐列表为空");
             println!("使用推荐房间 {} / {}", first.room_id, first.user_name);
             core.detail(Platform::Douyin, &first.room_id)
