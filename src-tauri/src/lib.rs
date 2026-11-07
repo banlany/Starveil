@@ -18,16 +18,19 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use flv::FlvSplicer;
+use live_core::model::RoomExtra;
 use live_core::{
     DanmakuSession, HttpSession, LiveCore, LiveError, LiveRoomDetail, LiveRoomItem, Platform,
     PlayQuality, QualityData,
 };
-use live_core::model::RoomExtra;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod flv;
 mod webdav;
+
 // 局域网同步：UDP 广播发现 + 本机 HTTP 服务（同一 Wi-Fi 内直连收发同步包）。
 mod lan_sync;
 // 剪贴板与「用浏览器打开」在安卓上走 JNI（见 `MainActivity`），不需要这套 Win32 壳。
@@ -823,6 +826,10 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     // 连续「连上就断、一个字节都没读到」的次数。读到过数据就清零：
     // 正常续签一次能连播 5 分钟，不该被历史上限卡死。
     let mut reconnects = 0u32;
+    // 换过地址之后的字节要过一遍重组：新一路是从 FLV 头开始的完整流，
+    // 直接写进同一个响应体会让播放器把第二个 FLV 头当成非法 tag。
+    let mut splicer = FlvSplicer::new();
+    let mut spliced = false;
     'stream: loop {
         let mut received = 0u64;
         loop {
@@ -830,8 +837,17 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
                 Ok(0) => break,
                 Ok(count) => {
                     received += count as u64;
-                    if socket.write_all(&buffer[..count]).is_err() {
-                        return;
+                    let chunk = &buffer[..count];
+                    if spliced {
+                        let rewritten = splicer.translate(chunk);
+                        if !rewritten.is_empty() && socket.write_all(&rewritten).is_err() {
+                            return;
+                        }
+                    } else {
+                        if socket.write_all(chunk).is_err() {
+                            return;
+                        }
+                        splicer.observe(chunk);
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -870,6 +886,8 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
             Ok(next_response) if next_response.status().is_success() => {
                 eprintln!("[proxy] 地址已续签，静默接上第 {reconnects} 次");
                 current = next;
+                splicer.begin_segment();
+                spliced = true;
                 // 必须换掉外层的 response：不然下一轮读的还是那条已经 EOF 的旧连接。
                 response = next_response;
                 continue 'stream;
@@ -886,6 +904,13 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
                 break;
             }
         }
+    }
+    if spliced {
+        eprintln!(
+            "[proxy] 续接结束，共接上 {} 个 tag（关键帧{}）",
+            splicer.emitted(),
+            if splicer.has_base() { "已找到" } else { "没等到" }
+        );
     }
     let _ = socket.flush();
 }
@@ -1511,14 +1536,14 @@ async fn douyu_play(
                         last_error = "斗鱼播放地址缺少 rtmp_live".to_string();
                         continue;
                     };
-                    let mut url = format!(
+                    let url = format!(
                         "{}/{}",
                         rtmp_url.trim_end_matches('/'),
                         unescape_html(rtmp_live)
                     );
-                    if url.contains("expire=300") && url.contains("fcdn=ws") {
-                        url.push_str("&expire=0");
-                    }
+                    // 直链的过期时间写在签名里：动一下查询串（哪怕只是追加
+                    // `expire=0`）CDN 会直接判签名无效，连 0.1 MB 都读不到。
+                    // 想续命只能重新签一份新地址，交给代理去续接。
                     urls.push(url);
                 }
                 Err(error) => last_error = error,
