@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use flv::FlvSplicer;
+use flv::{AudioOnlyFilter, FlvSplicer};
 use live_core::model::RoomExtra;
 use live_core::{
     DanmakuSession, HttpSession, LiveCore, LiveError, LiveRoomDetail, LiveRoomItem, Platform,
@@ -55,6 +55,9 @@ struct ProxyTarget {
     url: String,
     referer: String,
     user_agent: String,
+    /// 只往下游送音频 tag。同屏播放时 A 那一路上台的是 B 的画面，
+    /// A 只贡献声音，没必要再传一遍视频（也省掉一次解码）。
+    audio_only: bool,
 }
 
 struct AppState {
@@ -830,6 +833,8 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     // 直接写进同一个响应体会让播放器把第二个 FLV 头当成非法 tag。
     let mut splicer = FlvSplicer::new();
     let mut spliced = false;
+    // 同屏播放时 A 那一路只要声音：视频 tag 在这里就丢掉，下游是纯音频 FLV。
+    let mut audio_filter = target.audio_only.then(AudioOnlyFilter::new);
     'stream: loop {
         let mut received = 0u64;
         loop {
@@ -838,16 +843,33 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
                 Ok(count) => {
                     received += count as u64;
                     let chunk = &buffer[..count];
-                    if spliced {
-                        let rewritten = splicer.translate(chunk);
-                        if !rewritten.is_empty() && socket.write_all(&rewritten).is_err() {
-                            return;
+                    match audio_filter.as_mut() {
+                        Some(filter) => {
+                            // 先续接（换过地址的字节要重排），再筛掉视频。
+                            let staged = if spliced {
+                                splicer.translate(chunk)
+                            } else {
+                                splicer.observe(chunk);
+                                chunk.to_vec()
+                            };
+                            let out = filter.translate(&staged);
+                            if !out.is_empty() && socket.write_all(&out).is_err() {
+                                return;
+                            }
                         }
-                    } else {
-                        if socket.write_all(chunk).is_err() {
-                            return;
+                        None => {
+                            if spliced {
+                                let rewritten = splicer.translate(chunk);
+                                if !rewritten.is_empty() && socket.write_all(&rewritten).is_err() {
+                                    return;
+                                }
+                            } else {
+                                if socket.write_all(chunk).is_err() {
+                                    return;
+                                }
+                                splicer.observe(chunk);
+                            }
                         }
-                        splicer.observe(chunk);
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -911,6 +933,9 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
             splicer.emitted(),
             if splicer.has_base() { "已找到" } else { "没等到" }
         );
+    }
+    if let Some(filter) = audio_filter.as_ref() {
+        eprintln!("[proxy] 纯音频输出 {} 个音频 tag", filter.emitted());
     }
     let _ = socket.flush();
 }
@@ -1485,6 +1510,7 @@ async fn douyu_play(
     key: String,
     index: usize,
     signed_args: String,
+    audio_only: Option<bool>,
 ) -> Result<PlayPayload, String> {
     let (detail, quality, did) = {
         let sessions = state
@@ -1563,33 +1589,15 @@ async fn douyu_play(
 
     let referer = format!("https://www.douyu.com/{}", detail.room_id);
     let expires_in = urls.iter().filter_map(|url| url_expire_secs(url)).min();
-    let mut proxy_urls = Vec::with_capacity(urls.len());
-    // 锁中毒（持锁线程 panic）时用 into_inner 继续：这里如果直接跳过，
-    // 所有平台的播放都会返回空地址列表，界面只显示「没有可用的播放地址」，
-    // 真实原因（代理表不可用）完全看不到。
-    let mut targets = match state.proxy_targets.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    {
-        for (line, url) in urls.into_iter().enumerate() {
-            let token = format!("{}-{}-{line}", key.replace(':', "_"), index);
-            targets.insert(
-                token.clone(),
-                ProxyTarget {
-                    url,
-                    referer: referer.clone(),
-                    user_agent: DESKTOP_UA.to_string(),
-                },
-            );
-            proxy_urls.push(format!(
-                "http://127.0.0.1:{}/stream/{token}",
-                state.proxy_port
-            ));
-        }
-    }
     Ok(PlayPayload {
-        urls: proxy_urls,
+        urls: proxy_play_urls(
+            &state,
+            &key,
+            index,
+            urls,
+            referer,
+            audio_only.unwrap_or(false),
+        ),
         hls_urls: Vec::new(),
         headers: Vec::new(),
         expires_in,
@@ -1604,6 +1612,7 @@ fn proxy_play_urls(
     index: usize,
     urls: Vec<String>,
     referer: String,
+    audio_only: bool,
 ) -> Vec<String> {
     let mut proxied = Vec::with_capacity(urls.len());
     // 锁中毒（持锁线程 panic）时用 into_inner 继续：这里如果直接跳过，
@@ -1615,13 +1624,20 @@ fn proxy_play_urls(
     };
     {
         for (line, url) in urls.into_iter().enumerate() {
-            let token = format!("{}-{}-{line}", key.replace(':', "_"), index);
+            // 纯音频是同一个清晰度的另一种取法，token 必须区分开，
+            // 否则两个播放器会抢同一个条目（后写的把先写的地址换掉）。
+            let token = if audio_only {
+                format!("{}-{}-{line}-a", key.replace(':', "_"), index)
+            } else {
+                format!("{}-{}-{line}", key.replace(':', "_"), index)
+            };
             targets.insert(
                 token.clone(),
                 ProxyTarget {
                     url,
                     referer: referer.clone(),
                     user_agent: DESKTOP_UA.to_string(),
+                    audio_only,
                 },
             );
             proxied.push(format!(
@@ -1638,6 +1654,7 @@ async fn play(
     state: State<'_, AppState>,
     key: String,
     index: usize,
+    audio_only: Option<bool>,
 ) -> Result<PlayPayload, String> {
     let (detail, quality) = {
         let sessions = state
@@ -1691,7 +1708,14 @@ async fn play(
         .filter_map(|url| url_expire_secs(url))
         .min();
     Ok(PlayPayload {
-        urls: proxy_play_urls(&state, &key, index, flv_urls, referer.clone()),
+        urls: proxy_play_urls(
+            &state,
+            &key,
+            index,
+            flv_urls,
+            referer.clone(),
+            audio_only.unwrap_or(false),
+        ),
         hls_urls,
         headers: Vec::new(),
         expires_in,

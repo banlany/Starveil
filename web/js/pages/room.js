@@ -2,6 +2,7 @@
 import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
 import { createDanmakuLayer, DANMAKU_PRESETS, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
 import { signDouyinDanmaku } from '../douyin-sign.js';
+import { createDualPlayback, seekInBuffer } from '../dual.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
 import { bindHorizontalSwipe } from '../swipe.js';
@@ -73,6 +74,15 @@ export function renderRoom(ctx, params = {}) {
       <div class="stage" id="stage">
         <div class="stage-bg" id="stage-bg"></div>
         <video id="player" playsinline preload="none"></video>
+        <!-- 同屏播放的第二路。默认隐藏，开启后盖在 #player 上面：
+             这时候 #player 只贡献声音（代理层已过滤掉视频），B 的画面在台前。
+             放在弹幕层之前，弹幕仍然压在画面之上。 -->
+        <video id="player-b" class="player-secondary" playsinline preload="none" muted></video>
+        <!-- 只播放音频：这一路没有视频轨（代理层丢掉了视频 tag），
+             画面位置留一个能点回来的标记，不然只是一块黑。 -->
+        <div class="audio-only-badge" id="audio-only-badge" role="button" tabindex="0">
+          ${icon('volume', 18)}<span>只播放音频</span><em>点此恢复画面</em>
+        </div>
         <div class="danmaku-layer" id="danmaku-layer"></div>
         <div class="sc-float-layer" id="sc-float-layer"></div>
         <div class="stage-hint" id="stage-hint"><span class="big-spinner"></span><span>正在读取直播间…</span></div>
@@ -159,6 +169,8 @@ export function renderRoom(ctx, params = {}) {
   const $ = (id) => page.querySelector(`#${id}`);
   const stage = $('stage');
   const video = $('player');
+  const videoB = $('player-b');
+  const audioOnlyBadge = $('audio-only-badge');
   const layer = $('danmaku-layer');
   const hint = $('stage-hint');
   const clock = $('player-clock');
@@ -245,8 +257,32 @@ export function renderRoom(ctx, params = {}) {
     watchSince: 0,
     watchPending: 0,
     watchTimer: 0,
+    // 同屏播放：A 这一路是否只取声音（视频 tag 在代理层就被丢掉）。
+    // 开同屏时置 true 并重取一次流，关闭时恢复。
+    audioOnly: false,
+    // 齿轮里的「只播放音频」：用户自己按下的那个开关，只对本次进房有效。
+    // 实际是否走纯音频 = 这个开关 || 同屏开着（画面归 B，A 只能要声音）。
+    audioOnlyUser: false,
+    // 延迟播放：比直播慢几秒（秒，0 表示关闭），只作用于 A。
+    // 靠「先攒够 N 秒缓冲再开播」实现，见 holdForDelay。
+    delaySec: 0,
+    delayTimer: 0,
+    delayHolding: false,
+    // 当前弹幕连的是哪一路：'a'（本直播间）还是 'b'（同屏的另一个）。
+    danmakuSource: 'a',
+    // 已经施加在 A / B 上的延迟（秒）。时间偏移是相对调整，靠它算差值。
+    dualDelayA: 0,
+    dualDelayB: 0,
+    // 面板里填的 B 地址（面板重画时输入框不会丢内容）与当前设定的偏移值。
+    dualInput: '',
+    dualOffset: 0,
   };
   state.room = session;
+
+  // B 路播放器。它自己取流、自己播，和 A 的状态机互不干扰；
+  // 面板上的开关只是把参数丢给它。
+  const dual = createDualPlayback(videoB, renderDualState);
+  session.dual = dual;
 
   // 竖屏（手机上竖着拿）控制条放不下全部控件，但不是一刀切全藏起来：
   // 按「线路 → 画质 → 时间」的优先级逐级收起，后面的越常用、越晚收。
@@ -309,6 +345,12 @@ export function renderRoom(ctx, params = {}) {
   $('ctrl-line').addEventListener('click', () => showLineMenu());
   $('ctrl-danmaku').addEventListener('click', () => setDanmakuEnabled(!session.danmakuEnabled));
   $('ctrl-settings').addEventListener('click', openQuickSettings);
+  // 「只播放音频」时画面是黑的，标记本身就是退出这个模式的入口。
+  // 必须 stopPropagation：画面上的点击会唤出控制条/暂停，别让标记顺带触发一次。
+  audioOnlyBadge.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setAudioOnlyByUser(false);
+  });
   $('ctrl-fullscreen').addEventListener('click', toggleFullscreen);
   $('ctrl-pip').addEventListener('click', togglePip);
   $('room-follow').addEventListener('click', onFollowClick);
@@ -1357,6 +1399,8 @@ export function renderRoom(ctx, params = {}) {
   function destroyPlayer() {
     // 换线/重连会先把旧播放器拆掉，这里先结算这一段观看时长。
     stopWatchClock();
+    // 延迟播放的攒缓冲循环跟着播放器一起停，否则换线后它还在数旧缓冲。
+    stopDelayGate();
     if (session.player) {
       try {
         if (session.playerProtocol === 'hls') {
@@ -1476,7 +1520,11 @@ export function renderRoom(ctx, params = {}) {
       if (session.destroyed) return;
       let nextExpires = expiresIn;
       try {
-        const payload = await api.play(session.key, session.qualityIndex);
+        // 续签必须带上同一个 audioOnly：代理按 token 区分纯音频条目，
+        // 换成带视频的那一条会让续接后的字节突然多出视频 tag。
+        const payload = await api.play(session.key, session.qualityIndex, {
+          audioOnly: session.audioOnly,
+        });
         if (session.destroyed) return;
         const lines = buildLines(payload);
         if (lines.length) {
@@ -1519,12 +1567,17 @@ export function renderRoom(ctx, params = {}) {
   // HLS 线路：优先 hls.js（MSE），没有 MSE 时退回原生 HLS（iOS/WKWebView 那条路）。
   function playHls(url) {
     const Hls = window.Hls;
+    const delay = Number(session.delaySec) || 0;
     if (Hls && Hls.isSupported()) {
       try {
         const hls = new Hls({
           // 直播只保留最近几个分片：窗口越小，延迟越不容易越积越大。
           liveSyncDurationCount: 3,
           liveMaxLatencyDurationCount: 8,
+          // 延迟播放：hls.js 直接按秒数决定起播点，不用外面再压一层缓冲。
+          ...(delay > 0
+            ? { liveSyncDuration: delay + 2, liveMaxLatencyDuration: delay + 12 }
+            : {}),
           maxBufferLength: 20,
           backBufferLength: 30,
           manifestLoadingTimeOut: 8000,
@@ -1543,7 +1596,7 @@ export function renderRoom(ctx, params = {}) {
         session.player = hls;
         session.playerProtocol = 'hls';
         session.playerReady = true;
-        resumePlayback();
+        resumePlayback(true);
         return;
       } catch (error) {
         setHint({ text: `创建 HLS 播放器失败：${error}`, actions: '<button class="btn primary" id="hint-retry">重试</button>' });
@@ -1566,7 +1619,17 @@ export function renderRoom(ctx, params = {}) {
   }
 
   // 自动播放被拦截时静音兜底，不弹遮挡提示。
-  function resumePlayback() {
+  /// `skipDelay` 给 hls.js 用：它按 `liveSyncDuration` 自己起播，
+  /// 再压一层就等于等两遍。
+  function resumePlayback(skipDelay = false) {
+    if (!skipDelay && Number(session.delaySec) > 0) {
+      holdForDelay(Number(session.delaySec));
+      return;
+    }
+    playNow();
+  }
+
+  function playNow() {
     const promise = video.play();
     if (promise?.catch) promise.catch(() => {
       if (session.destroyed) return;
@@ -1674,7 +1737,10 @@ export function renderRoom(ctx, params = {}) {
     if (!session.key) return;
     setHint({ spinner: true, text: '正在获取播放地址…' });
     try {
-      const payload = await api.play(session.key, session.qualityIndex);
+      // 同屏时 A 只要声音：audioOnly 让代理丢掉视频 tag。
+      const payload = await api.play(session.key, session.qualityIndex, {
+        audioOnly: session.audioOnly,
+      });
       if (session.destroyed) return;
       session.lines = buildLines(payload);
       session.headers = payload.headers || [];
@@ -1804,6 +1870,7 @@ export function renderRoom(ctx, params = {}) {
           setPipMode(true);
           // 小窗里视频要接着放：系统暂停过一次的话这里补一次 play。
           video.play().catch(() => {});
+          if (page.classList.contains('is-dual')) videoB.play().catch(() => {});
           toast('已进入小窗，返回键可退出', 'info', 3000);
         } else {
           toast('当前系统不支持小窗播放（需要 Android 8.0 及以上）');
@@ -1813,11 +1880,18 @@ export function renderRoom(ctx, params = {}) {
       }
       return;
     }
+    // 只播放音频时没有视频轨，小窗里会是一片黑。
+    if (page.classList.contains('is-audio-only')) {
+      toast('只播放音频时没有画面，小窗里也是黑的');
+      return;
+    }
+    // 同屏时台前是 B：小窗里也要显示 B，否则拖出来的是 A 那张不可见的画面。
+    const pipVideo = page.classList.contains('is-dual') ? videoB : video;
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
       } else {
-        await video.requestPictureInPicture();
+        await pipVideo.requestPictureInPicture();
       }
     } catch {
       toast('当前画面不支持画中画');
@@ -2031,13 +2105,28 @@ export function renderRoom(ctx, params = {}) {
     copyText(session.detail?.url || roomUrl(session.platform, session.roomId), '直播间链接已复制');
   }
 
-  function copyStream() {
-    const url = session.lines[session.lineIndex]?.url;
-    if (!url) {
+  /// 复制直播流：给的是本机代理地址（`http://127.0.0.1:端口/stream/...`）。
+  /// 它带着当前平台的 Referer / UA，粘回「同屏播放」就能直接播；
+  /// 反过来把原始 CDN 地址交出去，多半会被平台按 Referer 拒掉。
+  ///
+  /// 只播放音频时 `session.lines` 里是代理的 `-a` 那一条（没有视频 tag），
+  /// 复制出去就是个没画面的流，所以这里重新要一份带视频的地址再复制。
+  async function copyStream() {
+    const current = session.lines[session.lineIndex]?.url;
+    if (!current) {
       toast('还没有取到直播流地址');
       return;
     }
-    copyText(url, '直播流地址已复制');
+    if (!session.audioOnly) {
+      copyText(current, '直播流地址已复制');
+      return;
+    }
+    try {
+      const payload = await api.play(session.key, session.qualityIndex, { audioOnly: false });
+      copyText(payload?.urls?.[0] || current, '直播流地址已复制');
+    } catch {
+      copyText(current, '直播流地址已复制（只有声音）');
+    }
   }
 
   /// 定时关闭在菜单上的文案：开关状态跟「设置 → 定时关闭」是同一份数据，
@@ -2263,12 +2352,42 @@ export function renderRoom(ctx, params = {}) {
         value: SCALE_MODES.find(([value]) => value === state.settings.player.scaleMode)?.[1] || '适应',
         onClick: showScaleMenu,
       },
+      {
+        label: '只播放音频',
+        icon: 'volume',
+        // 同屏时这一项没意义（A 本来就只有声音），但入口照样在，避免菜单随状态变长变短。
+        value: session.audioOnlyUser ? '开启' : '关闭',
+        active: session.audioOnlyUser,
+        onClick: () => setAudioOnlyByUser(!session.audioOnlyUser),
+      },
+      {
+        label: '延迟播放',
+        icon: 'timer',
+        value: Number(session.delaySec) > 0 ? `${Number(session.delaySec).toFixed(1)} 秒` : '关闭',
+        onClick: openDelayPanel,
+      },
+      {
+        label: '同屏播放',
+        icon: 'screen',
+        // B 的名字做值：一眼看出现在台前是谁，不用再点进去确认。
+        value: dual.state.open ? shortDualTitle(dual.state.title) : '关闭',
+        onClick: openDualPanel,
+      },
     ], { align: 'end', placement: 'top' });
+  }
+
+  /// 菜单右侧的值只放得下几个字。
+  function shortDualTitle(title) {
+    const text = String(title || '已开启');
+    return text.length > 8 ? `${text.slice(0, 8)}…` : text;
   }
 
   /// 画面尺寸：和设置页「播放 → 画面尺寸」写同一份配置，改完立刻作用于当前画面。
   function applyScaleMode(mode) {
-    video.style.objectFit = mode === 'cover' ? 'cover' : mode === 'fill' ? 'fill' : 'contain';
+    const fit = mode === 'cover' ? 'cover' : mode === 'fill' ? 'fill' : 'contain';
+    video.style.objectFit = fit;
+    // 同屏时台前是 B，两路共用同一个缩放方式，切档位才看不出差异。
+    videoB.style.objectFit = fit;
   }
 
   function showScaleMenu() {
@@ -2286,6 +2405,460 @@ export function renderRoom(ctx, params = {}) {
       })),
       { align: 'end', placement: 'top' }
     );
+  }
+
+  // ------------------------------------------------------------ 只播放音频
+  //
+  // 这里不是「把画面藏起来继续解码」，而是真的不传视频：`api.play` 带上
+  // audioOnly，代理层（src-tauri/src/flv.rs 的 AudioOnlyFilter）把视频 tag
+  // 丢掉。省一半带宽，也不占解码器；代价是画面位置只剩一块黑，所以留了个
+  // 能点回来的标记。
+
+  /// 用户按下的那个开关，只对本次进房有效（退出直播间就恢复画面）。
+  function setAudioOnlyByUser(on) {
+    const next = Boolean(on);
+    if (session.audioOnlyUser === next) return;
+    session.audioOnlyUser = next;
+    syncAudioOnly();
+    toast(next ? '只播放音频，点画面上的标记可恢复' : '已恢复画面', 'info', 2000);
+  }
+
+  /// 把两个来源（用户开关 / 同屏）合并成「这一路到底要不要视频」，需要换代理分支时重取流。
+  ///
+  /// 同屏开着时永远只要声音——画面归 B，A 留着视频只会白占带宽和解码器。
+  function syncAudioOnly() {
+    const want = session.audioOnlyUser || dual.state.open;
+    // 同屏时台前是 B，标记不能压在 B 的画面上。
+    page.classList.toggle('is-audio-only', session.audioOnlyUser && !dual.state.open);
+    if (session.audioOnly === want) return;
+    session.audioOnly = want;
+    // 代理按 token 分两套地址（带视频 / 纯音频），换过去必须重新取一次流。
+    if (session.key) refreshStream();
+  }
+
+  // ------------------------------------------------------------ 延迟播放
+  //
+  // 直播没有「慢放」，想比直播晚 N 秒看，只能让播放器先攒够 N 秒再开播：
+  // 播放点落在缓冲里、离直播边缘 N 秒，这段就是抗抖动缓冲——网络抖一下只是
+  // 把缓冲吃掉一截，画面不用停下来等。代价是刚打开要等 N 秒（有提示），
+  // 而且画面比直播和弹幕慢。
+
+  const DELAY_MAX = 20;
+
+  function bufferedEnd() {
+    const ranges = video.buffered;
+    return ranges && ranges.length ? ranges.end(ranges.length - 1) : 0;
+  }
+
+  /// 当前播放点离「已经收到的最后一点数据」还有多少秒，也就是能扛多久抖动。
+  ///
+  /// 刚起播时 `currentTime` 可能还停在 0，而缓冲是从别的时间点开始的
+  /// （MSE 的时间轴不一定从 0 起），这时按缓冲起点算，否则会算出一个巨大的
+  /// 「已缓冲」而直接开播，延迟一点都攒不上。
+  function bufferedAhead() {
+    const ranges = video.buffered;
+    if (!ranges || !ranges.length) return 0;
+    const start = ranges.start(0);
+    const end = ranges.end(ranges.length - 1);
+    const now = video.currentTime < start ? start : video.currentTime;
+    return Math.max(0, end - now);
+  }
+
+  function stopDelayGate() {
+    clearInterval(session.delayTimer);
+    session.delayTimer = 0;
+    session.delayHolding = false;
+  }
+
+  /// 压住播放，等缓冲攒到 `target` 秒再放。
+  ///
+  /// 暂停期间 mpegts 照样往 SourceBuffer 里写，缓冲自己会长；所以这一步不需要
+  /// 额外的缓冲队列，播完的位置天然就比直播晚了攒进去的那一段。
+  function holdForDelay(target) {
+    stopDelayGate();
+    session.delayHolding = true;
+    try {
+      video.pause();
+    } catch {
+      /* 停不下来就继续等，下一轮还会再压一次 */
+    }
+    setHint({ spinner: true, text: `正在缓冲 ${target.toFixed(1)} 秒（延迟播放）…` });
+    let lastEnd = -1;
+    let lastGrow = Date.now();
+    session.delayTimer = setInterval(() => {
+      if (session.destroyed || !session.playerReady) {
+        stopDelayGate();
+        return;
+      }
+      const end = bufferedEnd();
+      if (end > lastEnd + 0.01) {
+        lastEnd = end;
+        lastGrow = Date.now();
+      } else if (Date.now() - lastGrow > 12000) {
+        // 数据根本不来（断流/下播），别一直挂着「正在缓冲」骗人。
+        stopDelayGate();
+        setHint(null);
+        return;
+      }
+      if (bufferedAhead() + 0.05 < target) return;
+      stopDelayGate();
+      setHint(null);
+      playNow();
+      watchDelay(target);
+    }, 200);
+  }
+
+  /// 延迟是攒出来的，也会被卡顿一点点吃掉：掉到目标的一半就压回去补，
+  /// 否则开着 20 秒、实际只剩 2 秒，用户还以为有缓冲垫着。
+  function watchDelay(target) {
+    stopDelayGate();
+    session.delayTimer = setInterval(() => {
+      if (session.destroyed) {
+        stopDelayGate();
+        return;
+      }
+      if (video.paused || video.ended) return;
+      const ahead = bufferedAhead();
+      if (ahead > 0.4 && ahead < target * 0.5) holdForDelay(target);
+    }, 2000);
+  }
+
+  /// 改延迟：变大就压住补缓冲，变小就往前跳一段（直播没有快进，跳掉的就看不到了）。
+  function applyDelay(next) {
+    const target = Math.max(0, Math.min(DELAY_MAX, Math.round((Number(next) || 0) * 10) / 10));
+    const previous = Number(session.delaySec) || 0;
+    session.delaySec = target;
+    if (!session.lines.length) {
+      toast(`延迟 ${target.toFixed(1)} 秒，取到流后生效`, 'info', 2200);
+      return;
+    }
+    if (target <= 0) {
+      stopDelayGate();
+      setHint(null);
+      // 关掉延迟就是回到直播：缓冲里那一段不要了，直接跳到缓冲边上。
+      const ahead = bufferedAhead();
+      if (ahead > 1.2) seekInBuffer(video, ahead - 0.8);
+      if (video.paused) playNow();
+      toast('已关闭延迟播放', 'info', 1600);
+      return;
+    }
+    if (target > previous + 0.05) {
+      holdForDelay(target);
+      toast(`延迟 ${target.toFixed(1)} 秒`, 'info', 1600);
+      return;
+    }
+    if (target < previous - 0.05) {
+      const ahead = bufferedAhead();
+      if (ahead > target + 1) seekInBuffer(video, ahead - target);
+      watchDelay(target);
+      toast(`延迟 ${target.toFixed(1)} 秒`, 'info', 1600);
+    }
+  }
+
+  let delayPanelBody = null;
+
+  function openDelayPanel() {
+    if (delayPanelBody) return;
+    const body = document.createElement('div');
+    body.className = 'dual-panel';
+    delayPanelBody = body;
+    openModal({
+      title: '延迟播放',
+      subtitle: '画面比直播慢一点，换来一段抗抖动缓冲',
+      width: 470,
+      body,
+      onClose: () => {
+        delayPanelBody = null;
+      },
+    });
+    renderDelayPanel();
+  }
+
+  function renderDelayPanel() {
+    const body = delayPanelBody;
+    if (!body) return;
+    const value = (Number(session.delaySec) || 0).toFixed(1);
+    body.innerHTML = `
+      <div class="dual-block">
+        <div class="delay-stepper">
+          <button class="btn small" data-step="-1" title="减 1 秒">-1</button>
+          <button class="btn small" data-step="-0.1" title="减 0.1 秒">-0.1</button>
+          <input class="dual-input dual-offset-input" id="delay-value" type="number"
+            min="0" max="${DELAY_MAX}" step="0.1" value="${value}" />
+          <span class="dual-unit">秒</span>
+          <button class="btn small" data-step="0.1" title="加 0.1 秒">+0.1</button>
+          <button class="btn small" data-step="1" title="加 1 秒">+1</button>
+        </div>
+        <p class="dual-tip">0 表示不延迟。设成 N 秒后，画面会比直播慢 N 秒，网络抖动先吃掉这 N 秒缓冲，不会立刻卡。</p>
+      </div>
+      <div class="dual-row">
+        <button class="btn primary small" id="delay-apply">应用</button>
+        <button class="btn small" id="delay-off">关闭延迟</button>
+      </div>
+      <p class="dual-note">延迟靠「先攒够再开播」实现，所以刚打开（或调大）时会先黑屏缓冲一会儿；调小会往前跳过一段画面——直播没有快进。只作用于本直播间，同屏的 B 不受影响。</p>`;
+    bindDelayPanel();
+  }
+
+  function bindDelayPanel() {
+    const body = delayPanelBody;
+    if (!body) return;
+    const input = body.querySelector('#delay-value');
+    const clamp = () => {
+      const next = Math.max(0, Math.min(DELAY_MAX, Math.round((Number(input.value) || 0) * 10) / 10));
+      input.value = next.toFixed(1);
+      return next;
+    };
+    for (const button of body.querySelectorAll('.delay-stepper button')) {
+      button.addEventListener('click', () => {
+        const next = (Number(input.value) || 0) + Number(button.dataset.step);
+        input.value = Math.max(0, Math.min(DELAY_MAX, Math.round(next * 10) / 10)).toFixed(1);
+      });
+    }
+    input?.addEventListener('blur', clamp);
+    input?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      applyDelay(clamp());
+    });
+    body.querySelector('#delay-apply')?.addEventListener('click', () => applyDelay(clamp()));
+    body.querySelector('#delay-off')?.addEventListener('click', () => {
+      input.value = '0.0';
+      applyDelay(0);
+    });
+  }
+
+  // ------------------------------------------------------------ 同屏播放
+  //
+  // A（当前直播间）让出画面：A 只保留声音和弹幕，画面由 B 提供。
+  // B 可以是另一个直播间，也可以是一条裸流地址。
+  //
+  // A 不显示画面不等于不用力——同屏时 A 那一路走代理的纯音频流
+  // （`api.play` 的 audioOnly），视频 tag 在上游就被丢掉。否则两路 1080p
+  // 同时解码，安卓上 B 会直接掉帧。
+
+  let dualPanelBody = null;
+  let lastDualError = '';
+
+  function openDualPanel() {
+    if (dualPanelBody) return;
+    const body = document.createElement('div');
+    body.className = 'dual-panel';
+    dualPanelBody = body;
+    openModal({
+      title: '同屏播放',
+      subtitle: 'B 出画面，A 保留声音和弹幕',
+      width: 470,
+      body,
+      onClose: () => {
+        dualPanelBody = null;
+      },
+    });
+    renderDualPanel();
+  }
+
+  function dualTip() {
+    const current = dual.state;
+    if (current.error) return current.error;
+    if (current.loading) return '正在载入 B…';
+    if (current.open) {
+      const name = PLATFORM_META[current.platform]?.name || '外部流';
+      return `画面来自「${current.title || 'B'}」 · ${name}`;
+    }
+    return '填直播间链接、房间号，或者直接粘 .flv / .m3u8 地址。没载入成功不会改动当前直播间。';
+  }
+
+  function renderDualPanel() {
+    const body = dualPanelBody;
+    if (!body) return;
+    const current = dual.state;
+    const soundA = !video.muted;
+    const soundB = Boolean(current.open) && !videoB.muted;
+    const source = session.danmakuSource;
+    const canUseB = Boolean(current.key && current.detail?.live);
+    const offset = Number(session.dualOffset) || 0;
+    body.innerHTML = `
+      <div class="dual-block">
+        <div class="dual-input-row">
+          <input class="dual-input" id="dual-input" placeholder="直播间链接、房间号或流地址"
+            value="${escapeHtml(session.dualInput || '')}" />
+          <button class="btn primary small" id="dual-load"${current.loading ? ' disabled' : ''}>${current.open ? '切换' : '载入'}</button>
+        </div>
+        <p class="dual-tip${current.error ? ' is-error' : ''}">${escapeHtml(dualTip())}</p>
+      </div>
+      <div class="dual-row">
+        <span class="dual-row-label">声音</span>
+        <div class="dual-choices">
+          <button class="dual-choice" data-sound="a" aria-pressed="${soundA}">A</button>
+          <button class="dual-choice" data-sound="b" aria-pressed="${soundB}"${current.open ? '' : ' disabled'}>B</button>
+        </div>
+        <span class="dual-row-hint">A 的声音就是当前直播间</span>
+      </div>
+      <div class="dual-row">
+        <span class="dual-row-label">弹幕</span>
+        <div class="dual-choices">
+          <button class="dual-choice" data-source="a" aria-pressed="${source === 'a'}">只看 A</button>
+          <button class="dual-choice" data-source="b" aria-pressed="${source === 'b'}"${canUseB ? '' : ' disabled'}>只看 B</button>
+        </div>
+        <span class="dual-row-hint">${canUseB ? '同一时刻只连一路，切换会重连' : 'B 没有可用的弹幕'}</span>
+      </div>
+      <div class="dual-row">
+        <span class="dual-row-label">时间偏移</span>
+        <div class="dual-offset">
+          <input class="dual-input dual-offset-input" id="dual-offset" type="number" min="-30" max="30" step="1"
+            value="${offset}" />
+          <span class="dual-unit">秒</span>
+          <button class="btn small" id="dual-apply"${current.open ? '' : ' disabled'}>应用</button>
+        </div>
+      </div>
+      <p class="dual-note">正数表示 B 比 A 慢，负数表示 A 比 B 慢（B 出画面、A 出声音时靠它对齐）。调的是播放位置，只能落在已经缓冲的范围内，最多 30 秒。</p>
+      ${current.open ? '<button class="btn dual-close" id="dual-close">关闭同屏，恢复 A 的画面</button>' : ''}`;
+    bindDualPanel();
+  }
+
+  function bindDualPanel() {
+    const body = dualPanelBody;
+    if (!body) return;
+    const input = body.querySelector('#dual-input');
+    input?.addEventListener('input', () => {
+      session.dualInput = input.value;
+    });
+    input?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      loadDual();
+    });
+    body.querySelector('#dual-load')?.addEventListener('click', loadDual);
+    for (const button of body.querySelectorAll('.dual-choice[data-sound]')) {
+      button.addEventListener('click', () => {
+        if (button.dataset.sound === 'a') {
+          video.muted = !video.muted;
+          if (!video.muted && video.volume === 0) video.volume = session.lastVolume || 0.8;
+          updateVolumeIcon();
+        } else {
+          dual.setMuted(!videoB.muted);
+        }
+        renderDualPanel();
+      });
+    }
+    for (const button of body.querySelectorAll('.dual-choice[data-source]')) {
+      button.addEventListener('click', () => switchDanmakuSource(button.dataset.source));
+    }
+    body.querySelector('#dual-apply')?.addEventListener('click', () => {
+      applyDualOffset(Number(body.querySelector('#dual-offset')?.value) || 0);
+    });
+    body.querySelector('#dual-close')?.addEventListener('click', closeDual);
+  }
+
+  async function loadDual() {
+    const value = String(session.dualInput || '').trim();
+    if (!value) {
+      toast('先填写 B 的链接或地址');
+      return;
+    }
+    try {
+      await dual.open(value, { currentPlatform: session.platform, muted: videoB.muted });
+      if (session.destroyed) return;
+      if (!dual.state.open) {
+        renderDualPanel();
+        return;
+      }
+      setDualLayout(true);
+      // 两路音量对不上会很别扭：B 跟随 A 的音量，各自只管静音。
+      videoB.volume = video.volume;
+      session.dualOffset = 0;
+      session.dualDelayA = 0;
+      session.dualDelayB = 0;
+      // A 只留声音：代理换成纯音频分支（用户自己开过「只播放音频」就不必重取）。
+      syncAudioOnly();
+      renderDualPanel();
+    } catch (error) {
+      toast(`载入 B 失败：${error}`, 'error');
+      renderDualPanel();
+    }
+  }
+
+  function closeDual() {
+    if (!dual.state.open) {
+      renderDualPanel();
+      return;
+    }
+    dual.close();
+    setDualLayout(false);
+    session.dualOffset = 0;
+    session.dualDelayA = 0;
+    session.dualDelayB = 0;
+    // 弹幕还在 B 那边时，先把连接交回 A，否则关掉后聊天栏就停住了。
+    if (session.danmakuSource === 'b') switchDanmakuSource('a');
+    // 关掉同屏能不能恢复画面，取决于「只播放音频」那个开关还在不在。
+    syncAudioOnly();
+    renderDualPanel();
+  }
+
+  function setDualLayout(active) {
+    page.classList.toggle('is-dual', active);
+    if (active) applyScaleMode(state.settings.player.scaleMode);
+  }
+
+  /// B 的状态变化：面板开着就重画；错误除了写面板，也弹一次（面板常常是关着的）。
+  function renderDualState() {
+    if (dualPanelBody) renderDualPanel();
+    const error = dual.state.error;
+    if (error && error !== lastDualError) {
+      lastDualError = error;
+      toast(error, 'error');
+    }
+    if (!error) lastDualError = '';
+  }
+
+  /// 换一路弹幕看。后端只有一个弹幕槽位，所以是「停掉旧的、连新的」。
+  async function switchDanmakuSource(source) {
+    const next = source === 'b' ? 'b' : 'a';
+    if (next === session.danmakuSource) return;
+    if (next === 'b' && !danmakuTarget('b')) {
+      toast('B 没有可用的弹幕');
+      return;
+    }
+    // 换一路等于换了个聊天频道：旧消息留着只会让人分不清是谁说的。
+    session.messages = [];
+    session.scMessages = [];
+    cancelChatFlush();
+    if (session.tab === 'chat' || session.tab === 'sc') renderChatTab();
+    try {
+      await api.stopDanmaku();
+    } catch {
+      /* 停不掉也没关系，start 会先把它停掉 */
+    }
+    await startDanmaku(next);
+    renderDualPanel();
+  }
+
+  /// 时间偏移：正数让 B 慢，负数让 A 慢。
+  ///
+  /// 直播流只能落在已缓冲的范围内，所以按「与上次施加值的差」做相对 seek，
+  /// 并把实际移动量记下来——缓冲不够时下次还能补上，不会越调越错。
+  function applyDualOffset(next) {
+    if (!dual.state.open) {
+      toast('先载入 B');
+      return;
+    }
+    const target = Math.max(-30, Math.min(30, Math.round(Number(next) || 0)));
+    const wantA = target < 0 ? -target : 0;
+    const wantB = target > 0 ? target : 0;
+    // 差值为正 = 这一路要更慢 = 播放位置往后退；为负 = 追回一段。
+    const deltaA = wantA - session.dualDelayA;
+    const deltaB = wantB - session.dualDelayB;
+    const movedA = deltaA ? seekInBuffer(video, -deltaA) : 0;
+    const movedB = deltaB ? dual.seekBy(-deltaB) : 0;
+    session.dualDelayA = Math.max(0, session.dualDelayA - movedA);
+    session.dualDelayB = Math.max(0, session.dualDelayB - movedB);
+    session.dualOffset = target;
+    const achieved = Math.max(session.dualDelayA, session.dualDelayB);
+    if (Math.abs(achieved - Math.abs(target)) > 0.8) {
+      toast(`缓冲不够，只对齐到 ${achieved.toFixed(1)} 秒`, 'info', 3200);
+    } else {
+      toast(`已按 ${target} 秒对齐`, 'info', 1600);
+    }
+    renderDualPanel();
   }
 
   // ------------------------------------------------------------ 数据连接
@@ -2355,11 +2928,11 @@ export function renderRoom(ctx, params = {}) {
   }
 
   /// 抖音需要先算握手签名，其余平台直接连。
-  async function prepareDanmakuSignature() {
-    if (session.platform !== 'douyin') return {};
+  async function prepareDanmakuSignature(platform, detail) {
+    if (platform !== 'douyin') return {};
     // RoomExtra 是枚举，序列化出来是 `{ Douyin: { room_id } }`；
     // 顺手兼容一次「已经摊平」的形状，免得两边改来改去对不上。
-    const extra = session.detail?.extra || {};
+    const extra = detail?.extra || {};
     const roomInnerId = extra?.Douyin?.room_id || extra?.room_id || '';
     if (!roomInnerId) {
       // 未开播的抖音房间往往还没下发 19 位房间号，签名算不出来。
@@ -2369,7 +2942,27 @@ export function renderRoom(ctx, params = {}) {
     return { signature, userId };
   }
 
-  async function startDanmaku() {
+  /// 当前弹幕该连哪一路。同屏时 B 也要能连，所以 key / 平台 / 详情都从这里取。
+  function danmakuTarget(source) {
+    if (source === 'b') {
+      const other = dual.state;
+      if (!other.open || !other.key) return null;
+      return { key: other.key, platform: other.platform, detail: other.detail };
+    }
+    if (!session.key) return null;
+    return { key: session.key, platform: session.platform, detail: session.detail };
+  }
+
+  /// `source` 为 'a' / 'b'：后端只有一个弹幕槽位，同一时刻只连一路，
+  /// 切换就是把上一路停掉、用另一路重连（"只看 A / 只看 B"）。
+  async function startDanmaku(source = session.danmakuSource) {
+    session.danmakuSource = source === 'b' ? 'b' : 'a';
+    const target = danmakuTarget(session.danmakuSource);
+    if (!target) {
+      session.danmakuStatus = { state: 'failed', reason: 'B 没有可用的弹幕连接' };
+      renderDanmakuStatus();
+      return;
+    }
     session.danmakuStatus = { state: 'connecting', reason: '正在连接弹幕服务器…' };
     renderDanmakuStatus();
     // 重试时会再进这里：先把上一轮的监听摘掉，否则每重试一次就多一份监听。
@@ -2395,9 +2988,9 @@ export function renderRoom(ctx, params = {}) {
     state.unlistenDanmaku = unlisten;
     state.unlistenDanmakuStatus = unlistenStatus;
     try {
-      const options = await prepareDanmakuSignature();
+      const options = await prepareDanmakuSignature(target.platform, target.detail);
       if (session.destroyed) return;
-      await api.startDanmaku(session.key, options);
+      await api.startDanmaku(target.key, options);
       // 状态由后端推事件驱动，这里不再自己往聊天记录里塞「连接正常」——
       // 那句提示对不支持的平台是假的，会把真实原因挡在后面。
     } catch (error) {
@@ -2695,6 +3288,8 @@ export function renderRoom(ctx, params = {}) {
     }
     api.stopDanmaku().catch(() => {});
     destroyPlayer();
+    // 同屏的 B 路是另一套播放器，得单独收掉，否则退出直播间后它还在后台拉流。
+    dual.destroy();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     // 安卓的「全屏」是自己拼的，离开直播间必须还原：否则系统栏一直是隐藏的、
     // 屏幕还锁在横屏，回到列表页会非常别扭。

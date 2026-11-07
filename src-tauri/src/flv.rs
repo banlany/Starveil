@@ -16,8 +16,7 @@
 const TAG_HEADER: usize = 11;
 const TAG_TRAILER: usize = 4;
 const TAG_VIDEO: u8 = 9;
-/// 音频 tag。续接时只从视频关键帧开始，这个值只在测试里拼样本用。
-#[cfg(test)]
+/// 音频 tag。续接时用不到，纯音频过滤（AudioOnlyFilter）靠它挑数据。
 const TAG_AUDIO: u8 = 8;
 /// 续接时第一帧与上一路最后一帧之间留的空隙。
 const SPLICE_GAP_MS: u32 = 20;
@@ -190,9 +189,109 @@ impl FlvSplicer {
     }
 }
 
+/// 只保留音频的过滤器（同屏播放用）。
+///
+/// 同屏时主画面来自 B，A 只贡献声音和弹幕。A 的画面反正不显示，再传一遍
+/// 1080p 视频既占带宽又要多解一路码（安卓上直接体现为 B 掉帧），所以在代理
+/// 这一层就把视频 tag 丢掉，下游只收到一条纯音频的 FLV。
+///
+/// 音频 tag 的时间戳本来就是连续的，不需要像续接那样重排；只做筛选。
+#[derive(Default)]
+pub struct AudioOnlyFilter {
+    pending: Vec<u8>,
+    /// FLV 头是否已经写出（只写一次）。非 FLV 数据时置位并原样透传。
+    started: bool,
+    emitted: u64,
+}
+
+impl AudioOnlyFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn translate(&mut self, chunk: &[u8]) -> Vec<u8> {
+        self.pending.extend_from_slice(chunk);
+        if self.pending.len() > MAX_PENDING {
+            self.pending.clear();
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(self.pending.len());
+        let mut offset = 0;
+        if !self.started {
+            let Some(skip) = flv_header_len(&self.pending) else {
+                // 头还没收全。但如果不是 FLV（某些 CDN 返回的是裸 HLS/其它封装），
+                // 不要在这里一直攒着，原样放过去，让播放器自己处理。
+                if self.pending.len() >= 9 && !self.pending.starts_with(b"FLV") {
+                    self.started = true;
+                    out.extend_from_slice(&self.pending);
+                    self.pending.clear();
+                }
+                return out;
+            };
+            let mut header = self.pending[..skip].to_vec();
+            // 清掉 flags 里的 hasVideo 位，下游看到的是一条纯音频流。
+            if header.len() > 4 {
+                header[4] &= !0x01;
+            }
+            out.extend_from_slice(&header);
+            offset = skip;
+            self.started = true;
+        }
+        while let Some((kind, _, _, total)) = tag_at(&self.pending[offset..]) {
+            if kind == TAG_AUDIO {
+                out.extend_from_slice(&self.pending[offset..offset + total]);
+                self.emitted += 1;
+            }
+            offset += total;
+        }
+        self.pending.drain(..offset);
+        out
+    }
+
+    /// 已经放过去的音频 tag 数，仅用于日志。
+    pub fn emitted(&self) -> u64 {
+        self.emitted
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 只保留音频tag() {
+        let mut filter = AudioOnlyFilter::new();
+        let out = filter.translate(&stream(&[
+            tag(18, 0, b"onMetaData"),
+            audio(100),
+            video(1, 120),
+            video(2, 160),
+            audio(140),
+        ]));
+        // 头部保留，但 hasVideo 位被清掉。
+        assert!(out.starts_with(b"FLV"));
+        assert_eq!(out[4] & 0x01, 0);
+        let mut offset = 13;
+        let mut kinds = Vec::new();
+        while let Some((kind, _, _, total)) = tag_at(&out[offset..]) {
+            kinds.push(kind);
+            offset += total;
+        }
+        assert_eq!(kinds, vec![TAG_AUDIO, TAG_AUDIO]);
+        assert_eq!(filter.emitted(), 2);
+    }
+
+    #[test]
+    fn 音频过滤也能拼上被拆开的tag() {
+        let mut filter = AudioOnlyFilter::new();
+        let data = stream(&[audio(100), video(1, 120), audio(160)]);
+        let mut out = Vec::new();
+        for byte in &data {
+            out.extend_from_slice(&filter.translate(std::slice::from_ref(byte)));
+        }
+        assert_eq!(filter.emitted(), 2);
+        assert_eq!(out.len(), 13 + 2 * (TAG_HEADER + 6 + TAG_TRAILER));
+    }
 
     fn tag(kind: u8, ts: u32, payload: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(TAG_HEADER + payload.len() + TAG_TRAILER);

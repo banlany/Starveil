@@ -193,14 +193,17 @@ export const api = {
     }
     return payload;
   },
-  async play(key, index) {
+  // `audioOnly` 走本机代理的纯音频分支：同屏播放时 A 只留声音，
+  // 视频 tag 在代理层就被丢掉了，省带宽也少解一路码。
+  async play(key, index, options = {}) {
+    const audioOnly = Boolean(options.audioOnly);
     if (key.startsWith('douyu:')) {
       const session = douyuSessions.get(key);
       if (!session) throw new Error('斗鱼会话已失效，请重新进房');
       const signed = signDouyu(session.script, session.roomId, session.did);
-      return call('douyu_play', { key, index, signedArgs: signed });
+      return call('douyu_play', { key, index, signedArgs: signed, audioOnly });
     }
-    return call('play', { key, index });
+    return call('play', { key, index, audioOnly });
   },
   // 抖音的弹幕握手要带 webmssdk 签名，由 room.js 算好后传进来；其余平台忽略这两个参数。
   startDanmaku(key, options = {}) {

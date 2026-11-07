@@ -1744,3 +1744,229 @@ html[data-theme="light"] .sc-delete {
     display: none;
   }
 }
+
+/* ------------------------------------------------------------ 同屏播放 */
+
+/* 第二路画面：默认完全不可见，也不接事件（点画面仍然落到 #player 上，
+   唤醒控制条 / 双击全屏这些行为不用再绑一遍）。 */
+#player-b {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  z-index: 2;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* 同屏时 A 让出画面。用 opacity 而不是 display:none：
+   它还要出声，一旦不参与渲染，音轨也可能被一起挂起。 */
+.room-page.is-dual #player {
+  opacity: 0;
+}
+
+.room-page.is-dual #player-b {
+  opacity: 1;
+  visibility: visible;
+}
+
+.dual-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.dual-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dual-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.dual-input-row .dual-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.dual-input-row .dual-input:focus {
+  border-color: var(--accent);
+}
+
+.dual-input::placeholder {
+  color: var(--dim);
+}
+
+.dual-tip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.dual-tip.is-error {
+  color: var(--danger);
+}
+
+.dual-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dual-row-label {
+  flex: none;
+  width: 56px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dual-row-hint {
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+.dual-choices {
+  display: flex;
+  gap: 6px;
+}
+
+.dual-choice {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.dual-choice[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.dual-choice:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dual-offset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dual-offset-input {
+  width: 78px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  text-align: center;
+  outline: none;
+}
+
+.dual-offset-input:focus {
+  border-color: var(--accent);
+}
+
+.dual-unit {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dual-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--dim);
+}
+
+.dual-close {
+  align-self: flex-start;
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.45);
+}
+
+/* ------------------------------------------------------------ 只播放音频 */
+
+/* 这一路没有视频轨（代理层丢掉了视频 tag），画面位置是空的。
+   底下留着 stage-bg，中间给一个能点回来的标记。 */
+.room-page.is-audio-only #player {
+  opacity: 0;
+}
+
+.audio-only-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 15px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f2f4f8;
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 4;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.audio-only-badge em {
+  font-style: normal;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.room-page.is-audio-only:not(.is-dual) .audio-only-badge {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* 控制条收起来时把标记也一起淡掉，别在黑屏上单留一个胶囊。 */
+.room-page.is-audio-only.ui-idle:not(.is-dual) .audio-only-badge {
+  opacity: 0.35;
+}
+
+/* 延迟播放的步进控件：-1 / -0.1 / [值] 秒 / +0.1 / +1 */
+.delay-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.delay-stepper .dual-offset-input {
+  width: 84px;
+}
