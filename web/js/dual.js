@@ -367,6 +367,17 @@ export function createDualPlayback(video, onState) {
     emit();
   }
 
+  /// 面板上的 B 音量。0 等同静音。
+  ///
+  /// 这里刻意不 emit：面板的滑块是连续的 input 事件，一 emit 就会
+  /// renderDualPanel 重画 innerHTML，正在拖的滑块立刻被换掉、拖动中断。
+  function setVolume(value) {
+    const next = Math.max(0, Math.min(1, Number(value) || 0));
+    video.volume = next;
+    session.muted = next <= 0;
+    video.muted = session.muted;
+  }
+
   /// 按秒对齐：`seconds` 正数往前跳，负数往后退。
   ///
   /// 直播流没法「提前」拿到还没收到的内容，所以只在前向缓冲里走：
@@ -385,6 +396,7 @@ export function createDualPlayback(video, onState) {
     open,
     close,
     setMuted,
+    setVolume,
     seekBy,
     backwardRoom,
     snapshot,

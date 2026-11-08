@@ -83,6 +83,9 @@ export function renderRoom(ctx, params = {}) {
         <div class="audio-only-badge" id="audio-only-badge" role="button" tabindex="0">
           ${icon('volume', 18)}<span>只播放音频</span><em>点此恢复画面</em>
         </div>
+        <!-- A 的小窗关闭按钮：跟着小窗走，位置由 positionDualPip 同步。
+             单独一个元素而不是塞进 video 里——video 不能有子元素。 -->
+        <button class="pip-close" id="pip-close" type="button" title="关闭小窗" hidden>${icon('close', 13)}</button>
         <div class="danmaku-layer" id="danmaku-layer"></div>
         <div class="sc-float-layer" id="sc-float-layer"></div>
         <div class="stage-hint" id="stage-hint"><span class="big-spinner"></span><span>正在读取直播间…</span></div>
@@ -230,6 +233,8 @@ export function renderRoom(ctx, params = {}) {
     destroyed: false,
     // 小窗（PiP）期间的退出探测定时器，见 setPipMode。
     pipWatch: 0,
+    // 同屏小窗的尺寸监听：舞台大小变了要重算小窗位置。
+    pipObserver: null,
     danmakuEnabled: state.settings.danmaku.enabled !== false,
     follow: false,
     playerReady: false,
@@ -258,10 +263,10 @@ export function renderRoom(ctx, params = {}) {
     watchPending: 0,
     watchTimer: 0,
     // 同屏播放：A 这一路是否只取声音（视频 tag 在代理层就被丢掉）。
-    // 开同屏时置 true 并重取一次流，关闭时恢复。
+    // 只由用户那个「只播放音频」开关决定；同屏开着但小窗关掉时，为了切回来不用
+    // 重新取流，A 仍然保留视频（用户明确要的取舍：多占一路带宽换切换速度）。
     audioOnly: false,
     // 齿轮里的「只播放音频」：用户自己按下的那个开关，只对本次进房有效。
-    // 实际是否走纯音频 = 这个开关 || 同屏开着（画面归 B，A 只能要声音）。
     audioOnlyUser: false,
     // 延迟播放：比直播慢几秒（秒，0 表示关闭），只作用于 A。
     // 靠「先攒够 N 秒缓冲再开播」实现，见 holdForDelay。
@@ -276,6 +281,14 @@ export function renderRoom(ctx, params = {}) {
     // 面板里填的 B 地址（面板重画时输入框不会丢内容）与当前设定的偏移值。
     dualInput: '',
     dualOffset: 0,
+    // 同屏布局：flip 为 true 表示 A 主画面、B 缩成小窗（点小窗切换）。
+    dualFlip: false,
+    // A 的小窗：on 是开关，x/y 是左上角相对舞台的百分比（null 走默认右下角）。
+    // 拖过之后记住位置，关掉再开还在原处。
+    dualPip: { on: true, x: null, y: null },
+    // 面板上 B 的独立音量（0~1）。默认给一半：两路都满音量混在一起太吵，
+    // 但也不静音——静音会让人以为 B 没声音。
+    dualVolumeB: 0.5,
   };
   state.room = session;
 
@@ -345,6 +358,18 @@ export function renderRoom(ctx, params = {}) {
   $('ctrl-line').addEventListener('click', () => showLineMenu());
   $('ctrl-danmaku').addEventListener('click', () => setDanmakuEnabled(!session.danmakuEnabled));
   $('ctrl-settings').addEventListener('click', openQuickSettings);
+  // 小窗：拖动改位置、点一下换主次、右上角的 × 收起。
+  $('pip-close').addEventListener('click', () => setDualPip(false));
+  bindPipDrag(video);
+  bindPipDrag(videoB);
+  // 舞台尺寸会变（拖聊天栏、进全屏、缩放窗口），小窗按百分比重算位置。
+  if (typeof ResizeObserver === 'function') {
+    const pipObserver = new ResizeObserver(() => {
+      if (dual.state.open && session.dualPip.on) positionDualPip();
+    });
+    pipObserver.observe(stage);
+    session.pipObserver = pipObserver;
+  }
   // 「只播放音频」时画面是黑的，标记本身就是退出这个模式的入口。
   // 必须 stopPropagation：画面上的点击会唤出控制条/暂停，别让标记顺带触发一次。
   audioOnlyBadge.addEventListener('click', (event) => {
@@ -1180,7 +1205,7 @@ export function renderRoom(ctx, params = {}) {
     chatTabsObserver.observe(chatTabsBox);
   }
 
-  // 发送弹幕的输入框默认隐藏（设置 → 弹幕设置 → 允许发送弹幕），
+  // 发送弹幕的输入框默认隐藏（设置 → 弹幕与SC设置 → 允许发送弹幕），
   // 只在「聊天」标签下显示，避免挡住 SC/关注/设置面板。
   function updateComposer() {
     const enabled = Boolean(state.settings.danmaku.sendEnabled);
@@ -1799,7 +1824,7 @@ export function renderRoom(ctx, params = {}) {
   ///
   /// 桌面上是浏览器 Fullscreen API（document.fullscreenElement），安卓 WebView 不支持它，
   /// 走的是 CSS 剧场模式（html.is-theater）。这两条路的判断以前散在各处，
-  /// 「全屏里点设置 → 弹幕设置没反应」「全屏按返回直接退出直播间」都是只看
+  /// 「全屏里点设置 → 弹幕与SC设置没反应」「全屏按返回直接退出直播间」都是只看
   /// document.fullscreenElement 造成的——安卓上它永远是 null。
   function isPlayerFullscreen() {
     return Boolean(document.fullscreenElement) || page.classList.contains('is-theater');
@@ -1834,6 +1859,30 @@ export function renderRoom(ctx, params = {}) {
     page.classList.remove('ui-idle');
     wake();
     requestAnimationFrame(applyControlDensity);
+  }
+
+  /// 舞台上「双击切全屏」要跳过的区域。
+  ///
+  /// 控制条、顶栏、错误卡、SC 卡片各有自己的点击行为，连点两下（比如把音量
+  /// 按两下）不该顺手把画面全屏掉。小窗（`.is-pip`）也在这里：它的双击由
+  /// bindPipDrag 处理，放过来会先全屏再被自己切一次，等于没切。
+  const STAGE_NO_DBLCLICK = [
+    '.player-controls',
+    '.room-topbar',
+    '.stage-hint',
+    '.sc-float-card',
+    '.pip-close',
+    '.audio-only-badge',
+    '.is-pip',
+    'button',
+    'input',
+    'textarea',
+    'select',
+    'a',
+  ].join(', ');
+
+  function isStageControl(target) {
+    return Boolean(target?.closest?.(STAGE_NO_DBLCLICK));
   }
 
   async function toggleFullscreen() {
@@ -1885,8 +1934,11 @@ export function renderRoom(ctx, params = {}) {
       toast('只播放音频时没有画面，小窗里也是黑的');
       return;
     }
-    // 同屏时台前是 B：小窗里也要显示 B，否则拖出来的是 A 那张不可见的画面。
-    const pipVideo = page.classList.contains('is-dual') ? videoB : video;
+    // 同屏时台前是主画面（默认 B，互换后是 A）：小窗里要显示的就是铺满的那个，
+    // 而不是缩在角落的那一路，否则拖出来是一张很小的画面。
+    const pipVideo = page.classList.contains('is-dual')
+      ? (session.dualFlip ? video : videoB)
+      : video;
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
@@ -1969,8 +2021,22 @@ export function renderRoom(ctx, params = {}) {
     bindHintActions();
   });
   // 直播不提供暂停；单击只负责唤出控制条，双击进入/退出全屏。
+  //
+  // 双击挂在舞台上而不是 #player 上：同屏时主画面是 pointer-events:none
+  // （点击要穿透到舞台，否则会把控制条挡住），事件到不了 video。而且画面
+  // 本来就不止 #player 一个——B 的画面、小窗之外的空白、只播放音频时的黑底，
+  // 双击它们都该切全屏。
   video.addEventListener('click', wake);
-  video.addEventListener('dblclick', toggleFullscreen);
+  // 双击的第二下按下去时掐掉默认动作：否则浏览器会把被双击的 video 整个选中，
+  // 在上面盖一层蓝色选区（看着像画面蒙了层色），文字也可能被一起框住。
+  // 控件除外——连点两下按钮不该被拦。
+  stage.addEventListener('mousedown', (event) => {
+    if (event.detail > 1 && !isStageControl(event.target)) event.preventDefault();
+  });
+  stage.addEventListener('dblclick', (event) => {
+    if (isStageControl(event.target)) return;
+    toggleFullscreen();
+  });
 
   // ------------------------------------------------------------ 房间信息
 
@@ -2317,8 +2383,8 @@ export function renderRoom(ctx, params = {}) {
     const body = document.createElement('div');
     body.className = 'room-settings-modal';
     openModal({
-      title: '直播设置',
-      subtitle: '弹幕设置 / 屏蔽设置',
+      title: '弹幕与SC设置',
+      subtitle: '弹幕 / 屏蔽 / SC',
       width: 420,
       body,
     });
@@ -2332,7 +2398,7 @@ export function renderRoom(ctx, params = {}) {
   function openQuickSettings() {
     openMenu($('ctrl-settings'), [
       {
-        label: '弹幕设置',
+        label: '弹幕与SC设置',
         icon: 'text',
         onClick: () => {
           // 铺满状态（桌面全屏 / 安卓剧场）下聊天栏是隐藏的，切到聊天栏的「设置」标签
@@ -2420,16 +2486,22 @@ export function renderRoom(ctx, params = {}) {
     if (session.audioOnlyUser === next) return;
     session.audioOnlyUser = next;
     syncAudioOnly();
+    if (dualPanelBody) renderDualPanel();
     toast(next ? '只播放音频，点画面上的标记可恢复' : '已恢复画面', 'info', 2000);
   }
 
-  /// 把两个来源（用户开关 / 同屏）合并成「这一路到底要不要视频」，需要换代理分支时重取流。
+  /// 合成本次进房「这一路到底要不要视频」，需要换代理分支时重取流。
   ///
-  /// 同屏开着时永远只要声音——画面归 B，A 留着视频只会白占带宽和解码器。
+  /// 只由用户那个开关决定：同屏时 A 也保留视频——小窗随时要出画面，
+  /// 而且关掉小窗再开回来不用等重新取流。多占一路带宽是明确要的取舍。
   function syncAudioOnly() {
-    const want = session.audioOnlyUser || dual.state.open;
-    // 同屏时台前是 B，标记不能压在 B 的画面上。
-    page.classList.toggle('is-audio-only', session.audioOnlyUser && !dual.state.open);
+    const want = session.audioOnlyUser;
+    // 开着「只播放音频」时小窗必然是一块黑，直接收掉。
+    if (want && session.dualPip.on) {
+      session.dualPip.on = false;
+      applyDualLayout();
+    }
+    page.classList.toggle('is-audio-only', want && !dual.state.open);
     if (session.audioOnly === want) return;
     session.audioOnly = want;
     // 代理按 token 分两套地址（带视频 / 纯音频），换过去必须重新取一次流。
@@ -2444,6 +2516,8 @@ export function renderRoom(ctx, params = {}) {
   // 而且画面比直播和弹幕慢。
 
   const DELAY_MAX = 20;
+  // 同屏「时间偏移」的上限（秒），正负都取这个值。
+  const DUAL_OFFSET_MAX = 20;
 
   function bufferedEnd() {
     const ranges = video.buffered;
@@ -2629,12 +2703,12 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 同屏播放
   //
-  // A（当前直播间）让出画面：A 只保留声音和弹幕，画面由 B 提供。
-  // B 可以是另一个直播间，也可以是一条裸流地址。
+  // 默认 B 铺满、A 缩成可拖动的小窗（点小窗和 B 换主次），两路各有一个音量。
+  // 小窗可以关掉，只留 B 的画面 + A 的声音。
   //
-  // A 不显示画面不等于不用力——同屏时 A 那一路走代理的纯音频流
-  // （`api.play` 的 audioOnly），视频 tag 在上游就被丢掉。否则两路 1080p
-  // 同时解码，安卓上 B 会直接掉帧。
+  // A 这一路要不要视频由「只播放音频」那个开关单独决定：小窗开着必然要画面，
+  // 所以开小窗时会把这个开关关掉。关掉小窗后 A 仍然保留视频流——切回来不用
+  // 重新取流，代价是多占一路带宽（这是明确要的取舍）。
 
   let dualPanelBody = null;
   let lastDualError = '';
@@ -2646,7 +2720,7 @@ export function renderRoom(ctx, params = {}) {
     dualPanelBody = body;
     openModal({
       title: '同屏播放',
-      subtitle: 'B 出画面，A 保留声音和弹幕',
+      subtitle: 'B 出画面，A 出声音和小窗',
       width: 470,
       body,
       onClose: () => {
@@ -2671,11 +2745,13 @@ export function renderRoom(ctx, params = {}) {
     const body = dualPanelBody;
     if (!body) return;
     const current = dual.state;
-    const soundA = !video.muted;
-    const soundB = Boolean(current.open) && !videoB.muted;
     const source = session.danmakuSource;
     const canUseB = Boolean(current.key && current.detail?.live);
-    const offset = Number(session.dualOffset) || 0;
+    const offset = (Number(session.dualOffset) || 0).toFixed(1);
+    // 滑块显示的就是实际音量：静音等价于 0，不再单列静音按钮。
+    const volA = Math.round((video.muted ? 0 : video.volume) * 100);
+    const volB = Math.round((videoB.muted ? 0 : videoB.volume) * 100);
+    const pipOn = session.dualPip.on;
     body.innerHTML = `
       <div class="dual-block">
         <div class="dual-input-row">
@@ -2685,13 +2761,35 @@ export function renderRoom(ctx, params = {}) {
         </div>
         <p class="dual-tip${current.error ? ' is-error' : ''}">${escapeHtml(dualTip())}</p>
       </div>
-      <div class="dual-row">
+      <div class="dual-block">
         <span class="dual-row-label">声音</span>
-        <div class="dual-choices">
-          <button class="dual-choice" data-sound="a" aria-pressed="${soundA}">A</button>
-          <button class="dual-choice" data-sound="b" aria-pressed="${soundB}"${current.open ? '' : ' disabled'}>B</button>
+        <div class="dual-volumes">
+          <div class="dual-volume">
+            <span class="dual-vol-tag">A</span>
+            <input type="range" class="dual-range" id="dual-vol-a" min="0" max="100" step="1"
+              value="${volA}" aria-label="A 的音量" />
+            <span class="dual-vol-num" id="dual-vol-a-num">${volA}</span>
+          </div>
+          <div class="dual-volume">
+            <span class="dual-vol-tag">B</span>
+            <input type="range" class="dual-range" id="dual-vol-b" min="0" max="100" step="1"
+              value="${volB}" aria-label="B 的音量"${current.open ? '' : ' disabled'} />
+            <span class="dual-vol-num" id="dual-vol-b-num">${current.open ? volB : '—'}</span>
+          </div>
         </div>
-        <span class="dual-row-hint">A 的声音就是当前直播间</span>
+        <span class="dual-row-hint">A 的音量就是底部控制条那个，B 是单独的</span>
+      </div>
+      <div class="dual-row">
+        <span class="dual-row-label">A 小窗</span>
+        <div class="dual-choices">
+          <button class="dual-choice" data-pip="on" aria-pressed="${pipOn}"${current.open ? '' : ' disabled'}>开启</button>
+          <button class="dual-choice" data-pip="off" aria-pressed="${!pipOn}"${current.open ? '' : ' disabled'}>关闭</button>
+        </div>
+        <span class="dual-row-hint">${
+          current.open
+            ? (session.dualFlip ? 'A 在主画面，B 在小窗' : '拖动可移动，点一下和主画面互换')
+            : '载入 B 之后可用'
+        }</span>
       </div>
       <div class="dual-row">
         <span class="dual-row-label">弹幕</span>
@@ -2701,16 +2799,22 @@ export function renderRoom(ctx, params = {}) {
         </div>
         <span class="dual-row-hint">${canUseB ? '同一时刻只连一路，切换会重连' : 'B 没有可用的弹幕'}</span>
       </div>
-      <div class="dual-row">
+      <div class="dual-block">
         <span class="dual-row-label">时间偏移</span>
-        <div class="dual-offset">
-          <input class="dual-input dual-offset-input" id="dual-offset" type="number" min="-30" max="30" step="1"
-            value="${offset}" />
+        <div class="delay-stepper">
+          <button class="btn small" data-offset-step="-1" title="减 1 秒">-1</button>
+          <button class="btn small" data-offset-step="-0.1" title="减 0.1 秒">-0.1</button>
+          <input class="dual-input dual-offset-input" id="dual-offset" type="number"
+            min="${-DUAL_OFFSET_MAX}" max="${DUAL_OFFSET_MAX}" step="0.1" value="${offset}" />
           <span class="dual-unit">秒</span>
+          <button class="btn small" data-offset-step="0.1" title="加 0.1 秒">+0.1</button>
+          <button class="btn small" data-offset-step="1" title="加 1 秒">+1</button>
+        </div>
+        <div class="dual-row">
           <button class="btn small" id="dual-apply"${current.open ? '' : ' disabled'}>应用</button>
+          <span class="dual-row-hint">正数 B 慢，负数 A 慢；只落在已缓冲的范围内，最多 ${DUAL_OFFSET_MAX} 秒</span>
         </div>
       </div>
-      <p class="dual-note">正数表示 B 比 A 慢，负数表示 A 比 B 慢（B 出画面、A 出声音时靠它对齐）。调的是播放位置，只能落在已经缓冲的范围内，最多 30 秒。</p>
       ${current.open ? '<button class="btn dual-close" id="dual-close">关闭同屏，恢复 A 的画面</button>' : ''}`;
     bindDualPanel();
   }
@@ -2728,24 +2832,61 @@ export function renderRoom(ctx, params = {}) {
       loadDual();
     });
     body.querySelector('#dual-load')?.addEventListener('click', loadDual);
-    for (const button of body.querySelectorAll('.dual-choice[data-sound]')) {
-      button.addEventListener('click', () => {
-        if (button.dataset.sound === 'a') {
-          video.muted = !video.muted;
-          if (!video.muted && video.volume === 0) video.volume = session.lastVolume || 0.8;
-          updateVolumeIcon();
-        } else {
-          dual.setMuted(!videoB.muted);
-        }
-        renderDualPanel();
-      });
+    // 音量滑块：A 直接改 video.volume（和底部控制条是同一个值），
+    // B 走 dual.setVolume。拖到 0 就是静音，所以不再单列静音按钮。
+    const volA = body.querySelector('#dual-vol-a');
+    volA?.addEventListener('input', () => {
+      const value = Number(volA.value) / 100;
+      video.volume = value;
+      video.muted = value === 0;
+      if (value > 0) session.lastVolume = value;
+      updateVolumeIcon();
+      const num = body.querySelector('#dual-vol-a-num');
+      if (num) num.textContent = String(Math.round(value * 100));
+    });
+    const volB = body.querySelector('#dual-vol-b');
+    volB?.addEventListener('input', () => {
+      const value = Number(volB.value) / 100;
+      session.dualVolumeB = value;
+      dual.setVolume(value);
+      const num = body.querySelector('#dual-vol-b-num');
+      if (num) num.textContent = String(Math.round(value * 100));
+      // B 拖到 0 之后小窗还亮着会很奇怪，不用管画面，声音关掉就行。
+    });
+    for (const button of body.querySelectorAll('.dual-choice[data-pip]')) {
+      button.addEventListener('click', () => setDualPip(button.dataset.pip === 'on'));
     }
     for (const button of body.querySelectorAll('.dual-choice[data-source]')) {
       button.addEventListener('click', () => switchDanmakuSource(button.dataset.source));
     }
-    body.querySelector('#dual-apply')?.addEventListener('click', () => {
-      applyDualOffset(Number(body.querySelector('#dual-offset')?.value) || 0);
+    // 时间偏移：步进按钮 + 输入框，和「延迟播放」同一套控件。
+    const offsetInput = body.querySelector('#dual-offset');
+    const clampOffset = () => {
+      const next = Math.max(
+        -DUAL_OFFSET_MAX,
+        Math.min(DUAL_OFFSET_MAX, Math.round((Number(offsetInput?.value) || 0) * 10) / 10)
+      );
+      if (offsetInput) offsetInput.value = next.toFixed(1);
+      return next;
+    };
+    for (const button of body.querySelectorAll('[data-offset-step]')) {
+      button.addEventListener('click', () => {
+        const next = (Number(offsetInput?.value) || 0) + Number(button.dataset.offsetStep);
+        if (offsetInput) {
+          offsetInput.value = Math.max(
+            -DUAL_OFFSET_MAX,
+            Math.min(DUAL_OFFSET_MAX, Math.round(next * 10) / 10)
+          ).toFixed(1);
+        }
+      });
+    }
+    offsetInput?.addEventListener('blur', clampOffset);
+    offsetInput?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      applyDualOffset(clampOffset());
     });
+    body.querySelector('#dual-apply')?.addEventListener('click', () => applyDualOffset(clampOffset()));
     body.querySelector('#dual-close')?.addEventListener('click', closeDual);
   }
 
@@ -2756,19 +2897,22 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     try {
-      await dual.open(value, { currentPlatform: session.platform, muted: videoB.muted });
+      await dual.open(value, { currentPlatform: session.platform, muted: session.dualVolumeB <= 0 });
       if (session.destroyed) return;
       if (!dual.state.open) {
         renderDualPanel();
         return;
       }
-      setDualLayout(true);
-      // 两路音量对不上会很别扭：B 跟随 A 的音量，各自只管静音。
-      videoB.volume = video.volume;
+      // 默认 B 铺满、A 缩成小窗。小窗要 A 的画面，先把「只播放音频」关掉。
+      session.dualFlip = false;
+      session.dualPip.on = true;
+      ensureAHasVideo();
+      applyDualLayout();
+      // B 用自己那份音量，不跟随 A：两路同时出声时必须能分别调。
+      dual.setVolume(session.dualVolumeB);
       session.dualOffset = 0;
       session.dualDelayA = 0;
       session.dualDelayB = 0;
-      // A 只留声音：代理换成纯音频分支（用户自己开过「只播放音频」就不必重取）。
       syncAudioOnly();
       renderDualPanel();
     } catch (error) {
@@ -2783,7 +2927,8 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     dual.close();
-    setDualLayout(false);
+    session.dualFlip = false;
+    applyDualLayout();
     session.dualOffset = 0;
     session.dualDelayA = 0;
     session.dualDelayB = 0;
@@ -2794,9 +2939,193 @@ export function renderRoom(ctx, params = {}) {
     renderDualPanel();
   }
 
-  function setDualLayout(active) {
+  /// 同屏布局：谁铺满、谁缩成小窗，全由 class 决定。
+  ///
+  /// 两路 video 都不移动 DOM——把正在播 MSE 的元素塞进别的父节点会掉源，
+  /// 只能重新 load。所以「点小窗换主次」是纯样式操作。
+  function applyDualLayout() {
+    const active = dual.state.open;
+    const pipOn = active && session.dualPip.on;
     page.classList.toggle('is-dual', active);
-    if (active) applyScaleMode(state.settings.player.scaleMode);
+    const close = $('pip-close');
+    if (close) close.hidden = !pipOn;
+    for (const el of [video, videoB]) el.classList.remove('is-main', 'is-pip', 'is-hidden');
+    if (!active) {
+      clearPipStyle();
+      return;
+    }
+    applyScaleMode(state.settings.player.scaleMode);
+    // flip=true 是 A 主 B 小；默认反过来。
+    const mainEl = session.dualFlip ? video : videoB;
+    const pipEl = session.dualFlip ? videoB : video;
+    // 换主次时上一个「小窗」身上还留着 inline 的宽高和 left/top，
+    // 不清掉它就算挂上 is-main 也还是小尺寸（inline 优先级更高）。
+    clearPipStyle();
+    mainEl.classList.add('is-main');
+    if (pipOn) {
+      pipEl.classList.add('is-pip');
+      positionDualPip();
+    } else {
+      pipEl.classList.add('is-hidden');
+    }
+  }
+
+  /// 小窗的位置与大小。x/y 记的是左上角占舞台的百分比，窗口尺寸一变
+  /// 会按比例落回原处；没拖过就是右下角。
+  function pipBox() {
+    const rect = stage.getBoundingClientRect();
+    // 26% 宽在小窗口下会太窄，150px 兜底；上限 45%，别把主画面挡死。
+    const width = Math.round(Math.min(Math.max(rect.width * 0.26, 150), rect.width * 0.45));
+    const height = Math.round((width * 9) / 16);
+    const maxX = Math.max(0, rect.width - width);
+    const maxY = Math.max(0, rect.height - height);
+    const x = session.dualPip.x == null
+      ? Math.max(0, maxX - 12)
+      : Math.min(Math.max(0, session.dualPip.x * rect.width), maxX);
+    const y = session.dualPip.y == null
+      ? Math.max(0, maxY - 12)
+      : Math.min(Math.max(0, session.dualPip.y * rect.height), maxY);
+    return { rect, width, height, x, y, maxX, maxY };
+  }
+
+  function positionDualPip() {
+    if (!dual.state.open || !session.dualPip.on) return;
+    const el = session.dualFlip ? videoB : video;
+    const box = pipBox();
+    el.style.width = `${box.width}px`;
+    el.style.height = `${box.height}px`;
+    el.style.left = `${box.x}px`;
+    el.style.top = `${box.y}px`;
+    placePipClose(box.x, box.y, box.width);
+  }
+
+  /// 关闭按钮钉在小窗右上角。它是舞台的直接子元素（video 不能有子元素）。
+  function placePipClose(x, y, width) {
+    const close = $('pip-close');
+    if (!close) return;
+    close.style.left = `${x + width - 30}px`;
+    close.style.top = `${y + 6}px`;
+  }
+
+  function clearPipStyle() {
+    for (const el of [video, videoB]) {
+      el.style.width = '';
+      el.style.height = '';
+      el.style.left = '';
+      el.style.top = '';
+    }
+  }
+
+  /// 点小窗 = 和主画面互换。
+  function toggleDualFlip() {
+    if (!dual.state.open) return;
+    session.dualFlip = !session.dualFlip;
+    applyDualLayout();
+    renderDualPanel();
+  }
+
+  function setDualPip(on) {
+    const next = Boolean(on);
+    if (session.dualPip.on === next) return;
+    session.dualPip.on = next;
+    if (next) {
+      // 重新打开小窗时回到「B 主 A 小」这个默认摆法。
+      session.dualFlip = false;
+      ensureAHasVideo();
+    }
+    applyDualLayout();
+    renderDualPanel();
+  }
+
+  /// 小窗要真有画面，A 就不能是纯音频流：把这个开关关掉，重取带视频的地址。
+  function ensureAHasVideo() {
+    if (!session.audioOnlyUser) return;
+    session.audioOnlyUser = false;
+    syncAudioOnly();
+    toast('A 的小窗需要画面，已关闭「只播放音频」', 'info', 2600);
+  }
+
+  /// 拖动 + 点击：位移小于 4px 当点击（换主次），否则记住新位置。
+  ///
+  /// 小窗上双击也是「切全屏」，所以单击互换要压 240ms 再执行：第二击落在
+  /// 这个窗口里就把互换取消、改切全屏，全程不会先闪一下主次对调。
+  function bindPipDrag(el) {
+    let drag = null;
+    let tapTimer = 0;
+    let lastTapAt = 0;
+    el.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      if (!dual.state.open || !session.dualPip.on) return;
+      // 只有当前小窗那一方可拖；主画面上的拖动留给控制条唤醒。
+      if (el !== (session.dualFlip ? videoB : video)) return;
+      const box = pipBox();
+      drag = {
+        id: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        left: box.x,
+        top: box.y,
+        box,
+        moved: false,
+      };
+      el.classList.add('is-dragging');
+      try {
+        el.setPointerCapture(event.pointerId);
+      } catch {
+        /* 忽略 */
+      }
+      event.preventDefault();
+    });
+    el.addEventListener('pointermove', (event) => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      drag.moved = true;
+      const x = Math.min(Math.max(0, drag.left + dx), drag.box.maxX);
+      const y = Math.min(Math.max(0, drag.top + dy), drag.box.maxY);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      placePipClose(x, y, drag.box.width);
+    });
+    const finish = (event) => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const moved = drag.moved;
+      const box = drag.box;
+      drag = null;
+      el.classList.remove('is-dragging');
+      try {
+        el.releasePointerCapture(event.pointerId);
+      } catch {
+        /* 忽略 */
+      }
+      if (!moved) {
+        const now = performance.now();
+        if (now - lastTapAt < 320) {
+          // 第二击：撤掉待定的互换，切全屏。
+          lastTapAt = 0;
+          clearTimeout(tapTimer);
+          tapTimer = 0;
+          toggleFullscreen();
+          return;
+        }
+        lastTapAt = now;
+        clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => {
+          tapTimer = 0;
+          toggleDualFlip();
+        }, 240);
+        return;
+      }
+      session.dualPip.x = (parseFloat(el.style.left) || 0) / (box.rect.width || 1);
+      session.dualPip.y = (parseFloat(el.style.top) || 0) / (box.rect.height || 1);
+    };
+    el.addEventListener('pointerup', finish);
+    el.addEventListener('pointercancel', () => {
+      if (!drag) return;
+      drag = null;
+      el.classList.remove('is-dragging');
+    });
   }
 
   /// B 的状态变化：面板开着就重画；错误除了写面板，也弹一次（面板常常是关着的）。
@@ -2841,7 +3170,10 @@ export function renderRoom(ctx, params = {}) {
       toast('先载入 B');
       return;
     }
-    const target = Math.max(-30, Math.min(30, Math.round(Number(next) || 0)));
+    const target = Math.max(
+      -DUAL_OFFSET_MAX,
+      Math.min(DUAL_OFFSET_MAX, Math.round((Number(next) || 0) * 10) / 10)
+    );
     const wantA = target < 0 ? -target : 0;
     const wantB = target > 0 ? target : 0;
     // 差值为正 = 这一路要更慢 = 播放位置往后退；为负 = 追回一段。
@@ -2856,7 +3188,7 @@ export function renderRoom(ctx, params = {}) {
     if (Math.abs(achieved - Math.abs(target)) > 0.8) {
       toast(`缓冲不够，只对齐到 ${achieved.toFixed(1)} 秒`, 'info', 3200);
     } else {
-      toast(`已按 ${target} 秒对齐`, 'info', 1600);
+      toast(`已按 ${target.toFixed(1)} 秒对齐`, 'info', 1600);
     }
     renderDualPanel();
   }
@@ -3290,6 +3622,8 @@ export function renderRoom(ctx, params = {}) {
     destroyPlayer();
     // 同屏的 B 路是另一套播放器，得单独收掉，否则退出直播间后它还在后台拉流。
     dual.destroy();
+    session.pipObserver?.disconnect();
+    session.pipObserver = null;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     // 安卓的「全屏」是自己拼的，离开直播间必须还原：否则系统栏一直是隐藏的、
     // 屏幕还锁在横屏，回到列表页会非常别扭。

@@ -27,6 +27,23 @@
   overflow: hidden;
 }
 
+/* 双击画面切全屏时，浏览器会顺手把被双击的元素选中：video 被选中后整块盖上
+   一层蓝色选区，看着像画面落了色。舞台里没有需要选中的文字，直接关掉。
+   （mousedown 的第二下也 preventDefault 了，见 room.js，两道保险。） */
+.stage,
+#player,
+#player-b {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stage ::selection {
+  background: transparent;
+  color: inherit;
+}
+
 .stage-bg {
   position: absolute;
   inset: -30px;
@@ -1747,8 +1764,7 @@ html[data-theme="light"] .sc-delete {
 
 /* ------------------------------------------------------------ 同屏播放 */
 
-/* 第二路画面：默认完全不可见，也不接事件（点画面仍然落到 #player 上，
-   唤醒控制条 / 双击全屏这些行为不用再绑一遍）。 */
+/* 第二路画面：默认完全不可见。同屏时由 is-main / is-pip 决定它铺满还是缩成小窗。 */
 #player-b {
   position: absolute;
   inset: 0;
@@ -1762,15 +1778,85 @@ html[data-theme="light"] .sc-delete {
   pointer-events: none;
 }
 
-/* 同屏时 A 让出画面。用 opacity 而不是 display:none：
-   它还要出声，一旦不参与渲染，音轨也可能被一起挂起。 */
-.room-page.is-dual #player {
-  opacity: 0;
-}
-
+/* 同屏时两路都可见。以前是「B 盖住 A」，现在改成两路各自定位：
+   主画面铺满，另一路缩成小窗，点小窗就把两者换过来。
+   选择器必须带上两个 class 才能压过上面 `#player` / `#player-b` 的 ID 规则
+   （ID 的优先级更高，光写 .is-pip 盖不掉 #player-b 的 opacity:0）。 */
+.room-page.is-dual #player,
 .room-page.is-dual #player-b {
   opacity: 1;
   visibility: visible;
+}
+
+.room-page.is-dual #player.is-main,
+.room-page.is-dual #player-b.is-main {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  /* 主画面不接事件：点击继续落到舞台上（唤醒控制条、双击全屏）。 */
+  pointer-events: none;
+}
+
+/* 小窗：位置与宽高由 JS 写 inline style（拖动要改），这里只管外观。
+   压在弹幕层（6）之上、控制条与顶部浮层（8）之下。 */
+.room-page.is-dual #player.is-pip,
+.room-page.is-dual #player-b.is-pip {
+  position: absolute;
+  inset: auto;
+  z-index: 7;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  background: #000;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.room-page.is-dual #player.is-pip.is-dragging,
+.room-page.is-dual #player-b.is-pip.is-dragging {
+  cursor: grabbing;
+  border-color: var(--accent);
+}
+
+/* 小窗关掉后那一路不显示，但声音照常（声音归 muted / volume 管）。 */
+.room-page.is-dual #player.is-hidden,
+.room-page.is-dual #player-b.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* 小窗的关闭按钮：位置跟着小窗走，同样由 JS 写 inline style。 */
+.pip-close {
+  position: absolute;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.pip-close:hover {
+  background: rgba(0, 0, 0, 0.82);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.pip-close[hidden] {
+  display: none;
 }
 
 .dual-panel {
@@ -1871,12 +1957,6 @@ html[data-theme="light"] .sc-delete {
   cursor: not-allowed;
 }
 
-.dual-offset {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .dual-offset-input {
   width: 78px;
   height: 32px;
@@ -1960,13 +2040,67 @@ html[data-theme="light"] .sc-delete {
   opacity: 0.35;
 }
 
-/* 延迟播放的步进控件：-1 / -0.1 / [值] 秒 / +0.1 / +1 */
+/* 步进控件：-1 / -0.1 / [值] 秒 / +0.1 / +1。
+   「延迟播放」和同屏「时间偏移」共用同一套。窄面板里让它换行，别撑破弹窗。 */
 .delay-stepper {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .delay-stepper .dual-offset-input {
   width: 84px;
+}
+
+/* 声音：A / B 各一条滑块。A 就是主音量，B 独立。 */
+.dual-volumes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dual-volume {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.dual-vol-tag {
+  flex: none;
+  width: 13px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+}
+
+.dual-range {
+  flex: 1;
+  min-width: 0;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  cursor: pointer;
+}
+
+.dual-range::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.12);
+}
+
+.dual-range:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dual-vol-num {
+  flex: none;
+  width: 26px;
+  font-size: 11.5px;
+  color: var(--dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
