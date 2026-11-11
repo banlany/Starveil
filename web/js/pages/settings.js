@@ -1,9 +1,10 @@
 // 设置：一级列表 + 二级详情。大部分选项会真正写入 localStorage 并即时生效。
 import { api, formatCount, formatOnline, timeAgo, roomUrl } from '../api.js';
 import {
-  ACCENTS,
   aggregateStats,
+  applySkin,
   applyTheme,
+  currentSkin,
   clearHistory,
   clearLogin,
   clearStats,
@@ -17,10 +18,12 @@ import {
   loadStats,
   resetSettings,
   saveLogin,
+  setAccent,
   setSetting,
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
+import { SKINS, skinAccents, skinModes } from '../../skins/registry.js';
 // 外部数据导入（starveil 备份 / dart profile / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
@@ -45,7 +48,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.6.8';
+const FALLBACK_VERSION = '0.7.0';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -214,6 +217,47 @@ export function renderSettingsDetail(ctx, params = {}) {
 // ---------------------------------------------------------------- 行构建
 
 function buildRow(config, repaint, ctx) {
+  if (config.type === 'skin') {
+    // 皮肤清单来自 skins/registry.js，这里不维护第二份。
+    const wrap = document.createElement('div');
+    wrap.className = 'skin-picker';
+    const grid = document.createElement('div');
+    grid.className = 'skin-grid';
+    const active = currentSkin().id;
+    for (const skin of SKINS) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = `skin-card${skin.id === active ? ' is-active' : ''}`;
+      card.setAttribute('aria-pressed', String(skin.id === active));
+      // 色点取注册表里的 accents 第一项（皮肤的默认主题色），不是配色实现；
+      // 真正的观感差异留给选中后整页去体现。
+      const modes = skinModes(skin.id);
+      const dot = skinAccents(skin.id)[0]?.color || 'currentColor';
+      card.innerHTML = `
+        <span class="skin-dot" style="background:${escapeHtml(dot)}" aria-hidden="true"></span>
+        <span class="skin-text">
+          <b>${escapeHtml(skin.name)}</b>
+          <small>${escapeHtml(skin.desc || '')}</small>
+          <em>${modes.length > 1 ? '深色 / 浅色' : modes[0] === 'light' ? '仅浅色' : '仅深色'}</em>
+        </span>
+        ${skin.id === active ? `<span class="skin-check">${icon('check', 15)}</span>` : ''}`;
+      card.addEventListener('click', async () => {
+        if (currentSkin().id === skin.id) return;
+        await applySkin(skin.id);
+        repaint();
+      });
+      grid.appendChild(card);
+    }
+    wrap.appendChild(grid);
+    if (SKINS.length < 2) {
+      const note = document.createElement('p');
+      note.className = 'skin-picker-note';
+      note.textContent = '更多皮肤还在做。做好之后会直接出现在这里，不用更新这一版。';
+      wrap.appendChild(note);
+    }
+    return wrap;
+  }
+
   if (config.type === 'radioGroup') {
     const fragment = document.createDocumentFragment();
     for (const option of config.options) {
@@ -237,7 +281,7 @@ function buildRow(config, repaint, ctx) {
   row.className = `setting-row${config.type === 'action' || config.type === 'select' || config.type === 'colors' ? ' clickable' : ''}`;
   const info = document.createElement('div');
   info.className = 'setting-info';
-  info.innerHTML = `<div class="setting-title">${config.icon ? `<span class="row-icon">${icon(config.icon, 20)}</span>` : ''}${escapeHtml(config.title)}${config.tag ? `<span class="chip solid" style="height:19px;font-size:10px;padding:0 7px">${escapeHtml(config.tag)}</span>` : ''}</div>${config.desc ? `<div class="setting-desc">${escapeHtml(config.desc)}</div>` : ''}`;
+  info.innerHTML = `<div class="setting-title">${config.icon ? `<span class="row-icon">${icon(config.icon, 20)}</span>` : ''}${escapeHtml(config.title)}${config.tag ? `<span class="chip solid mini">${escapeHtml(config.tag)}</span>` : ''}</div>${config.desc ? `<div class="setting-desc">${escapeHtml(config.desc)}</div>` : ''}`;
   row.appendChild(info);
 
   const control = document.createElement('div');
@@ -313,24 +357,27 @@ function buildRow(config, repaint, ctx) {
   } else if (config.type === 'colors') {
     const swatches = document.createElement('div');
     swatches.className = 'swatches';
-    const current = String(getSetting('appearance.accent', '#fb7299')).toLowerCase();
-    for (const color of ACCENTS) {
+    // 预设主题色由当前皮肤提供（registry 的 accents），别处不再维护第二份色板。
+    // 第一个是这套皮肤的默认色：点它就等于「跟随皮肤」，换皮肤时会跟着变。
+    const accents = skinAccents(currentSkin().id);
+    const fallback = accents[0].color;
+    const current = String(getSetting('appearance.accent', fallback)).toLowerCase();
+    for (const accent of accents) {
+      const isDefault = accent.color.toLowerCase() === fallback.toLowerCase();
       const swatch = document.createElement('button');
-      swatch.className = `swatch${current === color.toLowerCase() ? ' active' : ''}`;
-      swatch.style.background = color;
-      swatch.title = color;
+      swatch.className = `swatch${current === accent.color.toLowerCase() ? ' active' : ''}`;
+      swatch.style.background = accent.color;
+      swatch.title = isDefault ? `${accent.name}（这套皮肤的默认色）` : accent.name;
+      swatch.setAttribute('aria-label', accent.name);
       swatch.addEventListener('click', () => {
-        setSetting('appearance.accent', color);
-        setSetting('accent', color);
-        applyTheme();
+        setAccent(accent.color, isDefault);
         repaint();
       });
       swatches.appendChild(swatch);
     }
-    // 自定义色：预设就 8 个，想跟壁纸/头像配色对上时没得选。
-    // 走同一个 `appearance.accent`，和预设色完全等价（自定义色不在预设里时，
-    // 这一格自己显示当前颜色并带选中框，否则用户看不出现在是哪一色）。
-    const custom = !ACCENTS.some((color) => color.toLowerCase() === current);
+    // 自定义色：预设色不一定对得上壁纸/头像，留一个出口。
+    // 走同一份 `appearance.accent`，只是标记成用户自己挑的（换皮肤不再覆盖）。
+    const custom = !accents.some((accent) => accent.color.toLowerCase() === current);
     const picker = document.createElement('button');
     picker.className = `swatch swatch-custom${custom ? ' active' : ''}`;
     picker.title = custom ? `自定义：${current}` : '自定义颜色';
@@ -349,9 +396,7 @@ function buildRow(config, repaint, ctx) {
         toast('色值格式不对，需要 3 位或 6 位十六进制，比如 #7C4DFF');
         return;
       }
-      setSetting('appearance.accent', color);
-      setSetting('accent', color);
-      applyTheme();
+      setAccent(color);
       repaint();
     });
     swatches.appendChild(picker);
@@ -391,18 +436,27 @@ function formatNumber(value, config) {
 
 function detailSections(key, ctx, repaint) {
   switch (key) {
-    case 'appearance':
+    case 'appearance': {
+      const modes = skinModes(currentSkin().id);
+      const locked = modes.length === 1;
+      const LOCKED_HINT = '当前皮肤只提供一套配色，明暗随皮肤固定；换一套支持双主题的皮肤即可切换';
       return [
+        {
+          label: '皮肤',
+          rows: [{ type: 'skin' }],
+        },
         {
           label: '显示主题',
           rows: [
             {
               type: 'radioGroup',
               key: 'appearance.theme',
+              // 选项跟着皮肤走：只提供一套配色的皮肤不给「跟随系统」和另一档，
+              // 否则用户会选到一个永远不会生效的选项。
               options: [
-                { label: '跟随系统', value: 'system' },
-                { label: '浅色模式', value: 'light' },
-                { label: '深色模式', value: 'dark' },
+                ...(locked ? [] : [{ label: '跟随系统', value: 'system', desc: '随系统的深色/浅色设置自动切换' }]),
+                ...(modes.includes('light') ? [{ label: '浅色模式', value: 'light', desc: locked ? LOCKED_HINT : '' }] : []),
+                ...(modes.includes('dark') ? [{ label: '深色模式', value: 'dark', desc: locked ? LOCKED_HINT : '' }] : []),
               ],
               onChange: () => {
                 state.settings.theme = getSetting('appearance.theme');
@@ -441,6 +495,7 @@ function detailSections(key, ctx, repaint) {
           }]
           : []),
       ];
+    }
     case 'home':
       return [
         {

@@ -169,7 +169,8 @@ html.is-mobile .platform-tabs {
   /* 标签左右内边距是 10px，指示条跟着缩进这么多。 */
   --tab-underline-inset: 10px;
   /* 右侧渐隐，避免标签在搜索按钮前面被硬生生切断。 */
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  --mask-solid: #000; /* skin:allow 蒙版只取 alpha，不是配色 */
+  mask-image: linear-gradient(to right, var(--mask-solid) 0, var(--mask-solid) calc(100% - 16px), transparent 100%);
 }
 
 html.is-mobile .platform-tabs::-webkit-scrollbar {
@@ -225,7 +226,7 @@ html.is-mobile .page-pad {
 html.is-mobile .follow-card {
   min-height: 126px;
   padding: 14px 8px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 html.is-mobile .follow-card .avatar {
@@ -312,7 +313,7 @@ html.is-mobile .chat-resizer {
     width: 100%;
     flex: 1 1 auto;
     border-left: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--room-line);
   }
 
   /* 竖屏下顶部信息压一行，别把视频挤下去。 */
@@ -378,10 +379,10 @@ html.is-mobile .chat-resizer {
     bottom: calc(100% + 6px);
     width: 44px;
     height: 112px;
-    border-radius: 22px;
-    background: rgba(0, 0, 0, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    border-radius: var(--radius-pill);
+    background: var(--media-surface-strong);
+    border: 1px solid var(--media-line);
+    box-shadow: var(--media-shadow);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -389,7 +390,7 @@ html.is-mobile .chat-resizer {
     opacity: 0;
     pointer-events: none;
     transform: translateX(-50%) translateY(6px);
-    transition: opacity 0.16s ease, transform 0.16s ease;
+    transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
     z-index: 9;
   }
 
@@ -532,10 +533,12 @@ html.is-theater .stage {
   border-radius: 0 !important;
 }
 
-/* 系统栏藏了，顶栏直接贴在物理屏幕边缘，补一层渐变让白字在亮画面上也读得清。 */
+/* 系统栏藏了，顶栏直接贴在物理屏幕边缘，补一层渐变让文字在亮画面上也读得清。
+   渐隐在皮肤层（--media-fade-top），浮层底色在它上面：给了不透明底色的皮肤
+   会盖掉这层渐隐，得到一条纯色顶栏。 */
 html.is-theater .room-topbar {
   padding: calc(var(--safe-top) + 12px) calc(var(--safe-right) + 18px) 26px calc(var(--safe-left) + 18px);
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.52) 54%, transparent 100%);
+  background: var(--media-topbar-bg), var(--media-fade-top);
 }
 
 /* ------------------------------------------------------------ 下拉刷新 */
@@ -560,7 +563,7 @@ html.is-theater .room-topbar {
   box-shadow: none;
   z-index: 3500;
   pointer-events: none;
-  transition: transform 0.16s ease, color 0.16s ease;
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 html.is-mobile .pull-refresh {
@@ -573,7 +576,7 @@ html.is-mobile .pull-refresh {
   border-radius: 50%;
   border: 2px solid var(--line-strong);
   border-top-color: var(--accent);
-  transition: border-color 0.16s ease;
+  transition: border-color var(--dur-fast) var(--ease);
 }
 
 .pull-refresh.ready {
@@ -602,7 +605,7 @@ html.is-mobile .pull-refresh {
    只用 opacity，不动 transform：#view 里可能有 position: fixed 的浮层，
    transform 会让它们改成相对 #view 定位。 */
 html.is-mobile .chat-list.swipe-in {
-  animation: swipe-fade 0.18s ease;
+  animation: swipe-fade var(--dur-fast) var(--ease);
 }
 
 @keyframes swipe-fade {

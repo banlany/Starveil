@@ -8,7 +8,9 @@ import {
   isFollowing,
   loadFollow,
   loadLogin,
+  loadSkinIcons,
   saveSettings,
+  skinLockedMode,
   state,
   toggleFollow,
   toggleTheme,
@@ -24,6 +26,7 @@ import { renderRoom } from './pages/room.js';
 import { importData } from './importer.js';
 import { initTitlebar } from './titlebar.js';
 import { bindHorizontalSwipe } from './swipe.js';
+import { initTooltips } from './tooltip.js';
 import { applyPlatformFlags, IS_MOBILE } from './platform.js';
 
 const view = document.getElementById('view');
@@ -395,6 +398,12 @@ function initRail() {
     const themeButton = rail.querySelector('[data-action="theme"]');
     themeButton.innerHTML = icon(themeIcon(state.settings.appearance?.theme || 'dark'), 20);
     themeButton.addEventListener('click', () => {
+      // 皮肤只给了一套配色时，明暗切换没有意义：直接说清楚，别让按钮看起来点了没反应。
+      const locked = skinLockedMode();
+      if (locked) {
+        toast(`当前皮肤只提供${locked === 'light' ? '浅色' : '深色'}主题`);
+        return;
+      }
       const mode = toggleTheme();
       themeButton.innerHTML = icon(themeIcon(mode), 20);
       toast(mode === 'light' ? '已切换到浅色模式' : mode === 'system' ? '已跟随系统主题' : '已切换到深色模式');
@@ -416,7 +425,12 @@ function refreshThemeButton() {
   const button = rail.querySelector('[data-action="theme"]');
   if (!button) return;
   const mode = state.settings.appearance?.theme || 'dark';
+  const locked = skinLockedMode();
   button.innerHTML = icon(themeIcon(mode), 20);
+  if (locked) {
+    button.title = `当前皮肤只提供${locked === 'light' ? '浅色' : '深色'}主题`;
+    return;
+  }
   button.title = mode === 'light' ? '当前浅色，点击跟随系统' : mode === 'system' ? '当前跟随系统，点击深色' : '当前深色，点击浅色';
 }
 
@@ -818,6 +832,8 @@ function init() {
   document.addEventListener('contextmenu', (event) => event.preventDefault());
   applyTheme();
   initTitlebar();
+  // 接管页面里的 title：原生提示框是系统样式，跟皮肤无关。
+  initTooltips();
   // 尽早应用上次选择的屏幕方向，减少启动时先按系统方向渲染再转过来的观感。
   applyScreenOrientation();
   // 写一行运行日志，便于确认页面真的执行了（出问题时看 starveil.log）。
@@ -868,4 +884,11 @@ function init() {
   }, 1200);
 }
 
-init();
+/// 启动顺序：先把皮肤的图标表备好，再 init。
+///
+/// 图标是首屏就要画出来的东西（侧栏、标题栏），如果在 init 之后异步补，
+/// 第一屏用的就是基础图形，得等下一次重绘才会变 —— 会看到图标「跳一下」。
+/// 不带自定义图标的皮肤这条路是同步返回的，不会拖慢启动。
+loadSkinIcons()
+  .catch(() => {})
+  .then(init);

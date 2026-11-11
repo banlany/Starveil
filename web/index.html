@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="dark" data-skin="default">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -23,6 +23,29 @@
       }
     })();
   </script>
+  <!-- 皮肤与明暗必须在首帧前定下来：
+       皮肤文件只声明 CSS 变量，晚一步加载会先闪一帧默认配色，
+       浅色模式更是会先黑一下。这条内联脚本读 store.js 写的预涂缓存
+       （starveil.boot.v1），再按 `skins/<id>/skin.css` 的约定插入样式表。
+       路径规则和 skins/registry.js 的 skinHref() 必须一致。 -->
+  <script>
+    (function () {
+      var href = 'skins/default/skin.css';
+      var root = document.documentElement;
+      try {
+        var boot = JSON.parse(localStorage.getItem('starveil.boot.v1') || '{}');
+        if (boot.skin && /^[a-z0-9][a-z0-9-]{1,31}$/.test(boot.skin)) {
+          root.dataset.skin = boot.skin;
+          href = 'skins/' + boot.skin + '/skin.css';
+        }
+        if (boot.theme === 'light' || boot.theme === 'dark') root.dataset.theme = boot.theme;
+        root.dataset.themeMode = boot.theme || 'dark';
+      } catch (e) {
+        /* 缓存坏了就用默认皮肤 + 深色，applyTheme 跑起来会纠正 */
+      }
+      document.write('<link rel="stylesheet" id="skin-css" href="' + href + '">');
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="pages.css" />
   <link rel="stylesheet" href="room.css" />
@@ -37,26 +60,12 @@
       <img class="titlebar-logo" src="assets/logo.png" alt="" draggable="false" />
       <span class="titlebar-name" data-tauri-drag-region>Starveil</span>
     </div>
+    <!-- 窗口按钮的图形由 titlebar.js 填（icons.js 的 winIcon）：
+         写在这里等于把线宽钉死，皮肤改不动。 -->
     <div class="titlebar-controls">
-      <button class="titlebar-btn" id="tb-min" title="最小化" aria-label="最小化">
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <path d="M0 5h10" stroke="currentColor" stroke-width="1.2" />
-        </svg>
-      </button>
-      <button class="titlebar-btn" id="tb-max" title="最大化" aria-label="最大化">
-        <svg class="ico-max" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <rect x="0.6" y="0.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" />
-        </svg>
-        <svg class="ico-restore" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <rect x="0.6" y="2.8" width="6.6" height="6.6" fill="none" stroke="currentColor" stroke-width="1.2" />
-          <path d="M2.8 2.8V0.6h6.6v6.6H7.2" fill="none" stroke="currentColor" stroke-width="1.2" />
-        </svg>
-      </button>
-      <button class="titlebar-btn titlebar-close" id="tb-close" title="关闭" aria-label="关闭">
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <path d="M0.7 0.7l8.6 8.6M9.3 0.7L0.7 9.3" stroke="currentColor" stroke-width="1.2" />
-        </svg>
-      </button>
+      <button class="titlebar-btn" id="tb-min" title="最小化" aria-label="最小化"></button>
+      <button class="titlebar-btn" id="tb-max" title="最大化" aria-label="最大化"></button>
+      <button class="titlebar-btn titlebar-close" id="tb-close" title="关闭" aria-label="关闭"></button>
     </div>
   </header>
 

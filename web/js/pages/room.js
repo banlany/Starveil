@@ -47,21 +47,21 @@ const SCALE_MODES = [
   ['fill', '拉伸'],
 ];
 
-/// 生成预设值下拉框。当前值不在预设里（老版本存下来的非档位值）时补一项，
+/// 预设值下接的选项表。当前值不在预设里（老版本存下来的非档位值）时补一项，
 /// 否则下拉会自己显示成某个档位，看着像「设置被改了」。
-function presetOptions(values, current, format = (value) => String(value)) {
+function presetChoices(values, current, format = (value) => String(value)) {
   const list = [...values];
   const value = Number(current);
   if (Number.isFinite(value) && !list.includes(value)) {
     list.push(value);
     list.sort((a, b) => a - b);
   }
-  return list
-    .map(
-      (item) =>
-        `<option value="${item}"${item === value ? ' selected' : ''}>${escapeHtml(format(item))}</option>`
-    )
-    .join('');
+  return list.map((item) => ({ value: item, label: format(item), selected: item === value }));
+}
+
+/// 固定档位（粗细、性能档、帧率、过滤模式）的选项表。
+function fixedChoices(pairs, current) {
+  return pairs.map(([value, label]) => ({ value, label, selected: String(value) === String(current) }));
 }
 
 export function renderRoom(ctx, params = {}) {
@@ -1000,30 +1000,39 @@ export function renderRoom(ctx, params = {}) {
     const config = state.settings.danmaku;
     const wrap = document.createElement('div');
     wrap.className = 'chat-settings';
+
+    /// 数值项一律自绘下拉，不再用原生 `<select>`：收起态还能靠 CSS 装一下，
+    /// 展开那一下是 WebView 自己画的 —— 深色皮肤会弹出一块系统白底列表，
+    /// 和这套皮肤没有任何关系。改成按钮 + openMenu（页面里其他菜单都是这一套），
+    /// 展开态的底色/描边/选中色全部走 --surface-menu / --accent。
+    ///
+    /// 模板里调 picker() 时顺手登记一份选项，绑定阶段照着同一份走，
+    /// 避免「模板里加了一项、绑定忘了写」这种只有点开才发现的问题。
+    const pickers = [];
+    const picker = (id, key, choices, numeric = true) => {
+      pickers.push({ id, key, choices, numeric });
+      const current = choices.find((item) => item.selected) || choices[0];
+      return `<button type="button" class="chat-setting-select" id="${id}" data-value="${escapeHtml(String(current.value))}" aria-haspopup="menu"><span class="chat-setting-value">${escapeHtml(current.label)}</span>${icon('chevronDown', 13)}</button>`;
+    };
+
     wrap.innerHTML = `
       <div class="chat-settings-group">
         <h4>弹幕设置</h4>
         <div class="chat-setting-row"><span>弹幕开关</span><button class="switch" id="cs-enabled" aria-checked="${session.danmakuEnabled}"></button></div>
         <div class="chat-setting-row"><span>弹幕表情</span><button class="switch" id="cs-emoji" aria-checked="${config.emoji !== false}"></button></div>
-        <div class="chat-setting-row"><span>大表情大小</span><select class="chat-setting-select" id="cs-big-emoji">${presetOptions(CS_PRESETS.bigEmoji, config.bigEmojiLines, (value) => `${value} 行`)}</select></div>
-        <div class="chat-setting-row"><span>不透明度</span><select class="chat-setting-select" id="cs-opacity">${presetOptions(CS_PRESETS.opacity, config.opacity, (value) => `${value}%`)}</select></div>
-        <div class="chat-setting-row"><span>显示区域</span><select class="chat-setting-select" id="cs-area">${presetOptions(CS_PRESETS.area, config.area, (value) => `${value}%`)}</select></div>
-        <div class="chat-setting-row"><span>显示行数</span><select class="chat-setting-select" id="cs-lines">${presetOptions(CS_PRESETS.lines, config.lines, (value) => `${value} 行`)}</select></div>
-        <div class="chat-setting-row"><span>字体大小</span><select class="chat-setting-select" id="cs-font">${presetOptions(CS_PRESETS.font, config.font, (value) => `${value} px`)}</select></div>
-        <div class="chat-setting-row"><span>字体粗细</span><select class="chat-setting-select" id="cs-weight">
-          ${[[300, '极细'], [400, '很细'], [500, '正常'], [600, '小粗'], [700, '偏粗'], [800, '很粗'], [900, '极粗']].map(([value, label]) => `<option value="${value}"${Number(config.weight) === value ? ' selected' : ''}>${label}</option>`).join('')}
-        </select></div>
-        <div class="chat-setting-row"><span>滚动速度</span><select class="chat-setting-select" id="cs-speed">${presetOptions(CS_PRESETS.speed, config.speed, (value) => `${value} 秒`)}</select></div>
+        <div class="chat-setting-row"><span>大表情大小</span>${picker('cs-big-emoji', 'bigEmojiLines', presetChoices(CS_PRESETS.bigEmoji, config.bigEmojiLines, (value) => `${value} 行`))}</div>
+        <div class="chat-setting-row"><span>不透明度</span>${picker('cs-opacity', 'opacity', presetChoices(CS_PRESETS.opacity, config.opacity, (value) => `${value}%`))}</div>
+        <div class="chat-setting-row"><span>显示区域</span>${picker('cs-area', 'area', presetChoices(CS_PRESETS.area, config.area, (value) => `${value}%`))}</div>
+        <div class="chat-setting-row"><span>显示行数</span>${picker('cs-lines', 'lines', presetChoices(CS_PRESETS.lines, config.lines, (value) => `${value} 行`))}</div>
+        <div class="chat-setting-row"><span>字体大小</span>${picker('cs-font', 'font', presetChoices(CS_PRESETS.font, config.font, (value) => `${value} px`))}</div>
+        <div class="chat-setting-row"><span>字体粗细</span>${picker('cs-weight', 'weight', fixedChoices([[300, '极细'], [400, '很细'], [500, '正常'], [600, '小粗'], [700, '偏粗'], [800, '很粗'], [900, '极粗']], config.weight))}</div>
+        <div class="chat-setting-row"><span>滚动速度</span>${picker('cs-speed', 'speed', presetChoices(CS_PRESETS.speed, config.speed, (value) => `${value} 秒`))}</div>
         <div class="chat-setting-row"><span>弹幕描边</span><button class="switch" id="cs-stroke" aria-checked="${config.stroke}"></button></div>
-        <div class="chat-setting-row"><span>描边宽度</span><select class="chat-setting-select" id="cs-stroke-width">${presetOptions(CS_PRESETS.strokeWidth, config.strokeWidth, (value) => `${value} px`)}</select></div>
-        <div class="chat-setting-row"><span>顶部边距</span><select class="chat-setting-select" id="cs-safe-top">${presetOptions(CS_PRESETS.safe, config.safeTop, (value) => `${value} px`)}</select></div>
-        <div class="chat-setting-row"><span>底部边距</span><select class="chat-setting-select" id="cs-safe-bottom">${presetOptions(CS_PRESETS.safe, config.safeBottom, (value) => `${value} px`)}</select></div>
-        <div class="chat-setting-row"><span>性能档位</span><select class="chat-setting-select" id="cs-perf">
-          ${PERF_OPTIONS.map((option) => `<option value="${option.value}"${config.perf === option.value ? ' selected' : ''}>${option.label}</option>`).join('')}
-        </select></div>
-        <div class="chat-setting-row"><span>帧率上限</span><select class="chat-setting-select" id="cs-fps">
-          ${FPS_OPTIONS.map((option) => `<option value="${option.value}"${Number(config.fps) === option.value ? ' selected' : ''}>${option.label}</option>`).join('')}
-        </select></div>
+        <div class="chat-setting-row"><span>描边宽度</span>${picker('cs-stroke-width', 'strokeWidth', presetChoices(CS_PRESETS.strokeWidth, config.strokeWidth, (value) => `${value} px`))}</div>
+        <div class="chat-setting-row"><span>顶部边距</span>${picker('cs-safe-top', 'safeTop', presetChoices(CS_PRESETS.safe, config.safeTop, (value) => `${value} px`))}</div>
+        <div class="chat-setting-row"><span>底部边距</span>${picker('cs-safe-bottom', 'safeBottom', presetChoices(CS_PRESETS.safe, config.safeBottom, (value) => `${value} px`))}</div>
+        <div class="chat-setting-row"><span>性能档位</span>${picker('cs-perf', 'perf', fixedChoices(PERF_OPTIONS.map((option) => [option.value, option.label]), config.perf), false)}</div>
+        <div class="chat-setting-row"><span>帧率上限</span>${picker('cs-fps', 'fps', fixedChoices(FPS_OPTIONS.map((option) => [option.value, option.label]), config.fps))}</div>
       </div>
       <div class="chat-settings-group">
         <h4>屏蔽设置</h4>
@@ -1031,11 +1040,9 @@ export function renderRoom(ctx, params = {}) {
         <label class="chat-setting-field"><span>关键词屏蔽</span><textarea class="chat-setting-textarea" id="cs-block-keywords" placeholder="每行一个关键词">${escapeHtml(config.blockKeywords || '')}</textarea></label>
         <label class="chat-setting-field"><span>用户屏蔽</span><textarea class="chat-setting-textarea" id="cs-block-users" placeholder="每行一个用户名">${escapeHtml(config.blockUsers || '')}</textarea></label>
         <div class="chat-setting-row"><span>重复过滤</span><button class="switch" id="cs-dedupe" aria-checked="${config.dedupe}"></button></div>
-        <div class="chat-setting-row"><span>过滤模式</span><select class="chat-setting-select" id="cs-dedupe-mode">
-          ${[['content', '按内容'], ['user', '按用户'], ['strict', '刷屏严格']].map(([value, label]) => `<option value="${value}"${config.dedupeMode === value ? ' selected' : ''}>${label}</option>`).join('')}
-        </select></div>
-        <div class="chat-setting-row"><span>过滤窗口</span><select class="chat-setting-select" id="cs-dedupe-window">${presetOptions(CS_PRESETS.dedupeWindow, config.dedupeWindow, (value) => `${value} 秒`)}</select></div>
-        <div class="chat-setting-row"><span>过滤步长</span><select class="chat-setting-select" id="cs-dedupe-step">${presetOptions(CS_PRESETS.dedupeStep, config.dedupeStep, (value) => `${value} 条`)}</select></div>
+        <div class="chat-setting-row"><span>过滤模式</span>${picker('cs-dedupe-mode', 'dedupeMode', fixedChoices([['content', '按内容'], ['user', '按用户'], ['strict', '刷屏严格']], config.dedupeMode), false)}</div>
+        <div class="chat-setting-row"><span>过滤窗口</span>${picker('cs-dedupe-window', 'dedupeWindow', presetChoices(CS_PRESETS.dedupeWindow, config.dedupeWindow, (value) => `${value} 秒`))}</div>
+        <div class="chat-setting-row"><span>过滤步长</span>${picker('cs-dedupe-step', 'dedupeStep', presetChoices(CS_PRESETS.dedupeStep, config.dedupeStep, (value) => `${value} 条`))}</div>
       </div>
       <div class="chat-settings-group">
         <h4>SC 设置</h4>
@@ -1053,10 +1060,28 @@ export function renderRoom(ctx, params = {}) {
         setConfig(key, value);
       });
     };
-    const bindSelect = (id, key, numeric = false) => {
-      const select = wrap.querySelector(`#${id}`);
-      select.addEventListener('change', () => setConfig(key, numeric ? Number(select.value) : select.value));
-    };
+    // 数值项全部自绘：点按钮弹 openMenu，选完把值写回按钮文字 + setConfig。
+    // 按钮上的 data-value 是唯一真相（菜单项只负责显示勾选态），
+    // 这样再次点开时高亮的就是当前值，不用回头读 config。
+    for (const { id, key, choices, numeric } of pickers) {
+      const button = wrap.querySelector(`#${id}`);
+      const label = button.querySelector('.chat-setting-value');
+      button.addEventListener('click', () => {
+        const value = numeric ? Number(button.dataset.value) : button.dataset.value;
+        openMenu(
+          button,
+          choices.map((item) => ({
+            label: item.label,
+            active: item.value === value,
+            onClick: () => {
+              button.dataset.value = String(item.value);
+              label.textContent = item.label;
+              setConfig(key, numeric ? Number(item.value) : item.value);
+            },
+          }))
+        );
+      });
+    }
     const bindTextarea = (id, key) => {
       const area = wrap.querySelector(`#${id}`);
       area.addEventListener('input', () => setConfig(key, area.value));
@@ -1064,26 +1089,11 @@ export function renderRoom(ctx, params = {}) {
 
     bindSwitch('cs-enabled', 'enabled');
     bindSwitch('cs-emoji', 'emoji');
-    bindSelect('cs-big-emoji', 'bigEmojiLines', true);
-    bindSelect('cs-opacity', 'opacity', true);
-    bindSelect('cs-area', 'area', true);
-    bindSelect('cs-lines', 'lines', true);
-    bindSelect('cs-font', 'font', true);
-    bindSelect('cs-weight', 'weight', true);
-    bindSelect('cs-speed', 'speed', true);
     bindSwitch('cs-stroke', 'stroke');
-    bindSelect('cs-stroke-width', 'strokeWidth', true);
-    bindSelect('cs-safe-top', 'safeTop', true);
-    bindSelect('cs-safe-bottom', 'safeBottom', true);
-    bindSelect('cs-perf', 'perf');
-    bindSelect('cs-fps', 'fps', true);
     bindSwitch('cs-block', 'block');
     bindTextarea('cs-block-keywords', 'blockKeywords');
     bindTextarea('cs-block-users', 'blockUsers');
     bindSwitch('cs-dedupe', 'dedupe');
-    bindSelect('cs-dedupe-mode', 'dedupeMode');
-    bindSelect('cs-dedupe-window', 'dedupeWindow', true);
-    bindSelect('cs-dedupe-step', 'dedupeStep', true);
     const bindPlayerSwitch = (id, key) => {
       const button = wrap.querySelector(`#${id}`);
       button.addEventListener('click', () => {

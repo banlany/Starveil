@@ -1,0 +1,370 @@
+/* ============================================================
+   Starveil · 苹果 · Apple-style
+   ------------------------------------------------------------
+   这套皮肤按一份固定的风格参考实现，核心不是元素而是比例：
+   页面是偏冷的浅灰画布，卡片比它白一档浮起来，颜色只留一支系统蓝，
+   圆角只有三档（胶囊按钮 / 24px 卡片 / 12px 输入），动效慢到刚好。
+
+   与「星幕」不同，这套**只提供浅色**（参考文档本身定的就是 light）：
+   registry 里写 `modes: ['light']`，store.js 会把明暗档锁在浅色，
+   设置页的明暗选项自动收窄成一档，侧栏主题按钮会给出提示。
+
+   因为只有一套配色，两个作用域写在一起——data-theme 是深是浅都落同一块，
+   不会出现「首帧按深色渲染一下再翻成浅色」的闪动。
+   ============================================================ */
+
+html[data-skin="apple"],
+html[data-skin="apple"][data-theme="light"] {
+  /* -------------------------------------------------- 主题色
+     风格参考只允许一支系统蓝，所以这套皮肤的主题色清单只有一项；
+     用户仍然可以在设置里自己挑一个色（那时 accentSource 变成 user）。 */
+  --accent: #0071e3;
+  /* 浅色档的 soft 透明度要和 store.js 算出来的一致（浅色 0.18） */
+  --accent-soft: rgba(0, 113, 227, 0.18);
+  --accent-on: #ffffff;
+  --accent-strong: color-mix(in srgb, var(--accent) 84%, #000);
+  /* 渐变里那一团只在封面兜底图上出现，压得很淡 */
+  --accent-glow: color-mix(in srgb, var(--accent) 18%, transparent);
+
+  /* -------------------------------------------------- 基础面
+     画布 #f5f5f7，卡片纯白。两者只差一档，靠阴影而不是描边分层。 */
+  --bg: #f5f5f7;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f0f0f3;
+  --surface-3: #e6e6ea;
+  --surface-overlay: #ffffff;
+  --surface-menu: #ffffff;
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.12);
+  --wash-1: rgba(0, 0, 0, 0.025);
+  --wash-2: rgba(0, 0, 0, 0.045);
+  --wash-3: rgba(0, 0, 0, 0.075);
+  --wash-4: rgba(0, 0, 0, 0.11);
+
+  /* -------------------------------------------------- 文字
+     #1d1d1f 是这套风格的正文黑，纯黑留给大标题和满屏反色区。 */
+  --fg: #1d1d1f;
+  --fg-muted: #48484a;
+  --fg-subtle: #6e6e73;
+  --muted: #86868b;
+  --dim: #a1a1a6;
+
+  /* -------------------------------------------------- 状态
+     系统色本身：绿 #34c759、橙 #ff9500、红 #ff3b30。 */
+  --success: #34c759;
+  --success-soft: rgba(52, 199, 89, 0.14);
+  --warning: #ff9500;
+  --warning-soft: rgba(255, 149, 0, 0.14);
+  --danger: #ff3b30;
+  --danger-soft: rgba(255, 59, 48, 0.11);
+  --danger-line: rgba(255, 59, 48, 0.28);
+  --info: #0071e3;
+
+  /* -------------------------------------------------- 按钮
+     胶囊是全圆角，没有描边，字重 500：参考文档里的 Pill Button。
+     高度比星幕略高一点，内距更宽，按钮看起来才「敢留白」。 */
+  --btn-h: 36px;
+  --btn-pad-x: 20px;
+  --btn-radius: var(--radius-pill);
+  --btn-font: 14px;
+  --btn-weight: 500;
+  --btn-on-weight: 600;
+  --btn-small-h: 30px;
+  --btn-small-pad-x: 15px;
+  --btn-small-radius: var(--radius-pill);
+  --btn-small-font: 13px;
+
+  /* 分段按钮：iOS 原生分段控件——灰槽 + 白色滑块 + 轻投影。
+     `--seg-on-*` 留给 SC 面板那种「直接填充」的段（系统蓝底白字），
+     `--seg-pick-*` 是「记录 / 统计」「按状态 / 按平台」那种滑块式的选中块。 */
+  --seg-h: 28px;
+  --seg-pad-x: 14px;
+  --seg-radius: 9px;
+  --seg-font: 13px;
+  --seg-bg: rgba(118, 118, 128, 0.12);
+  --seg-fg: #6e6e73;
+  --seg-on-bg: var(--accent);
+  --seg-on-fg: #ffffff;
+  --seg-inset: 3px;
+  --seg-gap: 2px;
+  --seg-track-radius: var(--radius-md);
+  --seg-track-line: 1px solid transparent;
+  --seg-hover-fg: #1d1d1f;
+  --seg-pick-bg: #ffffff;
+  --seg-pick-fg: #1d1d1f;
+  --seg-pick-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04);
+
+  /* 胶囊 chip：白底、无描边、10px 圆角、灰色文字；选中换成淡蓝底 + 系统蓝字（iOS 的选中样式）。 */
+  --chip-h: 30px;
+  --chip-pad-x: 14px;
+  --chip-radius: var(--radius-sm);
+  --chip-font: 13px;
+  --chip-bg: #ffffff;
+  --chip-fg: #6e6e73;
+  --chip-line: 1px solid transparent;
+  --chip-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --chip-hover-bg: #f2f2f7;
+  --chip-hover-fg: #1d1d1f;
+  --chip-on-bg: rgba(0, 113, 227, 0.12);
+  --chip-on-fg: #0071e3;
+  --chip-on-line: 1px solid transparent;
+  --chip-solid-bg: #f2f2f7;
+
+  /* 顶部平台标签：字号按文档的 14px 档，指示条细而不圆。 */
+  --tab-pad-x: 15px;
+  --tab-font: 14px;
+  --tab-gap: 8px;
+  --tab-underline-h: 2px;
+  --tab-underline-bg: var(--accent);
+  --tab-underline-radius: var(--radius-pill);
+  --platform-logo-radius: 50%;
+
+  /* -------------------------------------------------- 开关
+     照 iOS/macOS 的比例：轨道比星幕略宽一格，滑块更大，开是系统蓝。
+     关态轨道 #e9e9eb 是系统灰，滑块纯白配一层很轻的投影。 */
+  --switch-w: 45px;
+  --switch-h: 27px;
+  --switch-pad: 2px;
+  --switch-knob-size: 23px;
+  --switch-travel: calc(var(--switch-w) - var(--switch-knob-size) - var(--switch-pad) * 2);
+  --switch-radius: var(--radius-pill);
+  --switch-knob-radius: 50%;
+  --switch-off: #e9e9eb;
+  --switch-on: var(--accent);
+  --switch-knob: #ffffff;
+  --switch-knob-off: #ffffff;
+  --switch-knob-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
+  --switch-dur: 0.26s;
+  --switch-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* -------------------------------------------------- 单选
+     系统单选：细描边、选中后一圈蓝环加实心点。 */
+  --radio-size: 18px;
+  --radio-ring: 1.6px;
+  --radio-radius: 50%;
+  --radio-dot: 8px;
+  --radio-dot-radius: 50%;
+  --radio-line: rgba(0, 0, 0, 0.22);
+  --radio-line-on: var(--accent);
+  --radio-dot-fill: var(--accent);
+
+  /* -------------------------------------------------- 色板 / 色点
+     色块做成圆形：这套风格里没有方角的小色块，圆是唯一不打断节奏的形状。 */
+  --swatch-size: 34px;
+  --swatch-radius: 50%;
+  --swatch-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --swatch-check-w: 11px;
+  --swatch-check-h: 6px;
+  --swatch-check-stroke: 2px;
+  --swatch-check-on: #ffffff;
+  --skin-dot-size: 14px;
+  --skin-dot-radius: 50%;
+  --skin-dot-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+
+  /* -------------------------------------------------- 提示条
+     白底 + 一层扩散阴影，像系统通知，不用深色药丸。 */
+  --toast-bg: rgba(255, 255, 255, 0.97);
+  --toast-fg: #1d1d1f;
+  --toast-border: rgba(0, 0, 0, 0.07);
+
+  /* -------------------------------------------------- 悬停提示
+     系统提示气泡是很浅的灰白 + 一圈极细的边，不抢画面。 */
+  --tip-bg: rgba(250, 250, 252, 0.98);
+  --tip-fg: #1d1d1f;
+  --tip-border: rgba(0, 0, 0, 0.07);
+  --tip-shadow: 0 8px 24px rgba(0, 0, 0, 0.17);
+  --tip-radius: var(--radius-xs);
+  --tip-pad-x: 10px;
+  --tip-pad-y: 6px;
+  --tip-font: 12px;
+  --tip-max-w: 280px;
+
+  /* -------------------------------------------------- 阴影 / 遮罩
+     三级阴影都比星幕淡而散：4% / 10% / 14%，扩散半径拉大，
+     这样白卡片浮在灰底上「刚刚好」，不会像重投影。 */
+  --shadow-1: 0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 10px 36px rgba(0, 0, 0, 0.13);
+  --shadow-3: 0 20px 44px rgba(0, 0, 0, 0.16);
+  --shadow-line: 0 12px 22px -20px rgba(0, 0, 0, 0.28);
+  --scrim: rgba(0, 0, 0, 0.3);
+  --blur-overlay: blur(8px);
+  /* 20px 是这套风格的 vibrancy 取值：浮层要能透出背后的颜色轮廓 */
+  --panel-blur: blur(20px);
+
+  /* -------------------------------------------------- 媒体层
+     压在画面上的那一层默认白字 + 半透明黑底，不随明暗反色。
+     这套皮肤把胶囊做得更圆、模糊更重（20px），像系统播放器。
+     顶栏与控制条保持渐隐，不做不透明条。 */
+  --media-bg: #000000;
+  --media-fg: #ffffff;
+  --media-fg-muted: rgba(255, 255, 255, 0.82);
+  --media-fg-dim: rgba(255, 255, 255, 0.6);
+  --media-fg-faint: rgba(255, 255, 255, 0.4);
+  --media-chip: rgba(0, 0, 0, 0.35);
+  --media-chip-soft: rgba(255, 255, 255, 0.12);
+  --media-chip-hover: rgba(255, 255, 255, 0.2);
+  --media-chip-active: rgba(0, 0, 0, 0.5);
+  --media-surface: rgba(28, 28, 30, 0.72);
+  --media-surface-strong: rgba(0, 0, 0, 0.5);
+  --media-line: rgba(255, 255, 255, 0.18);
+  --media-line-strong: rgba(255, 255, 255, 0.3);
+  --media-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --media-halo: rgba(0, 0, 0, 0.2);
+  --media-text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  --media-track: rgba(255, 255, 255, 0.3);
+  --media-blur: blur(20px);
+  --media-topbar-bg: transparent;
+  --media-bar-line: transparent;
+  --media-accent: var(--accent);
+  --media-on-accent: #ffffff;
+  --media-surface-hover: color-mix(in srgb, var(--media-bg) 82%, transparent);
+  --stage-backdrop: blur(30px) brightness(0.42) saturate(1.1);
+  --media-fade-bottom: linear-gradient(0deg, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.2) 72%, transparent);
+  --media-fade-top: linear-gradient(180deg, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.42) 54%, transparent 100%);
+  --media-fade-side: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.4));
+
+  /* -------------------------------------------------- 直播间表面
+     比首页画布再冷一档（#f2f2f7 是系统的分组底），面板纯白浮在上面。 */
+  --room-bg: #f2f2f7;
+  --room-panel: #ffffff;
+  --room-bar: #ffffff;
+  --room-field: #f2f2f7;
+  --room-line: rgba(0, 0, 0, 0.07);
+  --room-float-bg: rgba(255, 255, 255, 0.94);
+  --room-float-fg: #1d1d1f;
+  --room-float-line: rgba(0, 0, 0, 0.08);
+  --room-float-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  /* 悬停时压成系统灰阶：这套皮肤里不允许出现半透明黑蒙层压在画面上，
+     否则白色胶囊一悬停就化进视频里（这正是「按钮消失」的那个 bug）。 */
+  --room-float-hover-bg: #f5f5f7;
+  --room-float-hover-fg: #1d1d1f;
+
+  /* -------------------------------------------------- SC 卡片
+     SC 底色是平台给的浅档，浅色下不需要遮罩，直接配深字。 */
+  --on-sc: #1d1d1f;
+  --on-sc-strong: #000000;
+  --on-sc-weak: rgba(0, 0, 0, 0.45);
+  --on-sc-hover: rgba(0, 0, 0, 0.1);
+  --on-sc-ring: rgba(255, 255, 255, 0.6);
+  --on-sc-shadow: rgba(0, 0, 0, 0.2);
+  --sc-line: rgba(0, 0, 0, 0.06);
+  --sc-radius: var(--radius-lg);
+  --sc-msg-radius: var(--radius);
+  --sc-msg-pad-y: 9px;
+  --sc-msg-pad-x: 11px;
+  --sc-border-w: 1px;
+  --sc-shade: transparent;
+  --sc-chat-fg: var(--on-sc);
+
+  /* -------------------------------------------------- 封面与头像 */
+  --cover-bg-a: #e8e8ed;
+  --cover-bg-b: #dcdce1;
+  --cover-fallback-a: #e8e8ed;
+  --cover-fallback-b: #d8d8de;
+  --cover-fallback-fg: rgba(29, 29, 31, 0.55);
+  --cover-scrim: linear-gradient(180deg, rgba(0, 0, 0, 0.04), transparent 42%, transparent 78%, rgba(0, 0, 0, 0.14));
+  --cover-chip: rgba(0, 0, 0, 0.42);
+  --cover-chip-fg: #ffffff;
+  --avatar-fg: #ffffff;
+  --logo-bg: #ffffff;
+  --qr-bg: #ffffff;
+  --avatar-sat: 45%;
+  --avatar-light: 52%;
+  --img-placeholder: #e8e8ed;
+
+  /* -------------------------------------------------- 骨架屏 */
+  --shimmer: rgba(0, 0, 0, 0.045);
+  --scrollbar-thumb: #c7c7cc;
+  --scrollbar-thumb-hover: #b0b0b5;
+
+  /* -------------------------------------------------- 自绘标题栏
+     和画布同色：Windows 上看起来就像一条系统工具条。
+     首帧靠引用变量，别把 hex 抄一遍，否则改 --bg 时这里会漏色。 */
+  --titlebar-bg: var(--bg);
+  --titlebar-fg: var(--fg);
+  --titlebar-line: var(--line);
+  --titlebar-btn: var(--muted);
+  --titlebar-btn-hover: rgba(0, 0, 0, 0.05);
+  --titlebar-btn-active: rgba(0, 0, 0, 0.1);
+
+  /* -------------------------------------------------- 窗口按钮
+     关闭键红是 Windows 的约定，换皮肤也不动。 */
+  --window-close-hover: #e81123;
+  --window-close-active: #f1707a;
+  --window-close-fg: #ffffff;
+
+  /* -------------------------------------------------- 红绿灯
+     这套皮肤在 registry 里写了 `titlebar: 'traffic'`：三个圆点挪到标题栏左边，
+     颜色就是 macOS 那三颗（关 / 最小化 / 缩放），符号平时透明、悬停才浮出来。 */
+  --traffic-size: 12px;
+  --traffic-gap: 8px;
+  --traffic-close: #ff5f57;
+  --traffic-min: #febc2e;
+  --traffic-max: #28c840;
+  --traffic-edge: rgba(0, 0, 0, 0.12);
+  --traffic-glyph: rgba(0, 0, 0, 0.55);
+  --traffic-glyph-size: 8px;
+  --traffic-glyph-stroke: 1.35;
+
+  /* -------------------------------------------------- 容器形态
+     白卡片 + 24px 圆角 + 4% 阴影，**不要描边**：
+     这套风格的层次来自阴影，描一圈线就变成普通网页的边框卡片了。 */
+  --card-bg: #ffffff;
+  --card-border: none;
+  --card-radius: var(--radius-xl);
+  --card-shadow: var(--shadow-1);
+  --card-gap: 20px;
+  /* 组与组之间更松一档：苹果那套靠留白分组，不靠线。 */
+  --group-gap: 26px;
+  --group-label-bottom: 10px;
+  /* 分组里的行：留白更大，行高按 8px 网格走。 */
+  --row-divider: 1px solid rgba(0, 0, 0, 0.06);
+  --row-pad-x: 20px;
+  --row-pad-y: 14px;
+  --row-min-h: 64px;
+  --row-hover: rgba(0, 0, 0, 0.028);
+
+  /* 网格内容卡（首页/分类/关注/搜索）：只留封面和文字，不给底框。
+     封面自己带 18px 圆角，卡片上再加一层白底会把封面挤出「豆腐块」。 */
+  --tile-bg: transparent;
+  --tile-border: none;
+  --tile-radius: var(--radius-lg);
+  --tile-shadow: none;
+
+  /* -------------------------------------------------- 圆角阶梯
+     风格参考只允许三档：胶囊（按钮）、24px（卡片）、12px（输入与浮层）。
+     中间的档位往这三档上靠，避免整页出现五花八门的圆角。 */
+  --radius-2xs: 6px;
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  /* -------------------------------------------------- 字体
+     SF Pro 在 Windows 上不存在，退到 Segoe UI Variable / Segoe UI；
+     中文按 PingFang → 微软雅黑 UI 的顺序退。 */
+  --font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* -------------------------------------------------- 图标
+     SF Symbols 的线比星幕细一点点，端点圆角保持 round。 */
+  --icon-stroke: 1.6;
+  --icon-cap: round;
+  --icon-join: round;
+  --icon-stroke-thin: 1.1;
+
+  /* -------------------------------------------------- 动效
+     参考文档的签名：500ms 上浮与阴影扩散，缓入缓出。
+     fast 档留给 hover 这类高频反馈，不至于每次摸一下都等半秒。 */
+  --dur-fast: 0.22s;
+  --dur-base: 0.32s;
+  --dur-slow: 0.5s;
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+
+  color-scheme: light;
+}

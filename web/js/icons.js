@@ -74,16 +74,68 @@ const PATHS = {
   spark: '<path d="M12 2.5 14.2 9l6.5 2.2-6.5 2.2L12 20l-2.2-6.6L3.3 11.2 9.8 9 12 2.5Z"/>',
 };
 
+/// 皮肤对图标的覆盖表。`skins/<id>/icons.js` 导出 `ICON_PATHS`，只写要换的名字，
+/// 没写的沿用上面的基础表；只有 registry 里标了 `icons: true` 的皮肤才会去加载。
+let OVERRIDES = {};
+
+/// 换一套图标表。
+///
+/// 已经画在页面上的 svg 会被就地重画：侧栏、标题栏、菜单这些外壳元素不会跟着
+/// 页面一起重渲染，靠重渲染兜的话「切了皮肤，侧栏图标还是老的，进一次页面才变」。
+export function setIconOverrides(map) {
+  OVERRIDES = map && typeof map === 'object' ? map : {};
+  for (const svg of document.querySelectorAll('svg.ico[data-icon]')) {
+    const path = OVERRIDES[svg.dataset.icon] || PATHS[svg.dataset.icon];
+    if (path) svg.innerHTML = path;
+  }
+}
+
 export function icon(name, size = 20, className = '') {
-  const path = PATHS[name] || PATHS.info;
-  return `<svg class="ico ${className}" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  const path = OVERRIDES[name] || PATHS[name] || PATHS.info;
+  // 线宽 / 端点 / 拐角交给 CSS（`.ico` 读 --icon-stroke 等皮肤变量）：
+  // 写在标签上等于把图标质感钉死在 JS 里，换一套皮肤也改不动。
+  // data-icon 是为了切皮肤时能就地把这块图形换掉。
+  return `<svg class="ico ${className}" data-icon="${name}" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" aria-hidden="true">${path}</svg>`;
+}
+
+/// 窗口按钮（最小化 / 最大化 / 还原 / 关闭）的图形。
+///
+/// 单独一档：画在 10 单位的网格上，比正文图标小一号，线也细（1.2 而不是 1.75）。
+/// 线宽仍然交给 CSS 的 --icon-stroke-thin，所以换皮肤时这几个键会跟着变质感；
+/// 但**不进**皮肤覆盖表 —— 这三个是 Windows 的通用符号，用户靠它认窗口操作，
+/// 换形状只会让人找不到关闭键。
+const WIN_PATHS = {
+  min: '<path d="M1 5h8"/>',
+  max: '<rect x="1" y="1" width="8" height="8"/>',
+  restore:
+    '<rect x="1" y="3" width="6.4" height="6.4"/><path d="M3 3V1h6.4v5.4H7"/>',
+  close: '<path d="m1.4 1.4 7.2 7.2M8.6 1.4 1.4 8.6"/>',
+};
+
+export function winIcon(name, className = '') {
+  const path = WIN_PATHS[name] || '';
+  return `<svg class="ico ${className}" viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" aria-hidden="true">${path}</svg>`;
+}
+
+/// macOS 红绿灯里的三个符号（关闭 ×、最小化 −、缩放 +）。
+///
+/// 和 winIcon 同一套 10 单位网格，但图形是「悬停时才浮出来」的那三个细符号：
+/// Windows 的方框最大化放在 12px 的圆点里会糊成一团。只给
+/// registry 里标了 `titlebar: 'traffic'` 的皮肤用，默认皮肤不走这条路。
+const MAC_PATHS = {
+  close: '<path d="m2.2 2.2 5.6 5.6M7.8 2.2 2.2 7.8"/>',
+  min: '<path d="M2 5h6"/>',
+  zoom: '<path d="M5 2v6M2 5h6"/>',
+};
+
+export function macIcon(name, className = '') {
+  const path = MAC_PATHS[name] || '';
+  return `<svg class="ico ${className}" viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" aria-hidden="true">${path}</svg>`;
 }
 
 export function platformAsset(platform) {
   return platform === 'bilibili' ? 'bilibili_2' : platform;
-}
-
-export function platformIcon(platform, size = 22) {
+}export function platformIcon(platform, size = 22) {
   return `<img class="platform-img" src="assets/${platformAsset(platform)}.png" width="${size}" height="${size}" alt="" draggable="false" />`;
 }
 

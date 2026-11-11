@@ -1,0 +1,524 @@
+/* ============================================================
+   Starveil · 默认皮肤「星幕」
+   ------------------------------------------------------------
+   这个文件**只准出现 CSS 变量声明**，不许有任何组件选择器。
+   组件样式（styles.css / pages.css / room.css / mobile.css）一律只消费变量，
+   换皮肤 = 换这一个文件，不需要动任何组件代码。
+
+   皮肤 = 配色与质感；深浅 = 明暗。
+   两个维度正交：一个皮肤可以提供深色、浅色，也可以只提供其中一套
+   （只提供一套时 `store.js` 会把明暗切换锁在它支持的那一档）。
+   所以每个皮肤文件固定两块：
+
+     html[data-skin="<id>"]                    → 深色（或该皮肤唯一的一套）
+     html[data-skin="<id>"][data-theme="light"] → 浅色覆盖
+
+   与明暗无关的东西（圆角阶梯、字体、动效、画面上那层「媒体色」）
+   写在第一块里，浅色块不重复声明。
+
+   新增皮肤见 docs/skins.md；提交前跑 `node tools/check-skin.mjs`。
+   ============================================================ */
+
+html[data-skin="default"] {
+  /* -------------------------------------------------- 主题色
+     `--accent` / `--accent-soft` 会被 store.js 按用户选的主题色覆盖，
+     这里给的是这套皮肤的**默认主题色**（首帧、或还没跑 JS 时）。
+
+     默认值必须等于 registry.js 里 accents 的第一项（check-skin 会核对）：
+     默认皮肤不绑定某个品牌色，用户可以在设置里换成另外几种。
+     `--accent-soft` 的透明度也要和 store.js 算出来的一致（深色 0.16 / 浅色 0.18），
+     否则切换主题色时会看到一层色块「跳」一下。 */
+  --accent: #5b8def;
+  --accent-soft: rgba(91, 141, 239, 0.16);
+  /* 压在强调色上的文字/图标 */
+  --accent-on: #ffffff;
+  /* 强调色的「深一档」（按下态）与「光晕」（渐变里那一团） */
+  --accent-strong: color-mix(in srgb, var(--accent) 82%, #000);
+  --accent-glow: color-mix(in srgb, var(--accent) 35%, transparent);
+
+  /* -------------------------------------------------- 基础面 */
+  --bg: #101014;
+  --bg-elev: #17171c;
+  --surface: #1c1c22;
+  --surface-2: #29292f;
+  --surface-3: #33333a;
+  /* 弹窗与浮层菜单：比 --surface 再高一层，压住背后的内容 */
+  --surface-overlay: #1b1b21;
+  --surface-menu: #222229;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  /* 蒙层阶梯：hover 底色、输入框底、按下态。别在组件里再写 rgba(255,255,255,.08)。 */
+  --wash-1: rgba(255, 255, 255, 0.035);
+  --wash-2: rgba(255, 255, 255, 0.07);
+  --wash-3: rgba(255, 255, 255, 0.12);
+  --wash-4: rgba(255, 255, 255, 0.18);
+
+  /* -------------------------------------------------- 文字 */
+  --fg: #f2f2f4;
+  /* 比 --muted 更亮一档的正文色：次要说明、SC 正文等。 */
+  --fg-muted: #b6b6c0;
+  --fg-subtle: #878793;
+  --muted: #9d9da7;
+  --dim: #6e6e79;
+
+  /* -------------------------------------------------- 状态 */
+  --success: #57d38c;
+  --success-soft: rgba(87, 211, 140, 0.14);
+  --warning: #f0b232;
+  --warning-soft: rgba(240, 178, 50, 0.14);
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.14);
+  --danger-line: rgba(255, 107, 107, 0.32);
+  /* 「付费身份」这类信息色（大航海） */
+  --info: #58a8ff;
+
+  /* -------------------------------------------------- 按钮
+     高度、内距、圆角、字号都是形态：想做「方角工具条按钮」就 --btn-radius: 2px，
+     想做「矮一点的密集布局」就 --btn-h: 30px。 */
+  --btn-h: 34px;
+  --btn-pad-x: 15px;
+  --btn-radius: var(--radius-md);
+  --btn-font: 13.5px;
+  --btn-weight: 400;
+  --btn-on-weight: 600;
+  --btn-small-h: 28px;
+  --btn-small-pad-x: 11px;
+  --btn-small-radius: var(--radius-sm);
+  --btn-small-font: 12.5px;
+
+  /* 分段按钮：SC 面板的「正在显示 / 历史」、统计页的周月年切换。
+     `--seg-*` 是按钮那一层的；`--seg-track-*` 是外面那条槽（关注页「按状态 / 按平台」、
+     观看记录「记录 / 统计」）；`--seg-pick-*` 是选中块的填充。 */
+  --seg-h: 26px;
+  --seg-pad-x: 12px;
+  --seg-radius: var(--radius-pill);
+  --seg-font: 12px;
+  --seg-bg: var(--surface);
+  --seg-fg: var(--muted);
+  --seg-on-bg: var(--accent-soft);
+  --seg-on-fg: var(--accent);
+  --seg-inset: 3px;
+  --seg-gap: 3px;
+  --seg-track-radius: var(--radius-sm);
+  --seg-track-line: 1px solid var(--line);
+  --seg-hover-fg: var(--fg);
+  --seg-pick-bg: var(--surface-3);
+  --seg-pick-fg: var(--fg);
+  --seg-pick-shadow: none;
+
+  /* 胶囊 chip：关注页的筛选标签、分类/搜索页的快捷标签。
+     想做「方角标签」就把 --chip-radius 调小，想做「无底只描边」把 --chip-bg 留空。 */
+  --chip-h: 30px;
+  --chip-pad-x: 13px;
+  --chip-radius: var(--radius-pill);
+  --chip-font: 13px;
+  --chip-bg: transparent;
+  --chip-fg: var(--muted);
+  --chip-line: 1px solid var(--line-strong);
+  --chip-shadow: none;
+  --chip-hover-bg: var(--surface);
+  --chip-hover-fg: var(--fg);
+  --chip-on-bg: var(--surface-2);
+  --chip-on-fg: var(--fg);
+  --chip-on-line: 1px solid transparent;
+  --chip-solid-bg: var(--surface-2);
+
+  /* 顶部的平台标签（B站 / 斗鱼 / …）与下方那条主题色指示条。
+     平台图标本身是各平台的品牌图，这里管的是标签内距、字号与指示条形状。 */
+  --tab-pad-x: 14px;
+  --tab-font: 15px;
+  --tab-gap: 8px;
+  --tab-underline-h: 2px;
+  --tab-underline-bg: var(--accent);
+  --tab-underline-radius: var(--radius-pill);
+  --platform-logo-radius: 50%;
+
+  /* -------------------------------------------------- SC（醒目留言）
+     大卡和聊天区里的那条用同一套配色，圆角/边框各自可调。
+
+     SC 的底色是平台给的浅色档（room.js 写成 --sc-bg），深色主题下直接铺
+     会很刺眼。`--sc-shade` 就是压在它上面的一层遮罩：深色压一层黑，浅色透明。
+     这样切换明暗时已经画在屏上的 SC 会立刻跟着变，不用重绘聊天栏；
+     换皮肤想调深色下 SC 的暗度，也只改这一个透明度。 */
+  --sc-radius: var(--radius-md);
+  --sc-msg-radius: var(--radius-sm);
+  --sc-msg-pad-y: 8px;
+  --sc-msg-pad-x: 10px;
+  --sc-border-w: 1px;
+  --sc-shade: rgba(0, 0, 0, 0.42);
+  --sc-chat-fg: var(--on-sc-strong);
+
+  /* -------------------------------------------------- 开关
+     连尺寸一起归皮肤：想做成方形、细长条、窄一点的开关，只改这一组。
+     `--switch-travel` 是滑块从左滑到右的行程，由上面几个值算出来；
+     皮肤想让它「多滑一截」可以自己覆盖。 */
+  --switch-w: 44px;
+  --switch-h: 25px;
+  --switch-pad: 3px;
+  --switch-knob-size: 19px;
+  --switch-travel: calc(var(--switch-w) - var(--switch-knob-size) - var(--switch-pad) * 2);
+  --switch-radius: var(--radius-pill);
+  --switch-knob-radius: 50%;
+  --switch-off: var(--surface-3);
+  --switch-on: var(--accent);
+  --switch-knob: #ffffff;
+  --switch-knob-off: #b9b9c2;
+  --switch-knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --switch-dur: var(--dur-fast);
+  --switch-ease: var(--ease);
+
+  /* -------------------------------------------------- 单选
+     设置页每一行前面的圆点。`--radio-ring` 是外圈描边粗细，
+     `--radio-dot` 是选中后里面的实心点。 */
+  --radio-size: 20px;
+  --radio-ring: 1.8px;
+  --radio-radius: 50%;
+  --radio-dot: 10px;
+  --radio-dot-radius: 50%;
+  --radio-line: var(--line-strong);
+  --radio-line-on: var(--accent);
+  --radio-dot-fill: var(--accent);
+
+  /* -------------------------------------------------- 色板 / 色点
+     设置里的主题色方块、皮肤卡片前面的小圆点。 */
+  --swatch-size: 34px;
+  --swatch-radius: var(--radius-sm);
+  --swatch-ring: inset 0 0 0 1px var(--media-line);
+  --swatch-check-w: 11px;
+  --swatch-check-h: 6px;
+  --swatch-check-stroke: 2px;
+  --swatch-check-on: var(--accent-on);
+  --skin-dot-size: 14px;
+  --skin-dot-radius: 50%;
+  --skin-dot-ring: inset 0 0 0 1px var(--line-strong);
+
+  /* -------------------------------------------------- 提示条 */
+  --toast-bg: rgba(34, 34, 42, 0.96);
+  --toast-fg: #f2f2f4;
+  --toast-border: rgba(255, 255, 255, 0.1);
+
+  /* -------------------------------------------------- 悬停提示（自绘 tooltip）
+     原生 title 的白框不归皮肤管，所以按钮上的悬停说明由 js/tooltip.js 自己画。
+     这一组就是那个小气泡：底色、字色、描边、阴影、圆角、内距、字号。 */
+  --tip-bg: rgba(34, 34, 42, 0.97);
+  --tip-fg: #f2f2f4;
+  --tip-border: rgba(255, 255, 255, 0.09);
+  --tip-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+  --tip-radius: var(--radius-sm);
+  --tip-pad-x: 9px;
+  --tip-pad-y: 5px;
+  --tip-font: 12px;
+  --tip-max-w: 260px;
+
+  /* -------------------------------------------------- 阴影 / 遮罩 */
+  /* 三级：贴合（小浮起）、悬浮（菜单/浮动按钮）、弹层（对话框/提示条）。 */
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.38);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.45);
+  /* 只当分隔线用的一道极淡投影（吸顶头部用） */
+  --shadow-line: 0 12px 22px -20px rgba(0, 0, 0, 0.8);
+  --scrim: rgba(5, 5, 8, 0.58);
+  /* 弹窗/抽屉背后那层压暗的模糊 */
+  --blur-overlay: blur(5px);
+  /* 弹窗、菜单这类「浮起来的板子」的毛玻璃强度 */
+  --panel-blur: blur(14px);
+
+  /* -------------------------------------------------- 媒体层
+     压在视频画面上的那一层（顶栏、控制条、音量浮层、小窗、提示卡）。
+     它坐在「未知亮度的画面」上，默认取白字 + 半透明黑底，亮画面暗画面都能读。
+     这一组整组归皮肤：想做白色不透明浮层 + 黑字的皮肤（瑞士风那类），
+     把 --media-bg / --media-surface / --media-fg / --media-line / --media-accent
+     成套改深改浅即可，字色和底色必须成对翻转。 */
+  --media-bg: #000000;
+  --media-fg: #ffffff;
+  --media-fg-muted: rgba(255, 255, 255, 0.78);
+  --media-fg-dim: rgba(255, 255, 255, 0.55);
+  --media-fg-faint: rgba(255, 255, 255, 0.38);
+  /* 画面上的胶囊底：返回、更多、小窗开关 */
+  --media-chip: rgba(0, 0, 0, 0.32);
+  --media-chip-soft: rgba(255, 255, 255, 0.1);
+  --media-chip-hover: rgba(255, 255, 255, 0.16);
+  --media-chip-active: rgba(0, 0, 0, 0.44);
+  /* 画面上的卡片底：加载提示、音量浮层 */
+  --media-surface: rgba(14, 14, 19, 0.78);
+  --media-surface-strong: rgba(0, 0, 0, 0.55);
+  --media-line: rgba(255, 255, 255, 0.16);
+  --media-line-strong: rgba(255, 255, 255, 0.28);
+  --media-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  --media-halo: rgba(0, 0, 0, 0.18);
+  --media-text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  /* 画面上滑条的轨道 */
+  --media-track: rgba(255, 255, 255, 0.28);
+  /* 顶栏按钮、控制条按钮的毛玻璃。改这里 = 整台机器上的胶囊一起换质感 */
+  --media-blur: blur(10px);
+  /* 顶栏整条底色：默认透明（只靠胶囊），做不透明浮层的皮肤在这里给白底 */
+  --media-topbar-bg: transparent;
+  /* 顶栏底边、控制条顶边的一条分隔线：用 inset 阴影画，不占布局 */
+  --media-bar-line: transparent;
+  /* 压在画面上的主题色。和页面 --accent 分开：白底浮层的皮肤要换成深色才看得见 */
+  --media-accent: var(--accent);
+  /* 压在画面上的实心按钮（提示卡的「重试」这类）上的字色 */
+  --media-on-accent: #ffffff;
+  /* 画面上的卡片悬停时的底色（小窗关闭按钮） */
+  --media-surface-hover: color-mix(in srgb, var(--media-bg) 82%, transparent);
+  /* 竖屏时画面填不满，垫在后面的那层放大虚化背景 */
+  --stage-backdrop: blur(26px) brightness(0.38) saturate(1.15);
+  /* 控制条与顶栏的渐变：从下往上、从上往下各一条 */
+  --media-fade-bottom: linear-gradient(0deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.24) 72%, transparent);
+  --media-fade-top: linear-gradient(180deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.52) 54%, transparent 100%);
+  --media-fade-side: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.45));
+
+  /* -------------------------------------------------- 直播间表面
+     直播间是「自己的一个空间」：底色比应用外壳更黑，
+     聊天栏/底栏/设置面板都从这里取色，跟 --surface 阶梯分开，
+     免得首页改个卡片色把直播间也带歪。 */
+  --room-bg: #050507;
+  --room-panel: #101015;
+  --room-bar: #0b0b0f;
+  --room-field: #1a1a22;
+  --room-line: rgba(255, 255, 255, 0.06);
+  /* 浮在聊天栏上的小控件（回到底部、展开聊天） */
+  --room-float-bg: rgba(30, 32, 40, 0.92);
+  --room-float-fg: rgba(255, 255, 255, 0.86);
+  --room-float-line: rgba(255, 255, 255, 0.12);
+  --room-float-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
+  /* 这两个控件悬停时的底色/字色。
+     「展开聊天区」压在视频画面上，不能用 --wash-3：那是「往页面底色上加一层」的
+     蒙层，在黑色画面上会直接消失。所以单独给一组，皮肤保证它悬停后仍然看得见。 */
+  --room-float-hover-bg: var(--wash-3);
+  --room-float-hover-fg: var(--fg);
+
+  /* -------------------------------------------------- SC 卡片
+     SC 底色是每档一份的浅色（room.js 写成 --sc-bg / --sc-bg-strong），
+     所以卡片上的文字色由 SC 自己定，不跟明暗走。 */
+  --on-sc: #2a1c0d;
+  --on-sc-strong: #ffffff;
+  --on-sc-weak: rgba(0, 0, 0, 0.45);
+  --on-sc-hover: rgba(0, 0, 0, 0.12);
+  --on-sc-ring: rgba(255, 255, 255, 0.55);
+  --on-sc-shadow: rgba(0, 0, 0, 0.28);
+  --sc-line: rgba(0, 0, 0, 0.08);
+
+  /* -------------------------------------------------- 封面与头像 */
+  --cover-bg-a: #24242d;
+  --cover-bg-b: #17171d;
+  --cover-fallback-a: #2b2b36;
+  --cover-fallback-b: #16161b;
+  --cover-fallback-fg: rgba(255, 255, 255, 0.8);
+  --cover-scrim: linear-gradient(180deg, rgba(0, 0, 0, 0.12), transparent 30%, transparent 70%, rgba(0, 0, 0, 0.4));
+  /* 封面上的小胶囊（平台角标、收藏按钮） */
+  --cover-chip: rgba(10, 10, 14, 0.72);
+  --cover-chip-fg: #ffffff;
+  --avatar-fg: #ffffff;
+  /* 品牌 logo 的底：logo 是浅色图案，必须坐在白底上 */
+  --logo-bg: #ffffff;
+  /* 二维码必须黑白的，不让皮肤染色 */
+  --qr-bg: #ffffff;
+  --avatar-sat: 45%;
+  --avatar-light: 38%;
+  /* 头像占位/图片底 */
+  --img-placeholder: #222222;
+
+  /* -------------------------------------------------- 骨架屏 */
+  --shimmer: rgba(255, 255, 255, 0.055);
+  --scrollbar-thumb: #34343d;
+  --scrollbar-thumb-hover: #45454f;
+
+  /* -------------------------------------------------- 自绘标题栏
+     标题栏是「窗口边框」，默认跟 --bg 同色，但单独开一组 token：
+     以后想做「深色边框 + 浅色页面」的皮肤（工具感、编辑器感）只需改这几个，
+     不用去动 --bg，也就不会把整页配色一起拖走。 */
+  --titlebar-bg: var(--bg);
+  --titlebar-fg: var(--fg);
+  --titlebar-line: var(--line);
+  --titlebar-btn: var(--muted);
+  --titlebar-btn-hover: var(--surface-2);
+  --titlebar-btn-active: var(--surface-3);
+
+  /* -------------------------------------------------- 窗口按钮
+     Windows 的关闭键红是系统约定，换皮肤也不该跟着变。 */
+  --window-close-hover: #e81123;
+  --window-close-active: #f1707a;
+  --window-close-fg: #ffffff;
+
+  /* -------------------------------------------------- 红绿灯（macOS 形态）
+     registry 里给皮肤写 `titlebar: 'traffic'` 才会启用：三个圆点挪到左边，
+     顺序是 关闭 / 最小化 / 缩放。默认皮肤不开，但变量照样备着——
+     以后哪套皮肤想换成 mac 形态，只改 registry 一行，不用再补颜色。 */
+  --traffic-size: 12px;
+  --traffic-gap: 8px;
+  --traffic-close: #ff5f57;
+  --traffic-min: #febc2e;
+  --traffic-max: #28c840;
+  --traffic-edge: rgba(0, 0, 0, 0.12);
+  /* 圆点里的符号：平时透明，鼠标进到这一组才浮出来 */
+  --traffic-glyph: rgba(0, 0, 0, 0.55);
+  --traffic-glyph-size: 8px;
+  --traffic-glyph-stroke: 1.35;
+
+  /* -------------------------------------------------- 容器形态
+     这一组决定「一块内容被包成什么样」，而不是里面装什么。
+     默认是卡片：浅一层底色 + 一圈细描边 + 圆角。
+
+     换一套皮肤想让设置页变成「没有卡片的列表」（更像系统设置），只改这里：
+       --card-bg: transparent;
+       --card-border: none;
+       --card-radius: 0;
+       --card-shadow: none;
+       --card-gap: 0;
+     组件 CSS 一行都不用动，分组会自动变成「一条分隔线接一条」。
+
+     --row-* 是分组里的列表行：分隔线、内边距、最小高度、hover 底色。
+     卡片形态下这几项通常保持默认；列表形态可以把 --row-hover 改成 transparent。 */
+  --card-bg: var(--surface);
+  --card-border: 1px solid var(--line);
+  --card-radius: var(--radius);
+  --card-shadow: none;
+  --card-gap: 14px;
+  /* 设置页里「一组卡片 + 组标题」的垂直呼吸：组与组之间的距离、标题与卡片之间。
+     组间距不能只挂在标题上——像「定时关闭」页的第二块没有标题，会紧贴上一张卡片。 */
+  --group-gap: 20px;
+  --group-label-bottom: 9px;
+  --row-divider: 1px solid var(--line);
+  --row-pad-x: 18px;
+  --row-pad-y: 11px;
+  --row-min-h: 60px;
+  --row-hover: var(--surface-2);
+
+  /* 网格里的内容卡：首页 / 分类 / 关注 / 搜索的封面卡。
+     默认是「无底框」的图卡——只有封面和文字，靠图区分，页面不会碎成一块块。
+     想让它们也长成带底框的卡片，把下面三项接回 --card-* 即可：
+       --tile-bg: var(--card-bg);
+       --tile-border: var(--card-border);
+       --tile-shadow: var(--card-shadow);
+     反过来，想让内容卡彻底「去卡片化」（方角、无底），改 --tile-radius: 0。 */
+  --tile-bg: transparent;
+  --tile-border: none;
+  --tile-radius: var(--card-radius);
+  --tile-shadow: none;
+
+  /* -------------------------------------------------- 圆角阶梯
+     组件里不许再出现 5/7/9/11/13px 这类魔法值，一律从这七档里取。 */
+  --radius-2xs: 4px;
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* -------------------------------------------------- 字体
+     --font        正文/控件
+     --font-display 大标题、房间标题、数字
+     --font-mono    Cookie、日志这类等宽内容 */
+  --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font);
+  --font-mono: Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
+
+  /* -------------------------------------------------- 图标
+     图标是皮肤的排版语言：线宽、端点、拐角三件套统一改，
+     侧栏、按钮、菜单里的图标会一起换质感（消费方是 styles.css 的 .ico）。
+     想连图形轮廓一起换的皮肤，另在 skins/<id>/icons.js 里导出 ICON_PATHS，
+     再到 registry.js 里给这套皮肤标 `icons: true`。 */
+  --icon-stroke: 1.75;
+  --icon-cap: round;
+  --icon-join: round;
+  /* 细线档：窗口按钮那三个 10px 图形用，1.75 会把它们画粗成一团 */
+  --icon-stroke-thin: 1.2;
+
+  /* -------------------------------------------------- 动效
+     皮肤可以整体调快/调慢，也可以换缓动（例如机械感用 steps）。 */
+  --dur-fast: 0.14s;
+  --dur-base: 0.2s;
+  --dur-slow: 0.28s;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  color-scheme: dark;
+}
+
+html[data-skin="default"][data-theme="light"] {
+  --accent-soft: rgba(91, 141, 239, 0.18);
+
+  --bg: #f5f5f8;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #ececf2;
+  --surface-3: #e1e1e9;
+  --surface-overlay: #ffffff;
+  --surface-menu: #ffffff;
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.13);
+  --wash-1: rgba(0, 0, 0, 0.03);
+  --wash-2: rgba(0, 0, 0, 0.055);
+  --wash-3: rgba(0, 0, 0, 0.09);
+  --wash-4: rgba(0, 0, 0, 0.13);
+
+  --fg: #1b1b21;
+  --fg-muted: #4c4c56;
+  --fg-subtle: #77777f;
+  --muted: #66666f;
+  --dim: #96969f;
+
+  --success: #1f9d5c;
+  --success-soft: rgba(31, 157, 92, 0.12);
+  --warning: #b97b00;
+  --warning-soft: rgba(185, 123, 0, 0.12);
+  --danger: #d64545;
+  --danger-soft: rgba(214, 69, 69, 0.1);
+  --danger-line: rgba(214, 69, 69, 0.24);
+  --info: #2b7fd4;
+
+  --switch-knob: #ffffff;
+  --switch-knob-off: #ffffff;
+  /* 浅色底上不需要那么重的投影，否则滑块像浮在半空 */
+  --switch-knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+
+  /* SC：浅色下直接用平台给的浅档底色，不加遮罩，配深字 */
+  --sc-shade: transparent;
+  --sc-chat-fg: var(--on-sc);
+
+  --toast-bg: rgba(255, 255, 255, 0.98);
+  --toast-fg: #1b1b21;
+  --toast-border: rgba(0, 0, 0, 0.08);
+
+  --tip-bg: rgba(255, 255, 255, 0.98);
+  --tip-fg: #1b1b21;
+  --tip-border: rgba(0, 0, 0, 0.08);
+  --tip-shadow: 0 10px 26px rgba(15, 20, 30, 0.17);
+
+  --shadow-1: 0 2px 8px rgba(15, 20, 30, 0.06);
+  --shadow-2: 0 10px 26px rgba(15, 20, 30, 0.12);
+  --shadow-3: 0 18px 48px rgba(15, 20, 30, 0.16);
+  --shadow-line: 0 12px 22px -20px rgba(15, 20, 30, 0.35);
+  --scrim: rgba(15, 18, 28, 0.42);
+
+  --room-bg: #f2f3f7;
+  --room-panel: #ffffff;
+  --room-bar: #ffffff;
+  --room-field: #ffffff;
+  --room-line: rgba(0, 0, 0, 0.07);
+  --room-float-bg: rgba(255, 255, 255, 0.96);
+  --room-float-fg: #35353d;
+  --room-float-line: rgba(0, 0, 0, 0.1);
+  --room-float-shadow: 0 8px 20px rgba(35, 39, 54, 0.16);
+
+  --cover-bg-a: #e9e9f0;
+  --cover-bg-b: #dcdce5;
+  --cover-fallback-a: #e4e4ec;
+  --cover-fallback-b: #d5d5e0;
+  --cover-fallback-fg: rgba(30, 30, 40, 0.62);
+  --cover-scrim: linear-gradient(180deg, rgba(0, 0, 0, 0.06), transparent 40%, transparent 76%, rgba(0, 0, 0, 0.16));
+  --cover-chip: rgba(10, 10, 14, 0.55);
+  --cover-chip-fg: #ffffff;
+  --avatar-fg: #ffffff;
+  --avatar-sat: 42%;
+  --avatar-light: 42%;
+  --img-placeholder: #dcdce5;
+
+  --shimmer: rgba(0, 0, 0, 0.04);
+  --scrollbar-thumb: #c9c9d2;
+  --scrollbar-thumb-hover: #b4b4c0;
+
+  color-scheme: light;
+}

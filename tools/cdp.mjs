@@ -18,7 +18,10 @@ async function target() {
   const response = await fetch(`http://127.0.0.1:${port}/json`);
   const list = await response.json();
   const pages = list.filter((item) => item.type === 'page');
+  // 有扩展的无头实例会多出几个 page（扩展首页、同步提示），按 URL 片段指定最稳。
+  const want = process.env.CDP_URL || '';
   const page =
+    (want && pages.find((item) => item.url.includes(want))) ||
     pages.find((item) => item.url.includes(':1420')) ||
     pages.find((item) => item.url.startsWith('http')) ||
     pages[0];

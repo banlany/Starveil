@@ -1,6 +1,8 @@
 // 本地状态与持久化：设置、关注、观看记录、搜索历史。
 import { api, canonicalImage, roomUrl } from './api.js';
+import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
+import { DEFAULT_SKIN_ID, SKINS, getSkin, skinAccent, skinHref, skinModes } from '../skins/registry.js';
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
@@ -48,7 +50,8 @@ export function clearLogin(platform) {
 
 export const DEFAULT_SETTINGS = {
   theme: 'dark',
-  accent: '#fb7299',
+  // 顶层只是镜像，saveSettings 每次从 appearance 回填。
+  accent: skinAccent(DEFAULT_SKIN_ID),
   disclaimerAccepted: false,
   firstRun: true,
   home: {
@@ -58,8 +61,14 @@ export const DEFAULT_SETTINGS = {
     showMore: true,
   },
   appearance: {
+    // 皮肤：配色风格，独立于明暗。清单见 web/skins/registry.js。
+    skin: DEFAULT_SKIN_ID,
     theme: 'dark',
-    accent: '#fb7299',
+    // 主题色：默认取皮肤 accents 的第一个（皮肤不绑死某个品牌色）。
+    accent: skinAccent(DEFAULT_SKIN_ID),
+    // 主题色是「跟着皮肤走」还是「用户自己挑的」。
+    // 用户没动过时切皮肤会一起换；动过之后就不再覆盖。
+    accentSource: 'skin',
     density: 'comfortable',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
     orientation: 'auto',
@@ -227,6 +236,16 @@ function loadSettings() {
   if (stored.accent && !stored.appearance?.accent) {
     settings.appearance.accent = stored.accent;
   }
+  // 0.7.0 之前没有皮肤概念：老用户一律落到默认皮肤上。
+  // 强调色如果早就不是默认粉（自己挑过），标记成用户自定义，切皮肤时别覆盖。
+  if (!stored.appearance?.skin) {
+    settings.appearance.skin = DEFAULT_SKIN_ID;
+  }
+  settings.appearance.skin = getSkin(settings.appearance.skin).id;
+  const bakedAccent = skinAccent(settings.appearance.skin);
+  if (!settings.appearance.accentSource) {
+    settings.appearance.accentSource = settings.appearance.accent === bakedAccent ? 'skin' : 'user';
+  }
   // 0.6.2 删掉的设置项，从落盘数据里清掉，避免导出备份时又把这些死字段带出去。
   delete settings.dynamicColor;
   delete settings.appearance?.dynamicColor;
@@ -266,6 +285,11 @@ export function setSetting(path, value) {
     node = node[parts[index]];
   }
   node[parts.at(-1)] = value;
+  // 用户亲手挑了强调色：从此切皮肤不再覆盖它。
+  if (path === 'appearance.accent') {
+    if (!state.settings.appearance) state.settings.appearance = {};
+    state.settings.appearance.accentSource = 'user';
+  }
   saveSettings();
   // 只有外观类设置需要重算样式（applyTheme 会改 CSS 变量并广播事件，
   // 侧边栏主题按钮也会跟着重建）。拖弹幕不透明度这种滑块时每移动一格都重算，
@@ -280,44 +304,165 @@ export function resetSettings() {
   applyTheme();
 }
 
-const ACCENTS = ['#EF5350', '#3498db', '#F06292', '#9575CD', '#26C6DA', '#26A69A', '#FFF176', '#FF9800'];
+/// 皮肤清单：设置页只读，不要在别处再维护一份。
+export { SKINS };
 
-export { ACCENTS };
+/// 主题色：预设色来自当前皮肤（registry 的 accents），这里只负责写入。
+///
+/// `followSkin` 为真表示「选的正好是皮肤默认色」，仍按跟随皮肤处理 ——
+/// 否则用户点回默认色之后，下次换皮肤主题色不会跟着变，看着像「换皮肤没生效」。
+export function setAccent(color, followSkin = false) {
+  const appearance = state.settings.appearance;
+  appearance.accent = color;
+  appearance.accentSource = followSkin ? 'skin' : 'user';
+  saveSettings();
+  applyTheme();
+}
 
+/// 当前生效的皮肤定义。
+export function currentSkin() {
+  return getSkin(state.settings.appearance?.skin);
+}
+
+/// 皮肤是否锁死了明暗（只提供一套配色）。
+export function skinLockedMode() {
+  const modes = skinModes(currentSkin().id);
+  return modes.length === 1 ? modes[0] : '';
+}
+
+/// 切皮肤。
+///
+/// 只做四件事：换 `<link>`、换图标表、按需继承皮肤的默认主题色、把不支持的明暗档收回来。
+/// 真正把变量写到 DOM 上的是 applyTheme，保证「切皮肤」和「切明暗」走同一条路径。
+export async function applySkin(id) {
+  const skin = getSkin(id);
+  const appearance = state.settings.appearance;
+  appearance.skin = skin.id;
+  // 用户自己挑过主题色就不动；否则回到这套皮肤的默认色（accents 第一个）。
+  if (appearance.accentSource !== 'user') {
+    appearance.accent = skinAccent(skin.id);
+    appearance.accentSource = 'skin';
+  }
+  // 单档皮肤：把设置也落成它支持的那一档，否则设置页会显示一个永远不会生效的选项。
+  const modes = skinModes(skin.id);
+  if (modes.length === 1) appearance.theme = modes[0];
+  ensureSkinStyle(skin.id);
+  // 图标先换好再重画：反过来的话调用方拿到的还是上一套皮肤的图形。
+  await loadSkinIcons(skin.id);
+  saveSettings();
+  applyTheme();
+  return skin;
+}
+
+/// 皮肤的图标覆盖表（可选能力）。
+///
+/// `skins/<id>/icons.js` 导出 `ICON_PATHS`，只写要替换的图形；registry 里没标
+/// `icons: true` 的皮肤直接沿用基础表，连一次请求都不会发出去。
+/// 任何失败都退回基础表 —— 图标画得不好看是可以接受的，整页渲染不出来不行。
+export async function loadSkinIcons(id = currentSkin().id) {
+  const skin = getSkin(id);
+  if (!skin.icons) {
+    setIconOverrides(null);
+    return;
+  }
+  try {
+    const mod = await import(`../skins/${skin.id}/icons.js`);
+    setIconOverrides(mod.ICON_PATHS || mod.default || null);
+  } catch (error) {
+    console.warn('皮肤图标表加载失败，沿用默认图标：', skin.id, error);
+    setIconOverrides(null);
+  }
+}
+
+/// 皮肤样式表：`skins/<id>/skin.css`。
+///
+/// index.html 里已经静态引入了默认皮肤（首帧不能等 JS），
+/// 这里只是把 href 换掉——换完之后浏览器解析新文件、重新计算变量。
+function ensureSkinStyle(id) {
+  const href = skinHref(id);
+  let link = document.getElementById('skin-css');
+  if (!link) {
+    link = document.createElement('link');
+    link.id = 'skin-css';
+    link.rel = 'stylesheet';
+    const first = document.querySelector('link[rel="stylesheet"]');
+    document.head.insertBefore(link, first || null);
+  }
+  if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+}
+
+/// 把皮肤的变量真正落到 `<html>` 上：皮肤 → 明暗 → 强调色。
 export function applyTheme() {
-  const mode = state.settings.appearance?.theme || 'dark';
+  const appearance = state.settings.appearance || {};
+  const skin = getSkin(appearance.skin);
+  const modes = skinModes(skin.id);
+  const mode = appearance.theme || 'dark';
   const systemLight = window.matchMedia?.('(prefers-color-scheme: light)').matches;
-  const effective = mode === 'system' ? (systemLight ? 'light' : 'dark') : mode;
-  document.documentElement.dataset.theme = effective;
-  document.documentElement.dataset.themeMode = mode;
-  document.documentElement.style.setProperty('--accent', state.settings.appearance?.accent || '#fb7299');
-  document.documentElement.style.setProperty('--accent-soft', hexToAlpha(state.settings.appearance?.accent || '#fb7299', 0.16));
+  let effective = mode === 'system' ? (systemLight ? 'light' : 'dark') : mode;
+  // 皮肤只提供一套配色时以皮肤为准：设置里存着浅色也不能把皮肤渲染成深色。
+  if (!modes.includes(effective)) effective = modes[0];
+
+  const root = document.documentElement;
+  if (root.dataset.skin !== skin.id) root.dataset.skin = skin.id;
+  root.dataset.theme = effective;
+  root.dataset.themeMode = mode;
+
+  // 主题色：用户挑过的用用户的，否则用这套皮肤的默认色
+  // （首帧是 skin.css 里的静态值，必须和 registry 的第一个色一致）。
+  const accent = appearance.accentSource === 'user' && appearance.accent
+    ? appearance.accent
+    : skinAccent(skin.id);
+  root.style.setProperty('--accent', accent);
+  root.style.setProperty('--accent-soft', hexToAlpha(accent, effective === 'light' ? 0.18 : 0.16));
+
+  // 标题栏底色、安卓系统栏都跟着 `--bg` 走：以前这里写死了两套 hex，
+  // 换皮肤就会在状态栏露出一条对不上的边。取不到值时宁可不设，也不猜一个颜色。
+  const bg = readVar('--bg');
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', effective === 'light' ? '#ffffff' : '#101014');
-  syncSystemBar(effective);
+  if (bg && meta) meta.setAttribute('content', bg);
+  if (bg) syncSystemBar(effective, bg);
+  rememberBootPaint(effective, skin.id);
   window.dispatchEvent(new CustomEvent('simple-live:theme'));
 }
 
-/// 安卓系统栏跟着主题走。
-///
-/// 取的是 `--bg` 的实际值（深色 #101014 / 浅色 #f5f5f8），与页面背景严丝合缝；
-/// 不改的话浅色主题下会顶着一条黑边。只在移动端调，桌面窗口没有系统栏。
-const SYSTEM_BAR_COLORS = { dark: '#101014', light: '#f5f5f8' };
+/// 读一个 CSS 变量的当前计算值（皮肤文件是唯一来源）。
+function readVar(name) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || '';
+}
+
+/// 安卓系统栏跟着主题走：用 `--bg` 的实际值，和页面背景严丝合缝。
+/// 只在移动端调，桌面窗口没有系统栏。
 let lastSystemBar = '';
 
-function syncSystemBar(effective) {
+function syncSystemBar(effective, color) {
   if (!IS_MOBILE) return;
-  const color = SYSTEM_BAR_COLORS[effective] || SYSTEM_BAR_COLORS.dark;
   const key = `${effective}:${color}`;
   if (key === lastSystemBar) return;
   lastSystemBar = key;
   api.setSystemBar(color, effective === 'light').catch(() => {});
 }
 
+/// 首帧预涂：下次启动时 index.html 的内联脚本读这个键，
+/// 直接把 `data-theme` / `data-skin` 定下来，就不会先闪一帧默认配色。
+/// 单独存一个键而不是塞进 settings：它是渲染缓存，不该跟着备份/同步走。
+const BOOT_KEY = 'starveil.boot.v1';
+
+function rememberBootPaint(theme, skin) {
+  try {
+    const prev = localStorage.getItem(BOOT_KEY);
+    const next = JSON.stringify({ theme, skin });
+    if (prev !== next) localStorage.setItem(BOOT_KEY, next);
+  } catch {
+    /* 隐私模式/配额满：只是丢一次预涂，不影响功能 */
+  }
+}
+
 export function toggleTheme() {
-  const order = ['dark', 'light', 'system'];
+  const modes = skinModes(currentSkin().id);
+  const order = modes.length > 1 ? ['dark', 'light', 'system'] : modes;
   const current = state.settings.appearance?.theme || 'dark';
-  const next = order[(order.indexOf(current) + 1) % order.length];
+  const next = order[(order.indexOf(current) + 1) % order.length] || order[0];
   state.settings.appearance.theme = next;
   state.settings.theme = next;
   saveSettings();

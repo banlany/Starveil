@@ -33,7 +33,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--success);
-  box-shadow: 0 0 0 3px rgba(87, 211, 140, 0.14);
+  box-shadow: 0 0 0 3px var(--success-soft);
 }
 
 .home-status .sort {
@@ -51,9 +51,9 @@
 .page-error {
   margin: 20px 24px;
   padding: 18px 20px;
-  border-radius: 12px;
-  background: rgba(255, 107, 107, 0.08);
-  border: 1px solid rgba(255, 107, 107, 0.16);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 16%, transparent);
   color: var(--muted);
   font-size: 13px;
   line-height: 1.7;
@@ -101,9 +101,9 @@
   gap: 9px;
   min-width: 0;
   padding: 4px 2px;
-  border-radius: 9px;
+  border-radius: var(--tile-radius);
   color: var(--muted);
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .category-item:hover {
@@ -114,7 +114,7 @@
 .category-icon {
   width: 50px;
   height: 50px;
-  border-radius: 9px;
+  border-radius: var(--tile-radius);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -151,7 +151,7 @@
   justify-content: center;
   color: var(--muted);
   font-size: 12.5px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
 }
 
 .category-more:hover {
@@ -177,7 +177,7 @@
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(14px);
+  backdrop-filter: var(--panel-blur);
 }
 
 .subpage-header h1 {
@@ -223,9 +223,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-2);
   z-index: 20;
-  transition: transform 0.18s ease, color 0.18s ease, background 0.18s ease;
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .floating-refresh:hover {
@@ -255,12 +255,12 @@
   z-index: 5;
   background: var(--bg);
   border-bottom: 1px solid transparent;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .follow-sticky.is-stuck {
   border-bottom-color: var(--line);
-  box-shadow: 0 12px 22px -20px rgba(0, 0, 0, 0.8);
+  box-shadow: var(--shadow-line);
 }
 
 .follow-header {
@@ -310,25 +310,33 @@
 
 .follow-mode {
   display: inline-flex;
-  padding: 3px;
-  border-radius: 999px;
-  background: var(--surface);
+  gap: var(--seg-gap);
+  padding: var(--seg-inset);
+  border-radius: var(--seg-track-radius);
+  background: var(--seg-bg);
+  border: var(--seg-track-line);
 }
 
 .follow-mode button {
-  height: 28px;
-  padding: 0 13px;
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 12.5px;
+  height: var(--seg-h);
+  padding: 0 var(--seg-pad-x);
+  border-radius: var(--seg-radius);
+  color: var(--seg-fg);
+  font-size: var(--seg-font);
   display: flex;
   align-items: center;
   gap: 5px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.follow-mode button:hover {
+  color: var(--seg-hover-fg);
 }
 
 .follow-mode button.active {
-  background: var(--surface-3);
-  color: var(--fg);
+  background: var(--seg-pick-bg);
+  color: var(--seg-pick-fg);
+  box-shadow: var(--seg-pick-shadow);
 }
 
 .follow-count {
@@ -359,13 +367,13 @@
   width: 100%;
   height: 34px;
   padding: 0 36px 0 14px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--fg);
   font-size: 13px;
   outline: none;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .follow-search input::placeholder {
@@ -409,26 +417,27 @@
 .follow-card {
   position: relative;
   min-height: 178px;
-  border-radius: 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 20px 16px 13px;
   display: flex;
   flex-direction: column;
   align-items: center;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .follow-card:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
   transform: translateY(-2px);
 }
 
 .follow-card .avatar {
   width: 62px;
   height: 62px;
-  border: 2px solid rgba(255, 255, 255, 0.08);
+  border: 2px solid var(--line-strong);
   margin-bottom: 10px;
 }
 
@@ -587,7 +596,7 @@
   border-radius: var(--radius);
   overflow: hidden;
   flex: none;
-  background: #fff;
+  background: var(--logo-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -631,16 +640,17 @@
   gap: 18px;
   padding: 0 16px 0 14px;
   color: var(--fg);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
   font-size: 16px;
   text-align: left;
-  transition: background 0.14s ease, border-color 0.14s ease;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .settings-item:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
   border-color: var(--line-strong);
 }
 
@@ -689,7 +699,7 @@
 }
 
 .settings-group-label {
-  margin: 20px 2px 9px;
+  margin: var(--group-gap) 2px var(--group-label-bottom);
   color: var(--muted);
   font-size: 12.5px;
   font-weight: 500;
@@ -701,23 +711,30 @@
 }
 
 .settings-group {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
 }
 
+/* 没有标题的分组（比如「定时关闭」页第二块「当前状态」）以前紧贴着上一张卡片：
+   组间距全挂在 .settings-group-label 的 margin 上，label 一空就粘住了。 */
+.settings-group + .settings-group {
+  margin-top: var(--group-gap);
+}
+
 .setting-row {
-  min-height: 60px;
-  padding: 11px 18px;
+  min-height: var(--row-min-h);
+  padding: var(--row-pad-y) var(--row-pad-x);
   display: flex;
   align-items: center;
   gap: 18px;
-  transition: background 0.14s ease;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .setting-row + .setting-row {
-  border-top: 1px solid var(--line);
+  border-top: var(--row-divider);
 }
 
 .setting-row.clickable {
@@ -725,7 +742,7 @@
 }
 
 .setting-row.clickable:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
 }
 
 .setting-info {
@@ -779,13 +796,98 @@
   flex: none;
 }
 
+/* 皮肤选择
+   卡片里的色点只是皮肤的标识色（来自 skins/registry.js），
+   真正的观感差异由整页体现——不在这里预先画一张假的缩略图。 */
+
+.skin-picker {
+  padding: 14px 16px 16px;
+}
+
+.skin-grid {
+  display: grid;
+  /* 上限 380px：只有一套皮肤时也别拉成一整条横幅，卡片就该是卡片的样子。 */
+  grid-template-columns: repeat(auto-fill, minmax(250px, 380px));
+  gap: 10px;
+}
+
+.skin-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  text-align: left;
+  color: var(--fg);
+  background: var(--card-bg);
+  border: 1px solid transparent;
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.skin-card:hover {
+  background: var(--row-hover);
+}
+
+.skin-card.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.skin-dot {
+  width: var(--skin-dot-size);
+  height: var(--skin-dot-size);
+  margin-top: 3px;
+  border-radius: var(--skin-dot-radius);
+  flex: none;
+  box-shadow: var(--skin-dot-ring);
+}
+
+.skin-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skin-text b {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.skin-text small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.skin-text em {
+  font-style: normal;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.skin-check {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.skin-picker-note {
+  margin: 10px 2px 0;
+  color: var(--dim);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
 /* 单选 */
 
 .radio {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1.8px solid var(--line-strong);
+  width: var(--radio-size);
+  height: var(--radio-size);
+  border-radius: var(--radio-radius);
+  border: var(--radio-ring) solid var(--radio-line);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -793,15 +895,15 @@
 }
 
 .radio.checked {
-  border-color: var(--accent);
+  border-color: var(--radio-line-on);
 }
 
 .radio.checked::after {
   content: "";
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent);
+  width: var(--radio-dot);
+  height: var(--radio-dot);
+  border-radius: var(--radio-dot-radius);
+  background: var(--radio-dot-fill);
 }
 
 /* 计数器 */
@@ -849,15 +951,15 @@
 }
 
 .swatch {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-sm);
+  width: var(--swatch-size);
+  height: var(--swatch-size);
+  border-radius: var(--swatch-radius);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
-  transition: transform 0.12s ease;
+  color: var(--accent-on);
+  box-shadow: var(--swatch-ring);
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .swatch:hover {
@@ -869,7 +971,7 @@
 .swatch-custom {
   background: transparent;
   color: var(--dim);
-  border: 1px dashed var(--line, rgba(255, 255, 255, 0.18));
+  border: 1px dashed var(--line-strong);
   box-shadow: none;
 }
 
@@ -879,7 +981,7 @@
 }
 
 .swatch-custom.active {
-  color: #fff;
+  color: var(--accent-on);
   border: 1px solid transparent;
 }
 
@@ -889,10 +991,10 @@
 
 .swatch.active::after {
   content: "";
-  width: 11px;
-  height: 6px;
-  border-left: 2px solid #fff;
-  border-bottom: 2px solid #fff;
+  width: var(--swatch-check-w);
+  height: var(--swatch-check-h);
+  border-left: var(--swatch-check-stroke) solid var(--swatch-check-on);
+  border-bottom: var(--swatch-check-stroke) solid var(--swatch-check-on);
   transform: rotate(-45deg) translate(1px, -1px);
 }
 
@@ -914,14 +1016,15 @@
 }
 
 .settings-action-card {
-  margin-top: 14px;
+  margin-top: var(--card-gap);
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 15px 18px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: var(--card-radius);
+  border: var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
 }
 
 .settings-action-card .action-icon {
@@ -956,7 +1059,7 @@
 
 .settings-action-card.danger .action-icon {
   color: var(--danger);
-  background: rgba(255, 107, 107, 0.1);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 /* 关于页 */
@@ -972,7 +1075,7 @@
   border-radius: var(--radius-lg);
   overflow: hidden;
   margin: 0 auto 16px;
-  background: #fff;
+  background: var(--logo-bg);
 }
 
 .about-logo img {
@@ -1012,7 +1115,7 @@
   top: 0;
   z-index: 14;
   background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(14px);
+  backdrop-filter: var(--panel-blur);
   padding: 14px 22px 0;
 }
 
@@ -1023,9 +1126,9 @@
   gap: 10px;
   padding: 0 8px 0 14px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .search-bar:focus-within {
@@ -1058,7 +1161,7 @@
   font-size: 13.5px;
   flex: none;
   padding: 0 7px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
 }
 
 .search-type:hover {
@@ -1131,7 +1234,7 @@
 .recent-chip {
   height: 32px;
   padding: 0 14px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--muted);
   font-size: 13px;
@@ -1181,15 +1284,16 @@
   align-items: center;
   gap: 13px;
   padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: var(--card-radius);
+  border: var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .anchor-card:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
   border-color: var(--line-strong);
   transform: translateY(-1px);
 }
@@ -1197,7 +1301,7 @@
 .anchor-card .avatar {
   width: 54px;
   height: 54px;
-  border: 2px solid rgba(255, 255, 255, 0.08);
+  border: 2px solid var(--line-strong);
 }
 
 .anchor-body {
@@ -1266,30 +1370,31 @@
 /* 分段控件：观看记录/统计、本周/本月/今年/全部 共用。 */
 .segmented {
   display: inline-flex;
-  gap: 3px;
-  padding: 3px;
+  gap: var(--seg-gap);
+  padding: var(--seg-inset);
   margin-bottom: 14px;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  border-radius: var(--seg-track-radius);
+  background: var(--seg-bg);
+  border: var(--seg-track-line);
 }
 
 .segmented button {
-  height: 30px;
-  padding: 0 15px;
-  border-radius: var(--radius-xs);
-  color: var(--muted);
-  font-size: 12.5px;
-  transition: background 0.14s ease, color 0.14s ease;
+  height: var(--seg-h);
+  padding: 0 var(--seg-pad-x);
+  border-radius: var(--seg-radius);
+  color: var(--seg-fg);
+  font-size: var(--seg-font);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .segmented button:hover {
-  color: var(--fg);
+  color: var(--seg-hover-fg);
 }
 
 .segmented button.active {
-  color: var(--fg);
-  background: var(--surface-3);
+  color: var(--seg-pick-fg);
+  background: var(--seg-pick-bg);
+  box-shadow: var(--seg-pick-shadow);
 }
 
 .stats-summary {
@@ -1304,9 +1409,10 @@
   flex-direction: column;
   gap: 6px;
   padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
 }
 
 .stats-card span {
@@ -1333,14 +1439,14 @@
   padding: 9px 14px;
   text-align: left;
   color: var(--fg);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  transition: background 0.14s ease, border-color 0.14s ease;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .stats-row:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
   border-color: var(--line-strong);
 }
 
@@ -1444,12 +1550,12 @@
   width: 216px;
   height: 216px;
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--qr-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-2);
 }
 
 .login-qr-box svg {
@@ -1479,7 +1585,7 @@
 .login-cookie {
   min-height: 126px;
   resize: vertical;
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
   line-height: 1.6;
 }
@@ -1502,14 +1608,15 @@
 /* ------------------------------------------------------------ 链接解析/数据同步 */
 
 .tool-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
   padding: 18px;
 }
 
 .tool-card + .tool-card {
-  margin-top: 14px;
+  margin-top: var(--card-gap);
 }
 
 .tool-card h3 {
@@ -1602,7 +1709,7 @@
 }
 
 .pill-note b {
-  color: var(--text);
+  color: var(--fg);
   font-weight: 600;
 }
 
@@ -1610,7 +1717,7 @@
 .pill-note.warn {
   margin-top: 12px;
   background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
-  color: var(--text);
+  color: var(--fg);
 }
 
 .pill-note.warn .ico {
@@ -1641,9 +1748,10 @@
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
 }
 
 .lan-peer-main {
@@ -1780,9 +1888,10 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--card-radius);
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: var(--card-border);
+  background: var(--card-bg);
 }
 
 .info-table > div {
@@ -1791,12 +1900,12 @@
   justify-content: space-between;
   gap: 16px;
   padding: 10px 14px;
-  background: var(--surface);
+  background: var(--card-bg);
   font-size: 12.5px;
 }
 
 .info-table > div + div {
-  border-top: 1px solid var(--line);
+  border-top: var(--row-divider);
 }
 
 .info-table span {
