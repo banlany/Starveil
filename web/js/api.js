@@ -76,6 +76,16 @@ export function coverImage(url, platform) {
   return `${base}@480w_270h_1c.webp${query ? `?${query}` : ''}`;
 }
 
+/// 主播头像：B 站的 face 图动辄几百 KB，列表里只要几十像素，让 CDN 直接缩。
+export function avatarImage(url, size = 22) {
+  const value = canonicalImage(url);
+  if (!value || !/hdslb\.com/i.test(value)) return value;
+  const [base, query] = value.split('?');
+  if (base.includes('@')) return value;
+  const px = Math.max(48, Math.round(size * 3));
+  return `${base}@${px}w_${px}h_1c.webp${query ? `?${query}` : ''}`;
+}
+
 export function categoryImage(url) {
   const value = canonicalImage(url);
   if (!value || !/hdslb\.com/i.test(value)) return value;

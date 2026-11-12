@@ -44,6 +44,11 @@ pub fn parse_search(value: &Value) -> Vec<LiveRoomItem> {
                 // 搜索结果的标题带 <em class="keyword"> 高亮标签。
                 title: strip_tags(&text(item, "title").unwrap_or_default()),
                 user_name: strip_tags(&text(item, "uname").unwrap_or_default()),
+                avatar: absolute(
+                    &text(item, "uface")
+                        .or_else(|| text(item, "face"))
+                        .unwrap_or_default(),
+                ),
                 cover: absolute(&text(item, "cover").unwrap_or_default()),
                 online: u64_of(item, "online"),
             })
@@ -93,18 +98,48 @@ pub fn parse_detail(
     })
 }
 
+/// 一档清晰度的显示名。
+///
+/// 平台把「分辨率 + 商业名」放在 `media_base_desc.detail_desc.desc` 里
+/// （`1080P 蓝光`、`720P 超清`），`tag` 里还会带 `高帧率`；2K / 4K / 杜比
+/// 这几档没有 detail，只有 `desc`（`2K` / `4K` / `杜比`），自行补上「原画」前缀。
+fn quality_label(item: &Value, qn: u32) -> String {
+    let base = item
+        .get("desc")
+        .and_then(Value::as_str)
+        .unwrap_or("未知");
+    if let Some(detail) = item.pointer("/media_base_desc/detail_desc") {
+        let mut label = detail
+            .get("desc")
+            .and_then(Value::as_str)
+            .unwrap_or(base)
+            .to_string();
+        let tags: Vec<&str> = detail
+            .get("tag")
+            .and_then(Value::as_array)
+            .map(|tags| tags.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if !tags.is_empty() {
+            label.push_str(" · ");
+            label.push_str(&tags.join(" · "));
+        }
+        return label;
+    }
+    match qn {
+        20000 => "原画 4K".to_string(),
+        15000 => "原画 2K".to_string(),
+        _ => base.to_string(),
+    }
+}
+
 /// 解析 `playurl_info.playurl`，得到可用清晰度（高码率在前）。
 pub fn parse_qualities(playurl: &Value) -> Result<Vec<PlayQuality>, LiveError> {
     let mut descs: BTreeMap<u32, String> = BTreeMap::new();
     for item in array_of(playurl, "g_qn_desc") {
-        if let Some(qn) = item.get("qn").and_then(Value::as_u64) {
-            let desc = item
-                .get("desc")
-                .and_then(Value::as_str)
-                .unwrap_or("未知")
-                .to_string();
-            descs.insert(qn as u32, desc);
-        }
+        let Some(qn) = item.get("qn").and_then(Value::as_u64).map(|qn| qn as u32) else {
+            continue;
+        };
+        descs.insert(qn, quality_label(item, qn));
     }
 
     let mut accepted: BTreeSet<u32> = BTreeSet::new();
@@ -141,9 +176,12 @@ pub fn parse_qualities(playurl: &Value) -> Result<Vec<PlayQuality>, LiveError> {
 /// `protocol=0,1` 同时要了 http_stream(FLV) 与 http_hls，两者的直链混在
 /// 同一棵 `stream` 树里，靠 `protocol_name` / URL 后缀区分：
 /// FLV 结尾是 `.flv`，HLS 结尾是 `.m3u8`。
-pub fn parse_play_urls(playurl: &Value) -> Result<PlayUrls, LiveError> {
-    let mut urls: Vec<String> = Vec::new();
-    let mut hls_urls: Vec<String> = Vec::new();
+pub fn parse_play_urls(playurl: &Value, expected_qn: Option<u32>) -> Result<PlayUrls, LiveError> {
+    // 同一份响应里会同时带 AVC / HEVC、FLV / HLS 好几套码流，各自的 `current_qn`
+    // 可能不一样：选 4K 时如果只挑到 1080P 那套，画面就降级了（统计里看得见）。
+    // 所以先按请求的 qn 过滤，过滤后为空再退回全部，至少保证能播。
+    let mut matched: (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    let mut fallback: (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     for stream in array_of(playurl, "stream") {
         let protocol = stream
             .get("protocol_name")
@@ -151,6 +189,15 @@ pub fn parse_play_urls(playurl: &Value) -> Result<PlayUrls, LiveError> {
             .unwrap_or_default();
         for format in array_of(stream, "format") {
             for codec in array_of(format, "codec") {
+                let current_qn = codec
+                    .get("current_qn")
+                    .and_then(Value::as_u64)
+                    .map(|qn| qn as u32);
+                let bucket = if expected_qn.is_none() || current_qn == expected_qn {
+                    &mut matched
+                } else {
+                    &mut fallback
+                };
                 let base = codec
                     .get("base_url")
                     .and_then(Value::as_str)
@@ -164,14 +211,19 @@ pub fn parse_play_urls(playurl: &Value) -> Result<PlayUrls, LiveError> {
                     }
                     let is_hls = protocol == "http_hls" || url.contains(".m3u8");
                     if is_hls {
-                        hls_urls.push(url);
+                        bucket.1.push(url);
                     } else {
-                        urls.push(url);
+                        bucket.0.push(url);
                     }
                 }
             }
         }
     }
+    let (mut urls, mut hls_urls) = if matched.0.is_empty() && matched.1.is_empty() {
+        fallback
+    } else {
+        matched
+    };
     // HLS 只作为兜底线路，去重后限几条就够，避免线路列表被刷屏。
     hls_urls.dedup();
     if urls.is_empty() && hls_urls.is_empty() {
@@ -205,6 +257,11 @@ pub fn parse_rooms(value: &Value, path: &str) -> Vec<LiveRoomItem> {
             room_id,
             title: strip_tags(&text(item, "title").unwrap_or_default()),
             user_name: strip_tags(&text(item, "uname").unwrap_or_default()),
+            avatar: absolute(
+                &text(item, "face")
+                    .or_else(|| text(item, "uface"))
+                    .unwrap_or_default(),
+            ),
             cover: absolute(&cover),
             online: u64_of(item, "online"),
         });
@@ -576,13 +633,18 @@ impl LiveSite for BilibiliSite {
         let QualityData::Bilibili { qn } = quality.data else {
             return Err(LiveError::parse("清晰度句柄与平台不匹配"));
         };
-        let qn = qn.to_string();
+        let qn_text = qn.to_string();
+        // 2K / 4K 有时只在 HEVC 或 HLS 里提供，只问 AVC+FLV 会被降级到 1080P。
         let playurl = self.playurl(
             http,
             &detail.room_id,
-            &[("format", "0,2"), ("codec", "0"), ("qn", qn.as_str())],
+            &[
+                ("format", "0,1,2"),
+                ("codec", "0,1"),
+                ("qn", qn_text.as_str()),
+            ],
         )?;
-        parse_play_urls(&playurl)
+        parse_play_urls(&playurl, Some(qn))
     }
 
     fn send_danmaku(

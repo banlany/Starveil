@@ -510,6 +510,7 @@ impl LiveSite for KuaishouSite {
                 room_id,
                 title: text_of(entry, "caption"),
                 user_name: text_of(&author, "name"),
+                avatar: normalize_image(&text_of(&author, "avatar")),
                 cover: normalize_image(&text_of(entry, "poster")),
                 online: number_of(entry, "watchingCount"),
             });
@@ -588,6 +589,7 @@ fn room_item(entry: &Value) -> Option<LiveRoomItem> {
         room_id,
         title,
         user_name: text_of(author, "name"),
+        avatar: normalize_image(&text_of(author, "avatar")),
         cover,
         online: number_of(entry, "watchingCount"),
     })

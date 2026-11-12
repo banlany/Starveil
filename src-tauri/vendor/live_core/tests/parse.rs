@@ -83,8 +83,57 @@ fn b站清晰度按码率降序且只保留可用档位() {
     let qualities = bilibili::parse_qualities(playurl).expect("应当解析出清晰度");
     // fixture 的 accept_qn 是 [10000, 250]
     assert_eq!(qualities.len(), 2);
-    assert_eq!(qualities[0].name, "原画");
-    assert_eq!(qualities[1].name, "超清");
+    // 显示名优先取 detail_desc（分辨率 + 平台名），tag 里的「高帧率」跟在后面。
+    assert_eq!(qualities[0].name, "1080P 原画 · 高帧率");
+    assert_eq!(qualities[1].name, "720P 超清");
+    assert_eq!(qualities[0].data, live_core::model::QualityData::Bilibili { qn: 10000 });
+    assert_eq!(qualities[1].data, live_core::model::QualityData::Bilibili { qn: 250 });
+}
+
+#[test]
+fn b站2k与4k补上原画前缀() {
+    let value = json(include_str!("fixtures/bili_play_info.json"));
+    let playurl = value
+        .pointer("/data/playurl_info/playurl")
+        .expect("fixture 结构");
+
+    // 这两档没有 media_base_desc，只有 desc。
+    assert_eq!(
+        bilibili::parse_qualities(playurl)
+            .expect("清晰度")
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1080P 原画 · 高帧率", "720P 超清"],
+        "该 fixture 的 accept_qn 只放行两档"
+    );
+
+    let mut raw = value.clone();
+    let playurl = raw
+        .pointer_mut("/data/playurl_info/playurl")
+        .expect("fixture 结构");
+    // 手动放开 2K / 4K 的档位，验证命名与排序。
+    playurl["g_qn_desc"] = json(
+        r#"[
+            {"qn":20000,"desc":"4K"},
+            {"qn":15000,"desc":"2K"},
+            {"qn":10000,"desc":"原画","media_base_desc":{"detail_desc":{"desc":"1080P 原画"}}}
+        ]"#,
+    );
+    for stream in playurl["stream"].as_array_mut().unwrap() {
+        for format in stream["format"].as_array_mut().unwrap() {
+            for codec in format["codec"].as_array_mut().unwrap() {
+                codec["accept_qn"] = json("[20000,15000,10000]");
+            }
+        }
+    }
+
+    let names: Vec<String> = bilibili::parse_qualities(playurl)
+        .expect("清晰度")
+        .into_iter()
+        .map(|item| item.name)
+        .collect();
+    assert_eq!(names, vec!["原画 4K", "原画 2K", "1080P 原画"]);
 }
 
 #[test]
@@ -94,7 +143,7 @@ fn b站直链拼接完整且优先非mcdn() {
         .pointer("/data/playurl_info/playurl")
         .expect("fixture 结构");
 
-    let result = bilibili::parse_play_urls(playurl).expect("应当解析出直链");
+    let result = bilibili::parse_play_urls(playurl, None).expect("应当解析出直链");
     assert!(!result.urls.is_empty());
     for url in &result.urls {
         assert!(url.starts_with("https://"), "直链必须以 https 开头：{url}");

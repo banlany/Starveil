@@ -38,6 +38,9 @@ pub fn parse_search(value: &Value) -> Vec<LiveRoomItem> {
                 room_id,
                 title: strip_tags(&text(item, "roomName").unwrap_or_default()),
                 user_name: text(item, "nickName").unwrap_or_default(),
+                avatar: avatar_url(
+                    text(item, "avatar").or_else(|| text(item, "av")),
+                ),
                 cover: text(item, "roomSrc").unwrap_or_default(),
                 online: hot_count(&text(item, "hot").unwrap_or_default()),
             })
@@ -64,6 +67,7 @@ pub fn parse_rooms(value: &Value) -> Vec<LiveRoomItem> {
             room_id,
             title: strip_tags(&text(item, "rn").unwrap_or_default()),
             user_name: strip_tags(&text(item, "nn").unwrap_or_default()),
+            avatar: avatar_url(text(item, "av").or_else(|| text(item, "avatar"))),
             cover: text(item, "rs16").unwrap_or_default(),
             online: u64_of(item, "ol"),
         });
@@ -142,6 +146,19 @@ pub fn parse_detail(value: &Value, fallback_room_id: &str) -> Result<LiveRoomDet
         url: format!("https://www.douyu.com/{rid}"),
         extra: RoomExtra::Douyu { rid },
     })
+}
+
+/// 斗鱼列表里的头像只给相对路径（`avatar_v3/202610/xxx`），
+/// 需要拼上 CDN 前缀与尺寸后缀；少数接口直接给完整地址，原样返回。
+fn avatar_url(value: Option<String>) -> String {
+    let Some(raw) = value else {
+        return String::new();
+    };
+    let raw = raw.trim();
+    if raw.is_empty() || raw.starts_with("http://") || raw.starts_with("https://") {
+        return raw.to_string();
+    }
+    format!("https://apic.douyucdn.cn/upload/{raw}_middle.jpg")
 }
 
 /// 从 `getH5Play` 响应解析清晰度。

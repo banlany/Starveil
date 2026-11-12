@@ -1035,6 +1035,12 @@ textarea.input {
 .menu {
   position: fixed;
   min-width: 178px;
+  /* 手机横屏下「更多」这类长菜单比屏幕还高：限高 + 内部滚动，
+     否则底部几项既看不见也滑不到（fixed 元素超出视口的部分不会跟着页面滚）。 */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 6px;
   border-radius: var(--radius);
   background: var(--surface-menu);

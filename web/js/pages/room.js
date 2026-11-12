@@ -1427,8 +1427,13 @@ export function renderRoom(ctx, params = {}) {
       smooth: ['流畅', '极速', '标清'],
     }[mode];
     if (!keywords) return fallback;
-    const index = list.findIndex((name) => keywords.some((word) => String(name).includes(word)));
-    return index >= 0 ? index : fallback;
+    // 关键词按优先级逐个找：加上分辨率前缀后，「原画 4K」也含「原画」，
+    // 一起 any 匹配会让「1080P 优先」落到 4K 上。
+    for (const word of keywords) {
+      const index = list.findIndex((name) => String(name).includes(word));
+      if (index >= 0) return index;
+    }
+    return fallback;
   }
 
   function destroyPlayer() {
@@ -2287,7 +2292,7 @@ export function renderRoom(ctx, params = {}) {
     openMenu(anchor, items);
   }
 
-  /// 播放统计：清晰度 / 线路 / 分辨率、缓冲与播放状态、已解码与丢帧。
+  /// 播放统计：清晰度 / 线路 / 分辨率 / 码率 / 帧率、缓冲与播放状态、已解码与丢帧。
   /// 每秒刷新一次，关闭弹窗或退出直播间都会清掉定时器。
   function showPlaybackStats() {
     const body = document.createElement('div');
@@ -2306,6 +2311,11 @@ export function renderRoom(ctx, params = {}) {
       }
       return Math.max(0, end - video.currentTime);
     }
+
+    // 帧率只能靠「两次采样之间解码了多少帧」算：mpegts 只给累计帧数。
+    let lastFrames = 0;
+    let lastAt = 0;
+    let fps = 0;
 
     function paint() {
       const quality = session.qualities[session.qualityIndex] || '未知';
@@ -2326,14 +2336,30 @@ export function renderRoom(ctx, params = {}) {
       // mpegts 自己的统计：decodedFrames / droppedFrames 之外还有速度之类，
       // 字段随版本变化，这里把剩余的标量字段原样列出来。
       const stats = session.player?.statisticsInfo || {};
+      // statisticsInfo.speed 是 KB/s；一秒采一次样，换算成 Mbps 更直观。
+      const speedKb = Number(stats.speed) || 0;
+      const bitrate = speedKb > 0 ? `${((speedKb * 8) / 1024).toFixed(2)} Mbps` : '—';
+      const nowAt = performance.now();
+      if (lastAt && nowAt > lastAt && decoded > lastFrames) {
+        fps = ((decoded - lastFrames) * 1000) / (nowAt - lastAt);
+      }
+      lastFrames = decoded;
+      lastAt = nowAt;
+      const frameRate = fps > 0 ? `${fps.toFixed(1)} fps` : '—';
       const extra = Object.entries(stats)
-        .filter(([key, value]) => !['playerType', 'decodedFrames', 'droppedFrames'].includes(key) && typeof value !== 'object')
+        .filter(
+          ([key, value]) =>
+            !['playerType', 'decodedFrames', 'droppedFrames', 'speed'].includes(key) &&
+            typeof value !== 'object',
+        )
         .map(([key, value]) => `<div><span>${escapeHtml(key)}</span><b>${escapeHtml(String(value))}</b></div>`)
         .join('');
       table.innerHTML = `
         <div><span>清晰度</span><b>${escapeHtml(quality)}</b></div>
         <div><span>线路</span><b>${escapeHtml(lines)}</b></div>
         <div><span>分辨率</span><b>${escapeHtml(resolution)}</b></div>
+        <div><span>码率</span><b>${escapeHtml(bitrate)}</b></div>
+        <div><span>帧率</span><b>${escapeHtml(frameRate)}</b></div>
         <div><span>播放状态</span><b>${escapeHtml(playState)}</b></div>
         <div><span>缓冲</span><b>${ahead.toFixed(1)} 秒</b></div>
         <div><span>已解码帧</span><b>${decoded}</b></div>

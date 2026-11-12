@@ -14,7 +14,8 @@
 //! - `Response.cursor` 是重连游标，必须延续上一次的，否则会重放一堆历史弹幕。
 
 use crate::danmaku::{
-    DanmakuMessage, StatusSink, next_backoff, set_read_timeout, should_report, sleep_while,
+    DanmakuMessage, Emoticon, StatusSink, next_backoff, set_read_timeout, should_report,
+    sleep_while,
 };
 use crate::model::RoomExtra;
 use std::io::Read;
@@ -232,27 +233,33 @@ fn parse_message(data: &[u8]) -> Option<(String, Vec<u8>)> {
     (!method.is_empty()).then_some((method, payload))
 }
 
-/// `ChatMessage{ user.nickName, content }`。
-fn parse_chat(data: &[u8]) -> Option<(String, String)> {
+/// `ChatMessage{ user.nickName, content }`，外加 rtfContent 里的表情片段。
+fn parse_chat(data: &[u8]) -> Option<(String, String, Vec<Emoticon>)> {
     let mut reader = Reader::new(data);
     let mut user = String::new();
     let mut content = String::new();
     let mut rtf_text = String::new();
+    let mut emoticons = Vec::new();
     while let Some((field, wire)) = reader.header() {
         match (field, wire) {
             (2, 2) => user = parse_user(reader.bytes()?).unwrap_or_default(),
             (3, 2) => content = reader.string()?,
-            // rtfContent：图文混排版本，正文为空时从它的文本片段里拼一段出来。
-            (22, 2) => rtf_text = parse_rtf_text(reader.bytes()?),
+            // rtfContent：图文混排版本。带表情时必须用它的文本（里面才有占位符），
+            // 否则纯文本 content 里的 `[表情名]` 找不到对应的图。
+            (22, 2) => {
+                let (text, list) = parse_rtf(reader.bytes()?);
+                rtf_text = text;
+                emoticons = list;
+            }
             _ => reader.skip(wire)?,
         }
     }
-    let text = if content.trim().is_empty() {
-        rtf_text.trim().to_string()
-    } else {
+    let text = if emoticons.is_empty() && !content.trim().is_empty() {
         content
+    } else {
+        rtf_text.trim().to_string()
     };
-    (!text.is_empty()).then_some((user, text))
+    (!text.is_empty()).then_some((user, text, emoticons))
 }
 
 /// `User.nickName` 是字段 3。
@@ -267,19 +274,29 @@ fn parse_user(data: &[u8]) -> Option<String> {
     None
 }
 
-/// `Text.piecesList[].stringValue`：只取纯文本片段，表情图（`imageValue`）跳过。
-fn parse_rtf_text(data: &[u8]) -> String {
+/// `Text.piecesList`：文本片段直接拼进正文，`imageValue` 片段变成表情占位符。
+///
+/// 占位符优先用图片自带的 `alternativeText`（抖音给的是 `[捂脸]` 这种），
+/// 前端就是按 key 在正文里找位置换成 `<img>`；拿不到时按顺序编号，
+/// 编号必须唯一，否则同一句里两个不同表情会都变成第一张图。
+fn parse_rtf(data: &[u8]) -> (String, Vec<Emoticon>) {
     let mut reader = Reader::new(data);
     let mut text = String::new();
+    let mut emoticons: Vec<Emoticon> = Vec::new();
     while let Some((field, wire)) = reader.header() {
         match (field, wire) {
             (4, 2) => {
                 let Some(piece) = reader.bytes() else { break };
                 let mut piece_reader = Reader::new(piece);
+                let mut piece_text = String::new();
+                let mut image: Option<(String, u32, u32, String)> = None;
                 while let Some((piece_field, piece_wire)) = piece_reader.header() {
                     match (piece_field, piece_wire) {
-                        (3, 2) => {
-                            text.push_str(&piece_reader.string().unwrap_or_default());
+                        (3, 2) => piece_text = piece_reader.string().unwrap_or_default(),
+                        (8, 2) => {
+                            if let Some(bytes) = piece_reader.bytes() {
+                                image = parse_piece_image(bytes);
+                            }
                         }
                         _ => {
                             if piece_reader.skip(piece_wire).is_none() {
@@ -287,6 +304,35 @@ fn parse_rtf_text(data: &[u8]) -> String {
                             }
                         }
                     }
+                }
+                match image {
+                    Some((url, width, height, alt)) => {
+                        let mut key = if alt.trim().is_empty() {
+                            format!("[表情{}]", emoticons.len() + 1)
+                        } else {
+                            alt.trim().to_string()
+                        };
+                        if !key.starts_with('[') {
+                            key = format!("[{key}]");
+                        }
+                        // 同一个表情在正文里出现多次时复用同一个 key，
+                        // 但 key 指向不同图时得错开，否则后一张会被前一张顶掉。
+                        if emoticons
+                            .iter()
+                            .any(|item| item.key == key && item.url != url)
+                        {
+                            key = format!("[表情{}]", emoticons.len() + 1);
+                        }
+                        text.push_str(&key);
+                        emoticons.push(Emoticon {
+                            key,
+                            url,
+                            width,
+                            height,
+                            big: false,
+                        });
+                    }
+                    None => text.push_str(&piece_text),
                 }
             }
             _ => {
@@ -296,7 +342,63 @@ fn parse_rtf_text(data: &[u8]) -> String {
             }
         }
     }
-    text
+    (text, emoticons)
+}
+
+/// `TextPieceImage{ image }` → `(url, width, height, alternativeText)`。
+fn parse_piece_image(data: &[u8]) -> Option<(String, u32, u32, String)> {
+    let mut reader = Reader::new(data);
+    let mut image_bytes: Option<&[u8]> = None;
+    while let Some((field, wire)) = reader.header() {
+        match (field, wire) {
+            (1, 2) => image_bytes = reader.bytes(),
+            _ => {
+                if reader.skip(wire).is_none() {
+                    break;
+                }
+            }
+        }
+    }
+    let mut image = Reader::new(image_bytes?);
+    let mut url = String::new();
+    let mut width = 0u64;
+    let mut height = 0u64;
+    let mut alt = String::new();
+    while let Some((field, wire)) = image.header() {
+        match (field, wire) {
+            (1, 2) => {
+                if url.is_empty() {
+                    url = image.string().unwrap_or_default();
+                }
+            }
+            (3, 0) => height = image.varint().unwrap_or(0),
+            (4, 0) => width = image.varint().unwrap_or(0),
+            (8, 2) => {
+                if let Some(bytes) = image.bytes() {
+                    let mut content = Reader::new(bytes);
+                    while let Some((content_field, content_wire)) = content.header() {
+                        match (content_field, content_wire) {
+                            (4, 2) => alt = content.string().unwrap_or_default(),
+                            _ => {
+                                if content.skip(content_wire).is_none() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                if image.skip(wire).is_none() {
+                    break;
+                }
+            }
+        }
+    }
+    if url.is_empty() {
+        return None;
+    }
+    Some((url, width as u32, height as u32, alt))
 }
 
 fn gunzip(data: &[u8]) -> Option<Vec<u8>> {
@@ -512,8 +614,12 @@ fn handle_frame(
     for (method, body) in messages {
         match method.as_str() {
             "WebcastChatMessage" => {
-                if let Some((user, text)) = parse_chat(&body) {
-                    let _ = tx.send(DanmakuMessage::chat(user, text));
+                if let Some((user, text, emoticons)) = parse_chat(&body) {
+                    let mut message = DanmakuMessage::chat(user, text);
+                    if !emoticons.is_empty() {
+                        message.emoticons = Some(emoticons);
+                    }
+                    let _ = tx.send(message);
                 }
             }
             // 其余（礼物、进场、点赞、在线人数）这一版都不渲染：

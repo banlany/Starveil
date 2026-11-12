@@ -307,6 +307,7 @@ fn parse_partition_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> 
             room_id,
             title: text_of(room, "title"),
             user_name: text_of(&owner, "nickname"),
+            avatar: url_of(&owner, "avatar_thumb"),
             cover: url_of(room, "cover"),
             online,
         });
@@ -394,6 +395,7 @@ fn parse_search_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> {
             room_id,
             title: text_of(&room, "title"),
             user_name: text_of(&owner, "nickname"),
+            avatar: url_of(&owner, "avatar_thumb"),
             cover: url_of(&room, "cover"),
             online,
         });

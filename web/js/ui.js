@@ -1,5 +1,5 @@
 // 通用 UI：卡片、提示、弹窗、空态、骨架屏。
-import { canonicalImage, coverImage, formatOnline } from './api.js';
+import { avatarImage, canonicalImage, coverImage, formatOnline } from './api.js';
 import { icon, PLATFORM_META, platformIcon } from './icons.js';
 
 export function escapeHtml(value) {
@@ -30,7 +30,7 @@ export function platformBadge(platform, withName = false) {
 
 export function avatarHtml(name, image, size = 22, className = '') {
   const label = escapeHtml((name || '?').trim().slice(0, 1));
-  const src = canonicalImage(image);
+  const src = avatarImage(image, size);
   if (src) {
     return `<span class="avatar ${className}" style="width:${size}px;height:${size}px;font-size:${Math.max(10, size * 0.42)}px"><img src="${escapeHtml(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" /><span class="avatar-fallback">${label}</span></span>`;
   }
@@ -311,6 +311,17 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
   };
   overlay.appendChild(menu);
   root.appendChild(overlay);
+  // 菜单高度是渲染后才知道的：贴边超出视口时改贴另一边，两边都放不下就顶到
+  // 上边由 max-height 接管。手机横屏（尤其直播间「更多」）主要靠这一步。
+  const pad = 8;
+  const box = menu.getBoundingClientRect();
+  if (box.top < pad) {
+    menu.style.top = `${pad}px`;
+    menu.style.bottom = 'auto';
+  } else if (box.bottom > window.innerHeight - pad) {
+    menu.style.bottom = `${pad}px`;
+    menu.style.top = 'auto';
+  }
   setTimeout(() => {
     document.addEventListener('mousedown', outside, true);
     document.addEventListener('keydown', onKey);

@@ -56,6 +56,11 @@ pub fn parse_search(value: &Value) -> Vec<LiveRoomItem> {
                 room_id,
                 title,
                 user_name: text(item, "game_nick").unwrap_or_default(),
+                avatar: absolute(
+                    &text(item, "game_avatarUrl180")
+                        .or_else(|| text(item, "avatar180"))
+                        .unwrap_or_default(),
+                ),
                 cover: absolute(&text(item, "game_screenshot").unwrap_or_default()),
                 online: u64_of(item, "game_total_count"),
             })
@@ -83,6 +88,11 @@ pub fn parse_rooms(value: &Value) -> Vec<LiveRoomItem> {
             room_id,
             title,
             user_name: text(item, "nick").unwrap_or_default(),
+            avatar: absolute(
+                &text(item, "avatar180")
+                    .or_else(|| text(item, "avatar"))
+                    .unwrap_or_default(),
+            ),
             cover: absolute(&text(item, "screenshot").unwrap_or_default()),
             online: u64_of(item, "totalCount"),
         });

@@ -83,6 +83,9 @@ pub struct LiveRoomItem {
     pub room_id: String,
     pub title: String,
     pub user_name: String,
+    /// 主播头像；列表接口不一定下发，前端拿不到时回退到名字首字。
+    #[serde(default)]
+    pub avatar: String,
     pub cover: String,
     pub online: u64,
 }
