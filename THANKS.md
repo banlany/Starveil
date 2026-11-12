@@ -58,6 +58,7 @@ Starveil 本身以 **GPL-3.0** 发布（见 [LICENSE](LICENSE)）。
 | [serde](https://github.com/serde-rs/serde) / [serde_json](https://github.com/serde-rs/json) | MIT / Apache-2.0 | 序列化 | 全局 |
 | [brotli](https://github.com/dropbox/rust-brotli) / [flate2](https://github.com/rust-lang/flate2-rs) | MIT / Apache-2.0 | B 站弹幕压缩包解压 | `live_core` |
 | [base64](https://github.com/marshallpierce/rust-base64) / [md5](https://github.com/stainless-steel/md5) | MIT / Apache-2.0 | 签名计算 | `live_core` |
+| [HarmonyOS Sans SC](https://developer.harmonyos.com/cn/docs/design/font-0000001157868583) | 华为自有字体许可（免费商用） | 内置正文字体，补齐安卓/iOS 上没有的苹方 | `web/assets/fonts/harmonyos-sans/` |
 
 完整的传递依赖清单见 `src-tauri/Cargo.lock`，各库许可可在 crates.io 对应页查得。
 
@@ -69,6 +70,9 @@ Starveil 本身以 **GPL-3.0** 发布（见 [LICENSE](LICENSE)）。
 - 「哔哩哔哩」「斗鱼」「虎牙」「抖音」「快手」等名称与图标是各公司的商标，
   本项目仅用于指示所对接的平台，与各公司无任何隶属或合作关系。
 - 直播间封面、主播头像等图片均直接引用各平台 CDN 地址，**不做存储与转存**。
+- `web/assets/douyin-emoji/` 下的表情图是抖音直播间的官方表情（与 dart 版同一套素材，
+  来源为 emojiall 整理的抖音表情集），仅用于把抖音弹幕里的 `[捂脸]` 这类占位词
+  渲染成平台原本的表情图。版权归抖音所有，不并入本项目的 GPL-3.0 授权。
 
 ---
 

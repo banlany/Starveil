@@ -1,0 +1,38 @@
+/* ============================================================
+   内置字体
+   ------------------------------------------------------------
+   皮肤变量 `--font` 里会把「HarmonyOS Sans SC」排在系统字体后面，
+   于是：macOS/iOS 用苹方，Windows 用雅黑（默认皮肤）/ HarmonyOS（苹果皮肤），
+   安卓两样都没有 —— 以前就掉到 Roboto，中文观感跟苹方差得远。
+   这里把字体打进来，安卓（以及任何没装这些字体的系统）也能拿到同一套字形。
+
+   字体：HarmonyOS Sans SC（华为，免费商用，许可证见
+   `assets/fonts/harmonyos-sans/LICENSE.txt`）。
+   已用 fonttools 子集化到 GB2312 + 拉丁 + 常用标点/符号（约 7800 个字符），
+   三个字重各 ~0.95 MB；生僻字仍由系统字体逐字兜底，不会变方块。
+   ============================================================ */
+
+@font-face {
+  font-family: "HarmonyOS Sans SC";
+  src: url("assets/fonts/harmonyos-sans/HarmonyOS-Sans-SC-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "HarmonyOS Sans SC";
+  src: url("assets/fonts/harmonyos-sans/HarmonyOS-Sans-SC-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 600 与 700 都落到 Bold：CJK 用合成加粗会更糊，不如直接给真字重。 */
+@font-face {
+  font-family: "HarmonyOS Sans SC";
+  src: url("assets/fonts/harmonyos-sans/HarmonyOS-Sans-SC-Bold.woff2") format("woff2");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}

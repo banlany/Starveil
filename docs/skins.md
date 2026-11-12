@@ -107,6 +107,21 @@ html[data-skin="apple"][data-theme="light"] {
 | 图标 | `--icon-stroke` `--icon-cap` `--icon-join` `--icon-stroke-thin` |
 | 圆角 | `--radius-2xs` `--radius-xs` `--radius-sm` `--radius-md` `--radius` `--radius-lg` `--radius-xl` `--radius-pill` |
 | 字体 | `--font` `--font-display` `--font-mono` |
+
+### 字体：把要用的字体排进 `--font`，别指望系统装了什么
+
+`--font` 是一整条 **font-family 栈**，按顺序 fallback。应用内置了一份
+**HarmonyOS Sans SC**（`web/fonts.css` + `web/assets/fonts/harmonyos-sans/`，
+GB2312 子集、三个字重），所以栈里可以放心写它：
+
+- 系统真有的优先（macOS 的 `-apple-system` / 苹方、Windows 的雅黑），
+- 没有的落到 `"HarmonyOS Sans SC"` —— 安卓两样都没有，以前直接掉到 Roboto，
+  中文观感和苹方差一截，现在用的是随包的这份；
+- 兜底再写 `system-ui, sans-serif`。
+
+弹幕走 canvas，拿不到 CSS 变量，`danmaku.js` 会读 `getComputedStyle(document.body).fontFamily`
+当作画布字体，所以**改皮肤就等于改弹幕字体**，不需要另外配一遍。
+生僻字仍由系统字体逐字兜底（内置字体只到 GB2312），不会出现方块。
 | 动效 | `--dur-fast` `--dur-base` `--dur-slow` `--ease` |
 
 ### 主题色：一套皮肤提供一组，不是固定一个

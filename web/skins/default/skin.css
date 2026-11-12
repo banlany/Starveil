@@ -412,7 +412,7 @@ html[data-skin="default"] {
      --font        正文/控件
      --font-display 大标题、房间标题、数字
      --font-mono    Cookie、日志这类等宽内容 */
-  --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", "Segoe UI", system-ui, sans-serif;
   --font-display: var(--font);
   --font-mono: Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
 

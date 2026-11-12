@@ -21,6 +21,7 @@ use crate::model::{
 };
 use crate::site::LiveSite;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -28,12 +29,27 @@ const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (
 const REFERER: &str = "https://live.douyin.com";
 
 /// 清晰度的展示名与顺序。抖音用 `FULL_HD1` 这类键描述档位。
+///
+/// 注意这套键**只在没有 SDK 档位表时兜底**：`FULL_HD1` 实际是 1080P，
+/// `HD1` 是 720P，四档里根本没有「原画」（2K/4K 或 60 帧的源）。
+/// 真正完整的阶梯在 `live_core_sdk_data` 里（见 `sdk_qualities`）。
 const QUALITY_ORDER: [(&str, &str, u32); 4] = [
     ("FULL_HD1", "原画", 4),
     ("HD1", "蓝光", 3),
     ("SD1", "超清", 2),
     ("SD2", "高清", 1),
 ];
+
+/// 旧档位键 → SDK 档位键。SDK 表取不到地址时按这个降级。
+fn legacy_key(sdk_key: &str) -> Option<&'static str> {
+    match sdk_key {
+        "origin" | "uhd" => Some("FULL_HD1"),
+        "hd" => Some("HD1"),
+        "ld" => Some("SD1"),
+        "sd" => Some("SD2"),
+        _ => None,
+    }
+}
 
 pub struct DouyinSite;
 
@@ -241,6 +257,116 @@ impl DouyinSite {
             .map(|(_, label, _)| label.to_string())
             .unwrap_or_else(|| name.to_string())
     }
+}
+
+// ------------------------------------------------------- SDK 档位表（真正的清晰度阶梯）
+
+/// `stream_url.live_core_sdk_data.pull_data`。
+///
+/// 抖音把完整的档位表放在这里：`options.qualities[]` 是「名字 + 分辨率 + 帧率 + 码率」，
+/// `stream_data`（一个 JSON 字符串）才是每个档位对应的直链。
+/// 旧的 `flv_pull_url` 只有四档、且最高只到 1080P，2K / 高帧率只在 SDK 表里。
+fn sdk_pull_data(stream_url: &Value) -> Option<Value> {
+    let sdk = stream_url.get("live_core_sdk_data")?;
+    // 这个字段在不同接口里有时是对象，有时是被转义成字符串的 JSON。
+    let sdk = match sdk {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok()?,
+        other => other.clone(),
+    };
+    sdk.get("pull_data").cloned()
+}
+
+/// `pull_data.stream_data` → `{sdk_key: (flv, hls)}`。
+fn sdk_stream_map(pull: &Value) -> HashMap<String, (String, String)> {
+    let mut map = HashMap::new();
+    let Some(text) = pull.get("stream_data").and_then(Value::as_str) else {
+        return map;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return map;
+    };
+    let Some(data) = value.get("data").and_then(Value::as_object) else {
+        return map;
+    };
+    for (key, entry) in data {
+        let main = entry.get("main").unwrap_or(entry);
+        let flv = main
+            .get("flv")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let hls = main
+            .get("hls")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if flv.is_empty() && hls.is_empty() {
+            continue;
+        }
+        map.insert(key.clone(), (flv, hls));
+    }
+    map
+}
+
+/// 档位显示名：`蓝光 1080P60`、`超清 720P60`、`高清 720P30`；原画没有分辨率信息就只叫「原画」。
+fn sdk_label(item: &Value) -> String {
+    let name = item.get("name").and_then(Value::as_str).unwrap_or("原画");
+    let resolution = item
+        .get("resolution")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let fps = item.get("fps").and_then(Value::as_i64).unwrap_or(0);
+    // `resolution` 形如 `1920x1080`，只取高度；抖音 60 帧常报 59，按 60 显示。
+    let height = resolution
+        .split(['x', 'X'])
+        .nth(1)
+        .filter(|value| !value.is_empty());
+    let fps = if fps >= 59 { 60 } else { fps };
+    match (height, fps > 0) {
+        (Some(height), true) => format!("{name} {height}P{fps}"),
+        (Some(height), false) => format!("{name} {height}P"),
+        _ => name.to_string(),
+    }
+}
+
+/// 从 SDK 档位表生成清晰度列表（高 → 低），没有直链的档位不列。
+fn sdk_qualities(stream_url: &Value) -> Vec<PlayQuality> {
+    let Some(pull) = sdk_pull_data(stream_url) else {
+        return Vec::new();
+    };
+    let Some(list) = pull
+        .pointer("/options/qualities")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let streams = sdk_stream_map(&pull);
+    let mut items: Vec<(i64, PlayQuality)> = list
+        .iter()
+        .filter_map(|item| {
+            let key = item.get("sdk_key").and_then(Value::as_str)?.to_string();
+            // 表里会出现没有地址的档位（房间没推这一路），列出来点了也播不了。
+            if !streams.contains_key(&key) {
+                return None;
+            }
+            let level = item.get("level").and_then(Value::as_i64).unwrap_or(0);
+            Some((
+                level,
+                PlayQuality {
+                    name: sdk_label(item),
+                    data: QualityData::Douyin { key },
+                },
+            ))
+        })
+        .collect();
+    items.sort_by(|left, right| right.0.cmp(&left.0));
+    items.into_iter().map(|(_, quality)| quality).collect()
+}
+
+/// 按 sdk_key 从 `stream_data` 里取直链。
+fn sdk_urls(stream_url: &Value, key: &str) -> Option<(String, String)> {
+    let pull = sdk_pull_data(stream_url)?;
+    sdk_stream_map(&pull).remove(key)
 }
 
 /// 每页条数。分区接口按 15 一页给，翻页靠 `offset`。
@@ -577,6 +703,11 @@ impl LiveSite for DouyinSite {
         let RoomExtra::Douyin { stream_url, .. } = &detail.extra else {
             return Err(LiveError::protocol("抖音房间缺少取流上下文"));
         };
+        // 先看 SDK 档位表：它是抖音真正的阶梯（含 1080P60 与「原画」）。
+        let sdk = sdk_qualities(stream_url);
+        if !sdk.is_empty() {
+            return Ok(sdk);
+        }
         let flv = stream_url.get("flv_pull_url").and_then(Value::as_object);
         let hls = stream_url.get("hls_pull_url_map").and_then(Value::as_object);
         let mut names: Vec<String> = Vec::new();
@@ -675,17 +806,30 @@ impl LiveSite for DouyinSite {
         let stream_url = &fresh;
         let mut flv = Vec::new();
         let mut hls = Vec::new();
-        if let Some(url) = stream_url
-            .get("flv_pull_url")
-            .and_then(|map| map.get(key))
-            .and_then(Value::as_str)
+        // 1) SDK 档位表优先：`origin`（原画）只有这里有，旧结构最高只到 1080P。
+        if let Some((sdk_flv, sdk_hls)) = sdk_urls(stream_url, key) {
+            if !sdk_flv.is_empty() {
+                flv.push(sdk_flv);
+            }
+            if !sdk_hls.is_empty() {
+                hls.push(sdk_hls);
+            }
+        }
+        // 2) 旧结构：key 是 `FULL_HD1` 那种旧档位，或 SDK 表里这一档没给地址时兜底。
+        let legacy = legacy_key(key).unwrap_or(key);
+        if flv.is_empty()
+            && let Some(url) = stream_url
+                .get("flv_pull_url")
+                .and_then(|map| map.get(legacy))
+                .and_then(Value::as_str)
         {
             flv.push(url.to_string());
         }
-        if let Some(url) = stream_url
-            .get("hls_pull_url_map")
-            .and_then(|map| map.get(key))
-            .and_then(Value::as_str)
+        if hls.is_empty()
+            && let Some(url) = stream_url
+                .get("hls_pull_url_map")
+                .and_then(|map| map.get(legacy))
+                .and_then(Value::as_str)
         {
             hls.push(url.to_string());
         }
@@ -901,6 +1045,64 @@ mod tests {
         assert!(DouyinSite::quality_key("HD1") > DouyinSite::quality_key("SD1"));
         assert_eq!(DouyinSite::quality_label("FULL_HD1"), "原画");
         assert_eq!(DouyinSite::quality_label("未知档位"), "未知档位");
+    }
+
+    #[test]
+    fn sdk档位表按等级降序并只保留有地址的档() {
+        // 结构照着真实响应裁剪：options.qualities 是档位阶梯，stream_data 是它的直链。
+        let stream_url = serde_json::json!({
+            "flv_pull_url": {"FULL_HD1": "http://x/_uhd.flv", "HD1": "http://x/_hd.flv"},
+            "live_core_sdk_data": {
+                "pull_data": {
+                    "options": {
+                        "qualities": [
+                            {"sdk_key": "ld", "name": "标清", "resolution": "960x540", "fps": 25, "level": 1},
+                            {"sdk_key": "sd", "name": "高清", "resolution": "1280x720", "fps": 30, "level": 2},
+                            {"sdk_key": "hd", "name": "超清", "resolution": "1280x720", "fps": 59, "level": 3},
+                            {"sdk_key": "uhd", "name": "蓝光", "resolution": "1920x1080", "fps": 59, "level": 4},
+                            {"sdk_key": "origin", "name": "原画", "resolution": "", "fps": 59, "level": 5},
+                            {"sdk_key": "ao", "name": "仅音频", "resolution": "", "fps": 0, "level": 0}
+                        ]
+                    },
+                    "stream_data": "{\"data\":{\"origin\":{\"main\":{\"flv\":\"http://x/_or4.flv\",\"hls\":\"http://x/_or4.m3u8\"}},\"uhd\":{\"main\":{\"flv\":\"http://x/_uhd.flv\"}},\"hd\":{\"main\":{\"flv\":\"http://x/_hd.flv\"}},\"sd\":{\"main\":{\"flv\":\"http://x/_sd.flv\"}},\"ld\":{\"main\":{\"flv\":\"http://x/_ld.flv\"}}}}"
+                }
+            }
+        });
+
+        let qualities = sdk_qualities(&stream_url);
+        let names: Vec<&str> = qualities.iter().map(|item| item.name.as_str()).collect();
+        // 高帧率按 60 显示；原画没有分辨率就不硬加；没有直链的「仅音频」不列。
+        assert_eq!(
+            names,
+            vec!["原画", "蓝光 1080P60", "超清 720P60", "高清 720P30", "标清 540P25"]
+        );
+        let keys: Vec<&str> = qualities
+            .iter()
+            .map(|item| match &item.data {
+                QualityData::Douyin { key } => key.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(keys, vec!["origin", "uhd", "hd", "sd", "ld"]);
+        // 原画必须落在 `_or4` 上——旧结构里根本没有这一路。
+        assert_eq!(
+            sdk_urls(&stream_url, "origin").map(|(flv, hls)| (flv, hls)),
+            Some(("http://x/_or4.flv".to_string(), "http://x/_or4.m3u8".to_string()))
+        );
+        assert_eq!(sdk_urls(&stream_url, "ao"), None);
+    }
+
+    #[test]
+    fn 没有sdk档位表时退回旧四档() {
+        let stream_url = serde_json::json!({
+            "flv_pull_url": {"FULL_HD1": "http://x/_uhd.flv", "HD1": "http://x/_hd.flv"},
+            "hls_pull_url_map": {}
+        });
+        assert!(sdk_qualities(&stream_url).is_empty());
+        // 旧档位键仍然要能映射到 SDK 键，否则 play() 的兜底分支取不到地址。
+        assert_eq!(legacy_key("origin"), Some("FULL_HD1"));
+        assert_eq!(legacy_key("hd"), Some("HD1"));
+        assert_eq!(legacy_key("FULL_HD1"), None);
     }
 
     #[test]

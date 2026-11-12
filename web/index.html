@@ -46,6 +46,10 @@
       document.write('<link rel="stylesheet" id="skin-css" href="' + href + '">');
     })();
   </script>
+  <!-- 内置字体：安卓/iOS 没有「苹方」，Windows 也没有 SF Pro，
+       苹果皮肤在那些平台上会掉到 Roboto / 雅黑。这里打包一份（见 fonts.css），
+       由皮肤变量决定用不用、用在第几顺位。 -->
+  <link rel="stylesheet" href="fonts.css" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="pages.css" />
   <link rel="stylesheet" href="room.css" />

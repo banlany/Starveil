@@ -2,6 +2,7 @@
 import { api, canonicalImage, formatOnline, normalizePlatform, roomUrl } from '../api.js';
 import { createDanmakuLayer, DANMAKU_PRESETS, FPS_OPTIONS, flyBarrageAvailable, PERF_OPTIONS } from '../danmaku.js';
 import { signDouyinDanmaku } from '../douyin-sign.js';
+import { expandDouyinEmoticons } from '../douyin-emoji.js';
 import { createDualPlayback, seekInBuffer } from '../dual.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
@@ -627,16 +628,24 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function pushMessage(message) {
+    const text = message.text == null ? '' : String(message.text);
     const entry = {
       user: message.user || '',
       // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
-      text: message.text == null ? '' : String(message.text),
+      text,
       color: message.color,
       system: Boolean(message.system),
       position: Number(message.position) || 0,
       sc: message.sc || null,
       // 表情弹幕的图片信息要一路带到弹幕层与聊天栏，漏掉这里表情就只剩占位文字。
-      emoticons: Array.isArray(message.emoticons) && message.emoticons.length ? message.emoticons : undefined,
+      // 抖音的普通小表情只有文字、没有图（`rtfContent` 只覆盖互动表情），
+      // 这里按本地表情表补齐；只在抖音补，别的平台有自己的 `[xxx]` 表，别串台。
+      emoticons:
+        session.platform === 'douyin'
+          ? expandDouyinEmoticons(text, message.emoticons) || undefined
+          : Array.isArray(message.emoticons) && message.emoticons.length
+            ? message.emoticons
+            : undefined,
       at: Date.now(),
     };
     session.messages.push(entry);

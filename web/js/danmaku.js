@@ -481,6 +481,19 @@ export function createDanmakuLayer(container, video, config = null) {
     return Math.max(18, Math.round(font * LINE_HEIGHT_RATIO));
   }
 
+  /// 弹幕走 canvas，拿不到 CSS 变量，只能从 body 已算出的 `font-family` 上取一份：
+  /// 这样换皮肤（雅黑 ↔ 苹方/内置 HarmonyOS Sans）时弹幕字体跟着变，
+  /// 而不是永远写死一套系统字体、在安卓上又掉回 Roboto。
+  function themeFontFamily() {
+    try {
+      const value = getComputedStyle(document.body).fontFamily;
+      if (value && value.trim()) return value;
+    } catch {
+      /* 取不到就用下面的兜底 */
+    }
+    return '"Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", sans-serif';
+  }
+
   function buildRenderConfig() {
     const config = session.config || FALLBACK_CONFIG;
     const perf = profile();
@@ -504,7 +517,7 @@ export function createDanmakuLayer(container, video, config = null) {
       speed: Math.max(60, (session.width || container.clientWidth || 960) / durationSeconds),
       opacity: Math.max(0.2, Math.min(1, (config.opacity ?? 95) / 100)),
       renderRegion: Math.max(0.1, Math.min(1, regionPx / height)),
-      fontFamily: '"Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif',
+      fontFamily: themeFontFamily(),
       fontWeight: String(config.weight || FALLBACK_CONFIG.weight),
       heightReduce: 0,
       avoidOverlap: true,
