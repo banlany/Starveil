@@ -42,8 +42,8 @@ pub struct DanmakuMessage {
 /// 正文里的一个表情片段。
 ///
 /// `key` 是它**在正文中出现的样子**：内嵌小表情是带中括号的占位符（`[热]`），
-/// 大表情是正文本身（`冲鸭`，`upower_*` 这类自带中括号）。前端据此把正文换成
-/// `[图片 id]` 占位符，交给弹幕库的图文混排渲染。
+/// `info[0][13]` 那种整条表情则是正文本身（`冲鸭`，或 `[鸣潮_好呀]` 这种自带中括号的）。
+/// 前端据此把正文换成 `[图片 id]` 占位符，交给弹幕库的图文混排渲染。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Emoticon {
     pub key: String,
@@ -51,7 +51,7 @@ pub struct Emoticon {
     pub url: String,
     pub width: u32,
     pub height: u32,
-    /// 大表情（收藏集/房间表情）：只能整条单独发送，正文就是表情名。
+    /// 大表情（房间专属 / UP 主 / 收藏集这类整条图片表情）：只能整条单独发送，正文就是表情名。
     /// 前端据此放大到字号 2.5 倍——小表情按行高缩放，大表情按字号缩放，两者比例不一样。
     #[serde(default)]
     pub big: bool,
@@ -616,26 +616,48 @@ fn emoticon_dimension(object: &serde_json::Value, key: &str) -> u32 {
         .clamp(1, 4096) as u32
 }
 
+/// 房间表情这类正方形的显示尺寸门槛（实测 162×162）。
+/// 比通用小表情的 20×20 高出一个数量级，留足余量。
+const BILIBILI_BIG_EMOTICON_MIN: u32 = 96;
+
 /// `info[0][13]` 里的表情该不该按「大表情」（设置里那几行高）画。
 ///
-/// 这一格混着三种东西，实测抓包确认：
-/// - 收藏集 / 官方大表情：横条 200×60，一条弹幕就发这一张，画成两行正合适；
-/// - 房间表情：162×162 正方形（`emoticon_unique` 是 `room_<房间号>_<id>`），
-///   正文是「吃瓜」「下饭」这种词，用户当小表情用，画成两行会压住上下几条弹幕；
-/// - UP 主表情：20×20（`upower_[名]`，这两个数是显示尺寸而不是图片像素），更是小表情。
+/// 这一格是「整条弹幕就是一张图片表情」，实测抓包确认有三种：
+/// - 房间专属表情：162×162 正方形（`room_<房间号>_<id>`），主播上传、房间内自用；
+/// - UP 主图片表情：`upower_[名]`。显示尺寸写着 20×20，但那是行内占位，
+///   实际是一张整条的图片表情，同样按大表情画；
+/// - 收藏集 / 官方大表情：横条 200×60（`official_*`）。
 ///
-/// 宽高是三种都给的唯一字段，所以按形状判断：**只有横条才算大表情**。
-/// 真遇到正方形的大表情也只会退成一行高——宁可小一点，也不能把别人的弹幕挡住。
-fn bilibili_emoticon_is_banner(width: u32, height: u32) -> bool {
-    height > 0 && width as f32 >= height as f32 * 2.0
+/// 三种都是「图片表情」，一律按大表情画。真正的类 emoji 小表情（狗头那一页：
+/// `[吃瓜]`、`[爱]`、`[狗头]`，视频评论区也有）尺寸只有 20×20，认不出这些前缀、
+/// 也过不了尺寸门槛，所以按小表情画。收藏集表情尺寸同样够大，不管走哪条路径都会被认成大表情。
+fn bilibili_emoticon_is_big(unique: &str, width: u32, height: u32) -> bool {
+    unique.starts_with("room_")
+        || unique.starts_with("upower_")
+        || unique.starts_with("official_")
+        || bilibili_emoticon_is_large(width, height)
+}
+
+/// 只看尺寸：横条（宽高比 ≥ 2）或明显的大图才算大表情。
+///
+/// `emots` 那一格通用 emoji 与图片表情混在一起、前缀又不可靠（狗头小表情也可能挂着
+/// `official_`），所以那里只用尺寸判断：20×20 的一律小表情，收藏集这种大图才放大。
+fn bilibili_emoticon_is_large(width: u32, height: u32) -> bool {
+    if height > 0 && width as f32 >= height as f32 * 2.0 {
+        return true;
+    }
+    width >= BILIBILI_BIG_EMOTICON_MIN && height >= BILIBILI_BIG_EMOTICON_MIN
 }
 
 /// 从一条 `DANMU_MSG` 里挖出表情，两种形态都要处理：
 ///
 /// 1. **整条弹幕就是一个表情**：`info[0][13]` 是表情对象，正文就是表情名，
 ///    可能带中括号（`[2026嘉然的画册_顿悟]`）也可能不带（`冲鸭`）。普通弹幕这里是 `"{}"`。
-///    这一格其实混着三种东西（见 [`bilibili_emoticon_is_banner`]），只有横条才按大表情算。
-/// 2. **内嵌小表情**：`info[0][15].extra` 里的 `emots`，key 是正文中的 `[表情名]` 占位符。
+///    这一格是房间专属 / UP 主 / 收藏集这类整条图片表情，一律按大表情算
+///    （见 [`bilibili_emoticon_is_big`]）。
+/// 2. **内嵌表情**：`info[0][15].extra` 里的 `emots`，key 是正文中的 `[表情名]` 占位符。
+///    多数是「类 emoji」的通用表情（狗头那一页，`[吃瓜]`、`[爱]`，视频评论区也有），只占一行；
+///    收藏集这类图片表情也会走这条路，尺寸够大同样按大表情画。
 ///
 /// 返回的 `key` 一律取「它在正文里的原样」，前端负责替换成图片占位符。
 fn bilibili_extract_emoticons(
@@ -654,6 +676,11 @@ fn bilibili_extract_emoticons(
             .trim();
         let word = text.trim();
         if !url.is_empty() && !word.is_empty() {
+            let unique = object
+                .get("emoticon_unique")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim();
             let width = emoticon_dimension(&object, "width");
             let height = emoticon_dimension(&object, "height");
             list.push(Emoticon {
@@ -661,7 +688,7 @@ fn bilibili_extract_emoticons(
                 url: bilibili_upgrade_scheme(url),
                 width,
                 height,
-                big: bilibili_emoticon_is_banner(width, height),
+                big: bilibili_emoticon_is_big(unique, width, height),
             });
         }
     }
@@ -689,12 +716,15 @@ fn bilibili_extract_emoticons(
             if url.is_empty() {
                 continue;
             }
+            let width = emoticon_dimension(&object, "width");
+            let height = emoticon_dimension(&object, "height");
             list.push(Emoticon {
                 key: key.clone(),
                 url: bilibili_upgrade_scheme(url),
-                width: emoticon_dimension(&object, "width"),
-                height: emoticon_dimension(&object, "height"),
-                big: false,
+                width,
+                height,
+                // 这一格通用 emoji 与图片表情混在一起，只按尺寸认（见 [`bilibili_emoticon_is_large`]）。
+                big: bilibili_emoticon_is_large(width, height),
             });
         }
     }
@@ -1198,16 +1228,17 @@ mod tests {
         assert_eq!(emoticons[0].url, "https://i0.hdslb.com/big.png");
         assert_eq!(emoticons[0].width, 200);
         assert_eq!(emoticons[0].height, 60);
-        assert!(emoticons[0].big, "横条才是大表情");
+        assert!(emoticons[0].big, "横条是大表情");
     }
 
     #[test]
-    fn b站房间表情和up主表情不按大表情画() {
-        // 实测抓包：房间表情是 162×162 正方形，UP 主表情是 20×20。
-        // 这两种都会被用户当小表情用（`[吃瓜]`、`[盯]`），画成两行高会压住上下弹幕。
+    fn b站整条图片表情都按大表情画() {
+        // 实测抓包：这一格是「整条弹幕就是一张图片表情」，房间专属、UP 主、收藏集都算大表情。
         for (name, unique, size, text) in [
             ("房间表情", "room_1883358196_84743", (162, 162), "盯"),
             ("UP 主表情", "upower_[鸣潮_好呀]", (20, 20), "[鸣潮_好呀]"),
+            ("收藏集横条", "official_332", (200, 60), "冲鸭"),
+            ("收藏集方块", "official_8848", (200, 200), "[BLG·2026为信念干杯第二弹_BLG！]"),
         ] {
             let info = format!(
                 r#"[0,1,25,16777215,1700000000,0,0,0,0,0,0,0,0,{{"url":"http://i0.hdslb.com/s.png","emoticon_unique":"{unique}","width":{},"height":{}}},0,{{}}]"#,
@@ -1219,7 +1250,7 @@ mod tests {
             let messages: Vec<_> = rx.try_iter().collect();
             let emoticons = messages[0].emoticons.as_ref().expect("应该有表情");
             assert_eq!(emoticons[0].key, text, "{name} 的 key 应该是正文");
-            assert!(!emoticons[0].big, "{name} 不该按大表情画");
+            assert!(emoticons[0].big, "{name} 应该按大表情画");
         }
     }
 
@@ -1236,6 +1267,7 @@ mod tests {
         assert_eq!(emoticons.len(), 1);
         assert_eq!(emoticons[0].key, "[热]");
         assert_eq!(emoticons[0].url, "https://i0.hdslb.com/hot.png");
+        assert!(!emoticons[0].big, "通用 emoji 只占一行");
     }
 
     #[test]
