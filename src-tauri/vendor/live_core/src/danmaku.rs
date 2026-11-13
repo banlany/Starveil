@@ -630,7 +630,7 @@ const BILIBILI_BIG_EMOTICON_MIN: u32 = 96;
 ///
 /// 三种都是「图片表情」，一律按大表情画。真正的类 emoji 小表情（狗头那一页：
 /// `[吃瓜]`、`[爱]`、`[狗头]`，视频评论区也有）尺寸只有 20×20，认不出这些前缀、
-/// 也过不了尺寸门槛，所以按小表情画。收藏集表情尺寸同样够大，不管走哪条路径都会被认成大表情。
+/// 也过不了尺寸门槛，所以按小表情画。收藏集尺寸同样够大，走哪条路径都会被认成大表情。
 fn bilibili_emoticon_is_big(unique: &str, width: u32, height: u32) -> bool {
     unique.starts_with("room_")
         || unique.starts_with("upower_")
