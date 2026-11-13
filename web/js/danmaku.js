@@ -797,14 +797,21 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
 }
 
   /// 登记一张表情图，返回库用的图片 id（正文里会写成 `[id]`，所以不能带中括号）。
-  /// 同一张图重复出现时复用已有 id；同名但不同图（不同房间的 `[热]`）另起一个。
+  /// 同一张图**同一尺寸**重复出现时复用已有 id；同名但不同图（不同房间的 `[热]`）另起一个。
+  ///
+  /// 去重键必须带上宽高：B 站同一张房间表情既能整条单独发（大表情，两行高），
+  /// 也能作为 `[乐]` 嵌在文字里（小表情，一个行高）。只按 url 去重的话，
+  /// 后出现的那个会直接复用先登记的尺寸——小表情突然被画成两行高的大图，
+  /// 压住它上下的弹幕（就是「忽大忽小、还遮挡」）。库里的图片尺寸在登记时就定死了，
+  /// 所以尺寸不同必须是两个图片 id，不能省。
   function registerImage(url, size, preferredId) {
-    const known = session.imageIdByUrl.get(url);
+    const key = `${url}@${size.width}x${size.height}`;
+    const known = session.imageIdByUrl.get(key);
     if (known) return known;
     let id = String(preferredId || '').replace(/[[\]]/g, '');
     if (!id || session.imageUrlById.has(id)) id = `e${++session.imageSeq}`;
     session.imageUrlById.set(id, url);
-    session.imageIdByUrl.set(url, id);
+    session.imageIdByUrl.set(key, id);
     session.images.push({ id, url, width: size.width, height: size.height });
     preloadEmoticon(url);
     return id;
@@ -825,13 +832,20 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     const list = Array.isArray(message.emoticons) ? message.emoticons : null;
     if (!list || !list.length) return text;
     if ((session.config || FALLBACK_CONFIG).emoji === false) return text;
+    // 原始正文（后面 text 会被一条条替换掉，判「整条是不是一个表情」得看原文）。
+    const whole = text.trim();
     for (const emoticon of list) {
       const key = typeof emoticon?.key === 'string' ? emoticon.key : '';
       const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
       if (!key || !url || !text.includes(key)) continue;
       const bracketed = key.startsWith('[') && key.endsWith(']');
+      // 大表情的前提是「整条弹幕就只有这一个表情」。平台偶尔会在带小表情的弹幕上
+      // 也塞一个表情对象，此时后端拿到的 key 是整段正文——照大表情处理，
+      // 一条普通弹幕会突然变成两行高的巨图，把周围弹幕全压住。
+      // 正文除了这个 key 还有别的字，就按小表情画（宁可小，不要挡）。
+      const big = Boolean(emoticon.big) && whole === key.trim();
       // 大表情的高 = 设置里的行数 × 行高；小表情仍是「一个行高」量级。
-      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize, emoticon.big ? bigEmojiLines() : 0);
+      const size = fitEmoticon(emoticon.width, emoticon.height, fontSize, big ? bigEmojiLines() : 0);
       const id = registerImage(url, size, bracketed ? key.slice(1, -1) : key);
       text = text.split(key).join(`[${id}]`);
     }

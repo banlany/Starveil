@@ -2273,13 +2273,13 @@ export function renderRoom(ctx, params = {}) {
     const quality = session.qualities[session.qualityIndex];
     items.push({
       label: '清晰度',
-      icon: 'signal',
+      icon: 'quality',
       value: quality || '',
       onClick: () => showQualityMenu(anchor, 'bottom'),
     });
     items.push({
       label: '线路',
-      icon: 'sync',
+      icon: 'route',
       value: session.lines.length ? `${session.lineIndex + 1} / ${session.lines.length}` : '未取到',
       onClick: () => showLineMenu(anchor, 'bottom'),
     });
@@ -2296,7 +2296,7 @@ export function renderRoom(ctx, params = {}) {
       { label: '复制直播间链接', icon: 'copy', onClick: copyRoomLink },
       { separator: true },
       { label: '房间信息', icon: 'info', onClick: showRoomInfo },
-      { label: '播放统计', icon: 'signal', onClick: showPlaybackStats },
+      { label: '播放统计', icon: 'stats', onClick: showPlaybackStats },
     );
     openMenu(anchor, items);
   }
@@ -2444,7 +2444,7 @@ export function renderRoom(ctx, params = {}) {
     openMenu($('ctrl-settings'), [
       {
         label: '弹幕与SC设置',
-        icon: 'text',
+        icon: 'danmaku',
         onClick: () => {
           // 铺满状态（桌面全屏 / 安卓剧场）下聊天栏是隐藏的，切到聊天栏的「设置」标签
           // 用户什么也看不到——以前判的是 document.fullscreenElement，安卓上恒为 null，
@@ -2473,13 +2473,13 @@ export function renderRoom(ctx, params = {}) {
       },
       {
         label: '延迟播放',
-        icon: 'timer',
+        icon: 'delay',
         value: Number(session.delaySec) > 0 ? `${Number(session.delaySec).toFixed(1)} 秒` : '关闭',
         onClick: openDelayPanel,
       },
       {
         label: '同屏播放',
-        icon: 'screen',
+        icon: 'dual',
         // B 的名字做值：一眼看出现在台前是谁，不用再点进去确认。
         value: dual.state.open ? shortDualTitle(dual.state.title) : '关闭',
         onClick: openDualPanel,

@@ -48,7 +48,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.7.0';
+const FALLBACK_VERSION = '0.7.2';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -87,7 +87,7 @@ const SETTINGS_ITEMS = [
   { key: 'home', icon: 'home', label: '主页设置' },
   { key: 'player', icon: 'player', label: '播放页设置' },
   { key: 'live', icon: 'live', label: '直播设置' },
-  { key: 'danmaku', icon: 'text', label: '弹幕设置' },
+  { key: 'danmaku', icon: 'danmaku', label: '弹幕设置' },
   { key: 'follow', icon: 'follow', label: '关注设置' },
   { key: 'timer', icon: 'timer', label: '定时关闭' },
   { key: 'other', icon: 'other', label: '其他设置' },
@@ -1213,7 +1213,7 @@ function paintSync(content, ctx, repaint) {
     const addresses = status.addresses?.length
       ? status.addresses.map((ip) => `${ip}:${status.http_port}`).join(' 或 ')
       : '（没拿到局域网地址）';
-    lanSelf.innerHTML = `<div class="lan-self-line">${icon('signal', 14)} 本机：${escapeHtml(
+    lanSelf.innerHTML = `<div class="lan-self-line">${icon('wifi', 14)} 本机：${escapeHtml(
       status.device?.name || '未知设备'
     )} · ${escapeHtml(addresses)}</div>`;
   };

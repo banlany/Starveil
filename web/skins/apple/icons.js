@@ -61,6 +61,12 @@ export const ICON_PATHS = {
     '<path d="M4.2 4.2 9.8 9.8M9.8 4.2v5.6H4.2"/><path d="M19.8 19.8 14.2 14.2M14.2 19.8v-5.6h5.6"/>',
   screen:
     '<rect x="3" y="4.6" width="18" height="14.8" rx="3.2"/><rect x="10.8" y="10" width="7.6" height="6" rx="1.9" fill="currentColor" stroke="none"/>',
+  // 同屏：两块并排的圆角屏（SF rectangle.split.2x1）。
+  dual:
+    '<rect x="2.9" y="5.6" width="8.2" height="12.8" rx="2.6"/><rect x="12.9" y="5.6" width="8.2" height="12.8" rx="2.6"/>',
+  // 延迟：沙漏（SF hourglass），上下托盘 + 两道收腰。
+  delay:
+    '<path d="M6.8 3.4h10.4M6.8 20.6h10.4"/><path d="M8.2 3.4v3.4c0 2.4 3.8 3 3.8 5.2s-3.8 2.8-3.8 5.2v3.4"/><path d="M15.8 3.4v3.4c0 2.4-3.8 3-3.8 5.2s3.8 2.8 3.8 5.2v3.4"/>',
   danmaku:
     '<path d="M5.4 4.8h13.2a2.4 2.4 0 0 1 2.4 2.4v5.6a2.4 2.4 0 0 1-2.4 2.4h-6.6l-4.4 3.2v-3.2H5.4a2.4 2.4 0 0 1-2.4-2.4V7.2a2.4 2.4 0 0 1 2.4-2.4Z"/><path d="M8 8.9h8M8 11.9h5"/>',
 
@@ -91,6 +97,25 @@ export const ICON_PATHS = {
   users: '<circle cx="9.2" cy="8.2" r="3.4"/><path d="M3.2 19.6a6 6 0 0 1 12 0"/><path d="M15.8 5.2a3.4 3.4 0 0 1 0 6.2M17.4 13.9a6 6 0 0 1 3.4 5.7"/>',
   userMinus: '<circle cx="9.2" cy="8.2" r="3.4"/><path d="M3.2 19.6a6 6 0 0 1 12 0"/><path d="M16.4 11.4h5.2"/>',
   sync: '<path d="M4.6 9.6a7.8 7.8 0 0 1 13-2.4"/><path d="M18.4 3.4v4.4h-4.4"/><path d="M19.4 14.4a7.8 7.8 0 0 1-13 2.4"/><path d="M5.6 20.6v-4.4h4.4"/>',
+  // 线路：一个源点分叉到两个终点。和 sync 那对循环箭头完全不同——
+  // 那个说的是「两边对齐」，这个说的是「有多条可选」。
+  route:
+    '<circle cx="4.9" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="19.1" cy="6.3" r="2" fill="currentColor" stroke="none"/><circle cx="19.1" cy="17.7" r="2" fill="currentColor" stroke="none"/><path d="M6.9 12h2.4c3.4 0 2.9-5.7 8-5.7"/><path d="M6.9 12h2.4c3.4 0 2.9 5.7 8 5.7"/>',
+  // 播放统计：SF chart.bar 那种「柱 + 轴」，柱更短更圆。
+  stats:
+    '<path d="M4 20.2h16"/><path d="M7.7 20.2v-6.4M12 20.2V8.8M16.3 20.2v-3.6"/>',
+  // 清晰度：大圆角屏幕 + 实心四角星（SF sparkle 的一颗）。
+  quality:
+    '<rect x="3" y="4.8" width="18" height="13" rx="3.2"/><path fill="currentColor" stroke="none" d="M12 7.7c.38 2.1 1.92 3.64 4 4.02-2.08.38-3.62 1.92-4 4.02-.38-2.1-1.92-3.64-4-4.02 2.08-.38 3.62-1.92 4-4.02Z"/>',
+  // 其他设置：滑杆（SF slider.horizontal.2），旋钮比基础表再大一点。
+  other:
+    '<path d="M3.2 8h4.4M12.4 8h8.4M3.2 16h8.6M16.2 16h4.6"/><circle cx="10.2" cy="8" r="2.6"/><circle cx="14.4" cy="16" r="2.6"/>',
+  // 链接解析：链环 + 放大镜，放大镜压在右下角不碰链环。
+  parse:
+    '<path d="M9.4 8.2a3.8 3.8 0 0 1 5.4 5.4l-1.7 1.7"/><path d="M12.6 14.8a3.8 3.8 0 0 1-5.4-5.4l1.7-1.7"/><circle cx="16.6" cy="16.6" r="3.4"/><path d="m19 19 1.9 1.9"/>',
+  // 网络：三弧 + 点（SF wifi）。
+  wifi:
+    '<path d="M3.2 9a13 13 0 0 1 17.6 0"/><path d="M6.4 12.6a8.2 8.2 0 0 1 11.2 0"/><path d="M9.6 16.2a4.2 4.2 0 0 1 4.8 0"/><circle cx="12" cy="19.2" r="1.2" fill="currentColor" stroke="none"/>',
   spark: '<path d="M10.8 3.4 12.4 8.4l5 1.6-5 1.6-1.6 5-1.6-5-5-1.6 5-1.6Z"/><path d="m18.2 15.2.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7Z"/>',
 
   // ---------------------------------------------------------------- 主题

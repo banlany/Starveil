@@ -159,13 +159,17 @@ accents: [
 export const ICON_PATHS = { home: '<path d="…"/>', settings: '<rect …/>' };
 ```
 
-可覆盖的名字以 `web/js/icons.js` 的 `PATHS` 为全集：`home` `follow` `followFilled`
-`grid` `gridView` `settings` `search` `back` `chevron` `chevronDown` `chevronUp`
-`refresh` `play` `pause` `volume` `mute` `fullscreen` `fullscreenExit` `screen`
-`danmaku` `more` `share` `link` `copy` `send` `star` `tag` `close` `check` `plus`
-`minus` `history` `account` `users` `userMinus` `sync` `moon` `sun` `contrast`
-`download` `upload` `shield` `info` `live` `text` `timer` `spark` `filter` `list`
-`logout` `anchor` `flame` `signal` `hd` `eye` `eyeOff` `github` `other` `dot`。
+可覆盖的名字以 `web/js/icons.js` 的 `PATHS` 为全集（当前 67 个）：
+
+`account` `anchor` `back` `check` `chevron` `chevronDown` `chevronUp` `close`
+`contrast` `copy` `danmaku` `delay` `dot` `download` `dual` `eye`
+`eyeOff` `filter` `flame` `follow` `followFilled` `fullscreen` `fullscreenExit` `github`
+`grid` `gridView` `hd` `history` `home` `info` `link` `list`
+`live` `logout` `minus` `moon` `more` `mute` `other` `parse`
+`pause` `play` `player` `plus` `quality` `refresh` `route` `screen`
+`search` `send` `settings` `share` `shield` `signal` `spark` `star`
+`stats` `sun` `sync` `tag` `text` `timer` `upload` `userMinus`
+`users` `volume` `wifi`
 
 `icon()` 找不到覆盖项时静默退回基础表，所以 `check-skin` 会核对 `icons.js` 里的每个键
 是否存在于 `js/icons.js` 的 `PATHS`。
