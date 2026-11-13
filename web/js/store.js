@@ -84,6 +84,8 @@ export const DEFAULT_SETTINGS = {
     autoSwitchLine: true,
     autoRefresh: true,
     showStats: false,
+    // 缓冲档位：low 低延迟 / normal 标准 / smooth 流畅优先（见 player-buffer.js）。
+    buffer: 'normal',
     scaleMode: 'contain',
     forceHttps: true,
     superChatOverlay: false,

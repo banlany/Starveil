@@ -256,7 +256,15 @@ img {
   gap: 2px;
 }
 
-/* 顶栏刷新按钮只在首页出现，和搜索按钮同高同排。 */
+/* 首页「刷新推荐」钉在顶栏左上角，和关注页的刷新按钮同一个位置。
+   顶栏本身是居中的标签条，用绝对定位把它挪到左边，不参与居中布局。 */
+.topbar-refresh {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .topbar-refresh[hidden] {
   display: none;
 }

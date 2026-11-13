@@ -313,8 +313,9 @@ function renderChrome() {
   rail.classList.toggle('is-hidden', !config.rail);
   topbar.classList.toggle('is-hidden', !config.topbar);
   searchButton.classList.toggle('is-hidden', !config.search);
-  // 刷新按钮和搜索按钮同排，只在首页出现。
+  // 刷新按钮钉在顶栏左上角（和关注页同一个位置），只在首页出现。
   if (refreshButton) refreshButton.hidden = state.page !== 'home';
+  topbar.classList.toggle('has-refresh', state.page === 'home');
   view.className = `view ${config.className || ''}`.trim();
   const activeRail =
     state.page === 'home' || state.page === 'categoryRooms' || state.page === 'search'

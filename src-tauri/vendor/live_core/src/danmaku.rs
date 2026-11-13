@@ -616,10 +616,25 @@ fn emoticon_dimension(object: &serde_json::Value, key: &str) -> u32 {
         .clamp(1, 4096) as u32
 }
 
+/// `info[0][13]` 里的表情该不该按「大表情」（设置里那几行高）画。
+///
+/// 这一格混着三种东西，实测抓包确认：
+/// - 收藏集 / 官方大表情：横条 200×60，一条弹幕就发这一张，画成两行正合适；
+/// - 房间表情：162×162 正方形（`emoticon_unique` 是 `room_<房间号>_<id>`），
+///   正文是「吃瓜」「下饭」这种词，用户当小表情用，画成两行会压住上下几条弹幕；
+/// - UP 主表情：20×20（`upower_[名]`，这两个数是显示尺寸而不是图片像素），更是小表情。
+///
+/// 宽高是三种都给的唯一字段，所以按形状判断：**只有横条才算大表情**。
+/// 真遇到正方形的大表情也只会退成一行高——宁可小一点，也不能把别人的弹幕挡住。
+fn bilibili_emoticon_is_banner(width: u32, height: u32) -> bool {
+    height > 0 && width as f32 >= height as f32 * 2.0
+}
+
 /// 从一条 `DANMU_MSG` 里挖出表情，两种形态都要处理：
 ///
-/// 1. **大表情**（房间/UP 主/官方/收藏集）：`info[0][13]` 是表情对象，正文就是表情名，
+/// 1. **整条弹幕就是一个表情**：`info[0][13]` 是表情对象，正文就是表情名，
 ///    可能带中括号（`[2026嘉然的画册_顿悟]`）也可能不带（`冲鸭`）。普通弹幕这里是 `"{}"`。
+///    这一格其实混着三种东西（见 [`bilibili_emoticon_is_banner`]），只有横条才按大表情算。
 /// 2. **内嵌小表情**：`info[0][15].extra` 里的 `emots`，key 是正文中的 `[表情名]` 占位符。
 ///
 /// 返回的 `key` 一律取「它在正文里的原样」，前端负责替换成图片占位符。
@@ -630,7 +645,7 @@ fn bilibili_extract_emoticons(
     let meta = info.first()?.as_array()?;
     let mut list: Vec<Emoticon> = Vec::new();
 
-    // ① 大表情：整条弹幕就是一个表情。
+    // ① 整条弹幕就是一个表情。
     if let Some(object) = meta.get(13).and_then(bilibili_as_object) {
         let url = object
             .get("url")
@@ -639,12 +654,14 @@ fn bilibili_extract_emoticons(
             .trim();
         let word = text.trim();
         if !url.is_empty() && !word.is_empty() {
+            let width = emoticon_dimension(&object, "width");
+            let height = emoticon_dimension(&object, "height");
             list.push(Emoticon {
                 key: word.to_string(),
                 url: bilibili_upgrade_scheme(url),
-                width: emoticon_dimension(&object, "width"),
-                height: emoticon_dimension(&object, "height"),
-                big: true,
+                width,
+                height,
+                big: bilibili_emoticon_is_banner(width, height),
             });
         }
     }
@@ -1181,6 +1198,29 @@ mod tests {
         assert_eq!(emoticons[0].url, "https://i0.hdslb.com/big.png");
         assert_eq!(emoticons[0].width, 200);
         assert_eq!(emoticons[0].height, 60);
+        assert!(emoticons[0].big, "横条才是大表情");
+    }
+
+    #[test]
+    fn b站房间表情和up主表情不按大表情画() {
+        // 实测抓包：房间表情是 162×162 正方形，UP 主表情是 20×20。
+        // 这两种都会被用户当小表情用（`[吃瓜]`、`[盯]`），画成两行高会压住上下弹幕。
+        for (name, unique, size, text) in [
+            ("房间表情", "room_1883358196_84743", (162, 162), "盯"),
+            ("UP 主表情", "upower_[鸣潮_好呀]", (20, 20), "[鸣潮_好呀]"),
+        ] {
+            let info = format!(
+                r#"[0,1,25,16777215,1700000000,0,0,0,0,0,0,0,0,{{"url":"http://i0.hdslb.com/s.png","emoticon_unique":"{unique}","width":{},"height":{}}},0,{{}}]"#,
+                size.0, size.1
+            );
+            let json = format!(r#"{{"cmd":"DANMU_MSG","info":[{info},"{text}","[uid,名字]"]}}"#);
+            let (tx, rx) = channel();
+            bilibili_parse_json(&json, &tx);
+            let messages: Vec<_> = rx.try_iter().collect();
+            let emoticons = messages[0].emoticons.as_ref().expect("应该有表情");
+            assert_eq!(emoticons[0].key, text, "{name} 的 key 应该是正文");
+            assert!(!emoticons[0].big, "{name} 不该按大表情画");
+        }
     }
 
     #[test]

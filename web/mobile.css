@@ -158,6 +158,15 @@ html.is-mobile .topbar {
   padding-right: 96px;
 }
 
+/* 首页左上角是刷新按钮：标签条得从它右边开始，否则第一个平台标签被压在按钮底下。 */
+html.is-mobile .topbar.has-refresh {
+  padding-left: 58px;
+}
+
+html.is-mobile .topbar-refresh {
+  left: 10px;
+}
+
 html.is-mobile .platform-tabs {
   flex: 0 1 auto;
   min-width: 0;

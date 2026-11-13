@@ -3,6 +3,7 @@
 // A 的画面在同屏时会被 B 盖住，A 只保留声音和弹幕（走代理的纯音频流）。
 // 这里只负责把 B 播起来，并提供三件事给上层：静音、按秒对齐、销毁。
 import { api, normalizePlatform } from './api.js';
+import { flvBufferOptions, hlsBufferOptions } from './player-buffer.js';
 
 /// 直链判断：只认 http(s) 且以 .flv / .m3u8 结尾（允许带查询串）。
 const STREAM_URL = /^https?:\/\/\S+\.(flv|m3u8)(\?|#|$)/i;
@@ -194,12 +195,9 @@ export function createDualPlayback(video, onState) {
     const player = mpegts.createPlayer(source, {
       enableWorker: false,
       lazyLoad: false,
-      enableStashBuffer: true,
-      stashInitialSize: 1024,
+      // 和主画面共用一份缓冲档位（设置 → 播放缓冲）。
+      ...flvBufferOptions(),
       autoCleanupSourceBuffer: true,
-      autoCleanupMaxBackwardDuration: 60,
-      autoCleanupMinBackwardDuration: 30,
-      liveBufferLatencyChasing: false,
       fixAudioTimestampGap: true,
     });
     player.attachMediaElement(video);
@@ -221,9 +219,7 @@ export function createDualPlayback(video, onState) {
     const Hls = window.Hls;
     if (Hls && Hls.isSupported()) {
       const hls = new Hls({
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 8,
-        maxBufferLength: 20,
+        ...hlsBufferOptions(),
         backBufferLength: 30,
         manifestLoadingTimeOut: 8000,
         fragLoadingTimeOut: 20000,

@@ -29,6 +29,8 @@ import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
 // 改档位定义时只改 danmaku.js 一处。
 import { DANMAKU_PRESETS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
+// 缓冲档位和播放器参数是同一份定义（player-buffer.js），别再抄一遍数值。
+import { BUFFER_PRESETS } from '../player-buffer.js';
 // 移动端专属设置项（屏幕方向）要按平台显示。
 import { IS_MOBILE } from '../platform.js';
 import {
@@ -540,6 +542,14 @@ function detailSections(key, ctx, repaint) {
                 toast('默认清晰度已更新，进入直播间时生效');
               },
             },
+            {
+              type: 'select',
+              key: 'player.buffer',
+              title: '播放缓冲',
+              desc: '觉得画面比弹幕慢好几秒就选低延迟；网络差、频繁卡顿就选流畅优先。改完重新进直播间生效。',
+              valueMap: Object.fromEntries(Object.entries(BUFFER_PRESETS).map(([key, preset]) => [key, preset.label])),
+              onChange: (value) => toast(`已切到「${BUFFER_PRESETS[value]?.label || value}」，重新进入直播间生效`),
+            },
             { type: 'switch', key: 'player.autoSwitchLine', title: '播放失败自动换线', desc: '当前线路连续失败时自动尝试下一条' },
             { type: 'switch', key: 'player.autoRefresh', title: '直播流自动刷新', desc: '长时间播放后重新获取直链，避免地址过期' },
             { type: 'switch', key: 'player.forceHttps', title: '强制 HTTPS', desc: '把平台下发的 http 链接改为 https（部分 CDN 不支持时请关闭）' },
@@ -658,7 +668,7 @@ function detailSections(key, ctx, repaint) {
               title: '进入页面自动刷新',
               desc: '打开后每次进入关注页都刷新一次直播状态（并发数见下方）；默认关闭，避免一进页面就打几十个请求。',
             },
-            { type: 'info', title: '手动刷新', desc: '点击右上角刷新按钮，随时刷新全部关注主播的直播状态。', value: '右上角 ↻' },
+            { type: 'info', title: '手动刷新', desc: '点击左上角的刷新按钮，随时刷新全部关注主播的直播状态。', value: '左上角 ↻' },
             { type: 'select', key: 'follow.threads', title: '更新线程数', numeric: true, valueMap: { 0: '自动', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8' } },
             { type: 'select', key: 'follow.pageSize', title: '关注每页数量', numeric: true, valueMap: { 50: '50', 100: '100', 150: '150', 200: '200', 300: '300', 400: '400' } },
           ],

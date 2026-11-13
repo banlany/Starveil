@@ -150,7 +150,7 @@ export function renderHome(ctx) {
     }
   }
 
-  // 「刷新推荐」按钮放在顶栏，和搜索按钮同一排。
+  // 「刷新推荐」按钮在顶栏左上角（和关注页同一个位置）。
   // 页面本身只提供动作，按钮本身由 app.js 统一管理。
   const refreshHome = () => {
     if (state.home.loading) return;

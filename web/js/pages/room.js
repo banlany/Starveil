@@ -4,6 +4,7 @@ import { createDanmakuLayer, DANMAKU_PRESETS, FPS_OPTIONS, flyBarrageAvailable, 
 import { signDouyinDanmaku } from '../douyin-sign.js';
 import { expandDouyinEmoticons } from '../douyin-emoji.js';
 import { createDualPlayback, seekInBuffer } from '../dual.js';
+import { flvBufferOptions, hlsBufferOptions } from '../player-buffer.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
 import { bindHorizontalSwipe } from '../swipe.js';
@@ -1620,14 +1621,12 @@ export function renderRoom(ctx, params = {}) {
     if (Hls && Hls.isSupported()) {
       try {
         const hls = new Hls({
-          // 直播只保留最近几个分片：窗口越小，延迟越不容易越积越大。
-          liveSyncDurationCount: 3,
-          liveMaxLatencyDurationCount: 8,
+          // 缓冲档位（设置 → 播放缓冲）：窗口大小、起播分片数都在档位表里。
+          ...hlsBufferOptions(),
           // 延迟播放：hls.js 直接按秒数决定起播点，不用外面再压一层缓冲。
           ...(delay > 0
             ? { liveSyncDuration: delay + 2, liveMaxLatencyDuration: delay + 12 }
             : {}),
-          maxBufferLength: 20,
           backBufferLength: 30,
           manifestLoadingTimeOut: 8000,
           fragLoadingTimeOut: 20000,
@@ -1721,16 +1720,11 @@ export function renderRoom(ctx, params = {}) {
       player = mpegts.createPlayer(source, {
         enableWorker: false,
         lazyLoad: false,
-        // 虎牙/斗鱼 CDN 抖动较多，保留 1MB 初始缓冲，不做激进的延迟追帧，
-        // 否则网络稍抖就会触发 seek，表现为断断续续。
-        enableStashBuffer: true,
-        stashInitialSize: 1024,
+        // 缓冲大小按设置里的档位来（定义见 player-buffer.js）。
+        // 开了「延迟播放」就不能追帧：那一档是靠刻意落后实现的，
+        // 库一去追帧就等于把用户设的延迟一秒秒吃掉。
+        ...flvBufferOptions(Number(session.delaySec) <= 0),
         autoCleanupSourceBuffer: true,
-        // 库默认向后保留 120~180 秒。直播用不到这么长的历史，一旦播放点落后，
-        // 这段数据只会白占内存、并拖慢每次 appendBuffer，所以收紧到 30~60 秒。
-        autoCleanupMaxBackwardDuration: 60,
-        autoCleanupMinBackwardDuration: 30,
-        liveBufferLatencyChasing: false,
         fixAudioTimestampGap: true,
       });
       player.attachMediaElement(video);
@@ -3466,11 +3460,12 @@ export function renderRoom(ctx, params = {}) {
       session.stallTimer = setInterval(() => {
         if (session.destroyed || session.streamDead || video.paused || video.readyState < 2) return;
         const now = Date.now();
-        // 延迟兜底。关掉 liveBufferLatencyChasing 后，任何一次卡顿（窗口被切走、
+        // 延迟兜底。标准/流畅档位关掉了 liveBufferLatencyChasing，任何一次卡顿（窗口被切走、
         // 网络抖一下、解码跟不上）都会让播放点永久落后：之后收到的数据只会继续
         // 往后 append，播放点按 1 倍速再也追不回来，延迟和缓冲一起膨胀到几分钟，
         // 内存与 appendBuffer 压力反过来让小卡更多——就是「越看越卡、最后重连」。
-        // 只在落后超过 30 秒时跳一次回到最新位置，日常小抖动不参与，避免频繁跳帧。
+        // 低延迟档位库自己会追帧，这里只是兜底：只在落后超过 30 秒时跳一次回到最新位置，
+        // 日常小抖动不参与，避免频繁跳帧（也免得把「延迟播放」设的那几秒跳掉）。
         const bufferedEnd = video.buffered.length
           ? video.buffered.end(video.buffered.length - 1)
           : 0;
