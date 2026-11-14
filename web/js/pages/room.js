@@ -38,6 +38,10 @@ const QUALITY_KEY = 'simple-live.quality.';
 // 太勤只会白白多打几次平台接口。
 const REFRESH_INFO_INTERVAL = 5 * 60 * 1000;
 
+// 进房补「悬挂中的 SC」时，剩余不足这么多毫秒的不补：
+// 刚插进列表就要被定时器删掉，只会闪一下，反而像出错。
+const SC_BACKFILL_MIN_MS = 10_000;
+
 // 直播间右侧「设置」页签里的数值项都用预设值下拉，档位表来自弹幕层
 // （DANMAKU_PRESETS），和设置页读的是同一份，不会出现两边档位对不上。
 const CS_PRESETS = DANMAKU_PRESETS;
@@ -596,6 +600,11 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  /// 左下角的 SC 悬浮层：**折叠堆叠**。
+  ///
+  /// 每条只露「头像 + 昵称 + 金额」一行，点一下展开正文、再点收起；
+  /// 同时挂着的 SC 都列出来（以前只画最后 3 条），折叠后一条才一行高，占不了多少地方。
+  /// 进房补的历史 SC 不进来（`historical`），否则一进直播间就糊一片。
   function renderScOverlay() {
     const layer = $('sc-float-layer');
     if (!layer) return;
@@ -603,22 +612,37 @@ export function renderRoom(ctx, params = {}) {
     const enabled = Boolean(state.settings.player.superChatOverlay);
     layer.classList.toggle('hidden', !enabled);
     if (!enabled) return;
-    const active = session.scMessages.slice(-3);
-    for (const entry of active) {
+    const active = session.scMessages.filter((entry) => !entry.historical);
+    // DOM 倒着放：CSS 是 `column-reverse`，最新的排在最下面，超出高度时老的先被裁掉。
+    for (const entry of [...active].reverse()) {
       const { top, bottom } = scTierColors(entry.sc);
       const card = document.createElement('div');
-      card.className = 'sc-float-card';
+      card.className = `sc-float-card${entry.scOpen ? ' expanded' : ''}`;
       card.dataset.end = String(entry.sc.end_time ?? '');
       card.style.backgroundColor = top;
       card.innerHTML = `
-        <div class="sc-float-head">
+        <div class="sc-float-head" role="button" tabindex="0" aria-expanded="${entry.scOpen ? 'true' : 'false'}" title="展开 / 收起">
           ${avatarHtml(entry.user, entry.sc.avatar, 28)}
           <b>${escapeHtml(entry.user || 'B 站用户')}</b>
           <span>¥${Number(entry.sc.price) || 0}</span>
+          <i class="sc-caret">${icon('chevronDown', 11)}</i>
           <button class="sc-delete" title="关闭">${icon('close', 12)}</button>
         </div>
         <div class="sc-float-text">${escapeHtml(entry.text)}</div>`;
       card.querySelector('.sc-float-text').style.backgroundColor = bottom;
+      const head = card.querySelector('.sc-float-head');
+      // 展开状态记在 entry 上：新 SC 进来会整层重画，不记的话已经展开的会又缩回去。
+      const toggle = () => {
+        entry.scOpen = !entry.scOpen;
+        card.classList.toggle('expanded', entry.scOpen);
+        head.setAttribute('aria-expanded', String(entry.scOpen));
+      };
+      head.addEventListener('click', toggle);
+      head.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      });
       card.querySelector('.sc-delete').addEventListener('click', (event) => {
         event.stopPropagation();
         removeScMessage(entry, 'manual');
@@ -648,9 +672,17 @@ export function renderRoom(ctx, params = {}) {
             ? message.emoticons
             : undefined,
       at: Date.now(),
+      // 进房补的悬挂 SC：只进 SC 标签页列表，不进左下角悬浮堆叠。
+      historical: Boolean(message.historical),
     };
-    session.messages.push(entry);
-    if (session.messages.length > MAX_MESSAGES) session.messages.shift();
+    // 同一条 SC 可能既在进房快照里、又被 WS 推一次（两边是同一套 id）。
+    if (entry.sc?.id && session.scMessages.some((item) => item.sc?.id === entry.sc.id)) return;
+    // 补进来的历史 SC 不进聊天流：聊天页是进房后的默认页签，一进来就刷出几条旧 SC
+    // 很像"刚有人打钱"。它们只在 SC 页签的「正在显示」里出现。
+    if (!entry.historical) {
+      session.messages.push(entry);
+      if (session.messages.length > MAX_MESSAGES) session.messages.shift();
+    }
     if (entry.sc) {
       session.scMessages.push(entry);
       if (session.scMessages.length > 100) session.scMessages.shift();
@@ -663,9 +695,27 @@ export function renderRoom(ctx, params = {}) {
         // 计数位数变了（9 → 10）标签会变宽，色条得跟着重新对齐。
         syncChatTabUnderline();
       }
+      if (entry.historical) return;
     }
     if (!entry.system && !entry.sc) spawnDanmaku(entry);
     if (session.tab === 'chat') queueChatLine(entry);
+  }
+
+  /// 进房补「还挂在屏幕上的 SC」。
+  ///
+  /// B 站进房接口（`getInfoByRoom`）顺手带了 `super_chat_info.message_list`，
+  /// 里面是**进房之前发的、此刻还没到期**的 SC —— 现在只有「进房之后」的 SC 能看见，
+  /// 这一份正好补上那段空白。
+  ///
+  /// 只补剩余 10 秒以上的：更短的刚进列表就被到期定时器删掉，白闪一下。
+  /// 补进来的都标 `historical`，只进 SC 标签页列表，不进左下角的悬浮堆叠。
+  function backfillSuperChats(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    const now = Date.now();
+    const pending = list
+      .filter((item) => Number(item?.sc?.end_time) * 1000 - now >= SC_BACKFILL_MIN_MS)
+      .sort((a, b) => (Number(a?.sc?.start_time) || 0) - (Number(b?.sc?.start_time) || 0));
+    for (const item of pending) pushMessage({ ...item, historical: true });
   }
 
   // 正则里的特殊字符要转义：表情 key 自带 `[` `]`，不转义会被当成字符组。
@@ -3419,6 +3469,9 @@ export function renderRoom(ctx, params = {}) {
       renderFollowState();
       recordHistory({ ...payload.detail, platform: detailPlatform });
       touchFollowVisit(detailPlatform, session.roomId);
+      // 进房补「还挂着的 SC」。放在第一个 `setChatTab` 之前，
+      // 这样聊天列表与 SC 标签页的第一帧就是完整的。
+      backfillSuperChats(payload.detail.super_chats);
       setChatTab('chat');
       setQualityLabel();
       // 弹幕流和直播流是两条独立连接：**先连弹幕，再去取流**。

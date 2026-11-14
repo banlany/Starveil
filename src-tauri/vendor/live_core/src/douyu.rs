@@ -144,6 +144,8 @@ pub fn parse_detail(value: &Value, fallback_room_id: &str) -> Result<LiveRoomDet
         area,
         intro: strip_tags(&text(room, "show_details").unwrap_or_default()),
         url: format!("https://www.douyu.com/{rid}"),
+        // 斗鱼没有「进房补悬挂 SC」这回事，恒为空。
+        super_chats: Vec::new(),
         extra: RoomExtra::Douyu { rid },
     })
 }

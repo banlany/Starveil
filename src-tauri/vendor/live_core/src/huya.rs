@@ -177,6 +177,7 @@ pub fn parse_detail(
         area: text(live_info, "sGameFullName").filter(|value| !value.trim().is_empty()),
         intro: text(live_info, "sIntroduction").unwrap_or_default(),
         url: format!("https://www.huya.com/{room_id}"),
+        super_chats: Vec::new(),
         extra: RoomExtra::Huya {
             lines,
             bitrates,

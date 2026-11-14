@@ -59,6 +59,9 @@ pub struct Emoticon {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SuperChatMessage {
+    /// 这条 SC 的 id（HTTP 快照与 WS 推送是同一套 id），前端用它去重。
+    #[serde(default)]
+    pub id: String,
     pub price: u64,
     pub avatar: String,
     pub background_color: String,
@@ -449,6 +452,73 @@ fn inflate(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// 解析一条 SC 的 `data`。
+///
+/// WS 的 `SUPER_CHAT_MESSAGE` 与进房接口 `getInfoByRoom` 的
+/// `super_chat_info.message_list` 字段名一致（`message` / `user_info.uname|face` /
+/// `price` / `background_*` / `start_time` / `end_time` / `id`），所以共用一份解析。
+///
+/// 两处唯一不同的是 `time`：WS 里是总时长、HTTP 快照里是「剩余秒数」，
+/// 语义正好相反。前端只按 `end_time`（绝对时间戳）算到期，这里干脆不转 `time`，
+/// 免得哪天有人拿它去显示倒计时，两边对不上。
+pub fn bilibili_super_chat(data: &serde_json::Value) -> Option<DanmakuMessage> {
+    let text = data
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if text.is_empty() {
+        return None;
+    }
+    let item = |key: &str| data.pointer(&format!("/user_info/{key}"));
+    // 匿名 SC（`is_mystery`）没有 user_info，名字与头像退到 uinfo。
+    let user = item("uname")
+        .or_else(|| data.pointer("/uinfo/base/name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let avatar = item("face")
+        .or_else(|| data.pointer("/uinfo/base/face"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let id = data
+        .get("id")
+        .map(|value| match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        })
+        .or_else(|| data.get("token").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    let background_color = data
+        .get("background_color")
+        .and_then(|v| v.as_str())
+        .unwrap_or("#fb7299")
+        .to_string();
+    let background_bottom_color = data
+        .get("background_bottom_color")
+        .and_then(|v| v.as_str())
+        .unwrap_or("#fb7299")
+        .to_string();
+    Some(DanmakuMessage {
+        user,
+        text,
+        color: None,
+        system: false,
+        position: 0,
+        sc: Some(SuperChatMessage {
+            id,
+            price: data.get("price").and_then(|v| v.as_u64()).unwrap_or(0),
+            avatar,
+            background_color,
+            background_bottom_color,
+            start_time: data.get("start_time").and_then(|v| v.as_u64()).unwrap_or(0),
+            end_time: data.get("end_time").and_then(|v| v.as_u64()).unwrap_or(0),
+        }),
+        emoticons: None,
+    })
+}
+
 fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
     for chunk in text.split(|ch: char| ch.is_control()) {
         let chunk = chunk.trim();
@@ -463,55 +533,9 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             let Some(data) = value.get("data") else {
                 continue;
             };
-            let text = data
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if text.is_empty() {
-                continue;
+            if let Some(message) = bilibili_super_chat(data) {
+                let _ = tx.send(message);
             }
-            let user = data
-                .get("user_info")
-                .and_then(|info| info.get("uname"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let avatar = data
-                .get("user_info")
-                .and_then(|info| info.get("face"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let price = data.get("price").and_then(|v| v.as_u64()).unwrap_or(0);
-            let background_color = data
-                .get("background_color")
-                .and_then(|v| v.as_str())
-                .unwrap_or("#fb7299")
-                .to_string();
-            let background_bottom_color = data
-                .get("background_bottom_color")
-                .and_then(|v| v.as_str())
-                .unwrap_or("#fb7299")
-                .to_string();
-            let start_time = data.get("start_time").and_then(|v| v.as_u64()).unwrap_or(0);
-            let end_time = data.get("end_time").and_then(|v| v.as_u64()).unwrap_or(0);
-            let _ = tx.send(DanmakuMessage {
-                user,
-                text,
-                color: None,
-                system: false,
-                position: 0,
-                sc: Some(SuperChatMessage {
-                    price,
-                    avatar,
-                    background_color,
-                    background_bottom_color,
-                    start_time,
-                    end_time,
-                }),
-                emoticons: None,
-            });
             continue;
         }
         if !cmd.starts_with("DANMU_MSG") {
@@ -1134,7 +1158,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].position, 1);
 
-        let sc = r##"{"cmd":"SUPER_CHAT_MESSAGE","data":{"message":"SC 内容","price":30,"background_color":"#111111","background_bottom_color":"#222222","start_time":10,"end_time":20,"user_info":{"uname":"用户","face":"https://example.com/a.jpg"}}}"##;
+        let sc = r##"{"cmd":"SUPER_CHAT_MESSAGE","data":{"id":20371246,"message":"SC 内容","price":30,"background_color":"#111111","background_bottom_color":"#222222","start_time":10,"end_time":20,"time":60,"user_info":{"uname":"用户","face":"https://example.com/a.jpg"}}}"##;
         let (tx, rx) = channel();
         bilibili_parse_json(sc, &tx);
         let messages: Vec<_> = rx.try_iter().collect();
@@ -1142,6 +1166,20 @@ mod tests {
         assert_eq!(messages[0].text, "SC 内容");
         assert_eq!(messages[0].sc.as_ref().unwrap().price, 30);
         assert_eq!(messages[0].sc.as_ref().unwrap().avatar, "https://example.com/a.jpg");
+        // id 是前端去重用（进房补的历史 SC 与 WS 推送可能是同一条）。
+        assert_eq!(messages[0].sc.as_ref().unwrap().id, "20371246");
+    }
+
+    #[test]
+    fn b站匿名sc退到uinfo取名字() {
+        // `is_mystery` 的 SC 没有 user_info，名字和头像在 uinfo.base 里。
+        let data = r#"{"id":7,"price":100,"message":"匿名","start_time":1,"end_time":2,"is_mystery":true,"user_info":{},"uinfo":{"base":{"name":"神秘人","face":"https://example.com/m.jpg"}}}"#;
+        let value: serde_json::Value = serde_json::from_str(data).unwrap();
+        let message = bilibili_super_chat(&value).expect("应当解析成功");
+        assert_eq!(message.user, "神秘人");
+        assert_eq!(message.sc.as_ref().unwrap().avatar, "https://example.com/m.jpg");
+        // 空正文的（平台偶尔下发）要丢掉，别在列表里留一条空白 SC。
+        assert!(bilibili_super_chat(&serde_json::json!({"id": 1, "message": ""})).is_none());
     }
 
     #[test]

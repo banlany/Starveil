@@ -839,9 +839,12 @@ body.is-resizing-chat .room-chat {
   z-index: 6;
   width: 258px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  /* 折叠堆叠：新的在最下面，卡片多了从上面裁掉最老的，视频区不至于被糊满。 */
+  flex-direction: column-reverse;
+  gap: 6px;
   pointer-events: none;
+  max-height: calc(100% - 150px);
+  overflow: hidden;
 }
 
 .sc-float-layer.hidden {
@@ -863,6 +866,17 @@ body.is-resizing-chat .room-chat {
   gap: 7px;
   min-width: 0;
   padding: 7px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sc-float-head:focus-visible {
+  outline: 2px solid var(--on-sc-ring);
+  outline-offset: -2px;
+}
+
+.sc-float-head:hover {
+  background: var(--on-sc-hover);
 }
 
 .sc-float-head .avatar {
@@ -902,17 +916,35 @@ body.is-resizing-chat .room-chat {
   background: var(--on-sc-hover);
 }
 
+.sc-caret {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--on-sc-weak);
+  font-style: normal;
+  transition: transform 0.18s ease;
+}
+
+.sc-float-card.expanded .sc-caret {
+  transform: rotate(180deg);
+}
+
 .sc-float-text {
   margin-top: 0;
   padding: 6px 8px 7px;
   color: var(--on-sc-strong);
   font-size: 11px;
   line-height: 1.45;
-  display: -webkit-box;
+  /* 折叠态只留头一行，点开才显示正文（`display` 一变 `-webkit-line-clamp` 才生效）。 */
+  display: none;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-shadow: 0 1px 1px var(--on-sc-shadow);
+}
+
+.sc-float-card.expanded .sc-float-text {
+  display: -webkit-box;
 }
 
 .sc-tag {

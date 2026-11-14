@@ -331,6 +331,7 @@ impl LiveSite for KuaishouSite {
             },
             intro: text_of(&author, "description"),
             url: url.clone(),
+            super_chats: Vec::new(),
             extra: RoomExtra::Kuaishou {
                 author_id,
                 stream_id,

@@ -12,6 +12,7 @@ use crate::model::{
     LiveCategory, LiveRoomDetail, LiveRoomItem, LiveSubCategory, Platform, PlayQuality, PlayUrls,
     QualityData, QuerySign, RoomExtra,
 };
+use crate::danmaku::bilibili_super_chat;
 use crate::site::LiveSite;
 use crate::util::{absolute, dig, strip_tags, text, u32_of, u64_of};
 use crate::wbi::WbiKeys;
@@ -85,6 +86,13 @@ pub fn parse_detail(
         area: text(data, "room_info.area_name").filter(|value| !value.is_empty()),
         intro: strip_tags(&text(data, "room_info.description").unwrap_or_default()),
         url: format!("https://live.bilibili.com/{room_id}"),
+        // 进房时还挂在屏幕上的 SC。`message_list` 里 `time` 是「剩余秒数」，
+        // 前端按 `end_time` 自己算到期，所以这里不做额外处理。
+        super_chats: data
+            .pointer("/super_chat_info/message_list")
+            .and_then(Value::as_array)
+            .map(|list| list.iter().filter_map(bilibili_super_chat).collect())
+            .unwrap_or_default(),
         extra: RoomExtra::Bilibili {
             buvid3,
             buvid4,

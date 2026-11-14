@@ -680,6 +680,7 @@ impl LiveSite for DouyinSite {
             } else {
                 format!("{REFERER}/{web_rid}")
             },
+            super_chats: Vec::new(),
             extra: RoomExtra::Douyin {
                 room_id: inner_id,
                 web_rid,

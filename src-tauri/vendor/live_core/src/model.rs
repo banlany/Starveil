@@ -118,6 +118,13 @@ pub struct LiveRoomDetail {
     pub url: String,
     /// 取流需要的站点私有上下文。
     pub extra: RoomExtra,
+    /// 进房时仍挂在屏幕上的醒目留言（SC）。
+    ///
+    /// 只有 B 站进房接口直接给了这份快照（`super_chat_info.message_list`），
+    /// 其它平台恒为空；元素结构与弹幕一致（`sc` 字段带金额/配色/起止时间/id）。
+    /// 只往前端发，不接受回传，所以跳过反序列化。
+    #[serde(default, skip_deserializing)]
+    pub super_chats: Vec<crate::danmaku::DanmakuMessage>,
 }
 
 /// 各站取流的私有中间数据。

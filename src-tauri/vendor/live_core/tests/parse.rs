@@ -50,6 +50,7 @@ fn b站房间信息字段完整() {
     assert_eq!(detail.viewers, 12745, "watched_show.num 是「看过」人数");
     assert_eq!(detail.guard_count, 36, "guard_info.count 是大航海人数");
     assert_eq!(detail.live_start_time, 1756156800, "live_start_time 是本场开播时间");
+    assert!(detail.super_chats.is_empty(), "fixture 里没有悬挂的 SC");
     match detail.extra {
         RoomExtra::Bilibili {
             buvid3, buvid4, ..
@@ -59,6 +60,32 @@ fn b站房间信息字段完整() {
         }
         other => panic!("取流上下文类型不对：{other:?}"),
     }
+}
+
+#[test]
+fn b站进房带回悬挂的sc() {
+    // 进房接口里的 `super_chat_info.message_list` 是「还挂在屏幕上」的 SC。
+    // 注意 `time` 在这里是剩余秒数（WS 里是总时长），前端只认 `end_time`。
+    let value = json(
+        r##"{"code":0,"data":{"room_info":{"room_id":21452505,"title":"标题","live_status":1},
+        "super_chat_info":{"message_list":[
+            {"id":20371246,"price":30,"message":"今天播到几点","background_color":"#EDF5FF",
+             "background_bottom_color":"#2A60B2","start_time":1794659531,"end_time":1794659591,
+             "time":52,"user_info":{"uname":"赛蕾嘉","face":"https://i0.hdslb.com/a.jpg"}},
+            {"id":0,"price":0,"message":""}
+        ]}}}"##,
+    );
+    let detail = bilibili::parse_detail(&value, "b3".into(), "b4".into(), "21452505")
+        .expect("应当解析成功");
+
+    assert_eq!(detail.super_chats.len(), 1, "空正文的那条要被丢掉");
+    let first = &detail.super_chats[0];
+    assert_eq!(first.user, "赛蕾嘉");
+    assert_eq!(first.text, "今天播到几点");
+    let sc = first.sc.as_ref().expect("应当带 sc 字段");
+    assert_eq!(sc.id, "20371246", "id 用来和 WS 推送去重");
+    assert_eq!(sc.price, 30);
+    assert_eq!(sc.end_time, 1794659591, "到期时间只认 end_time，不是剩余的 time");
 }
 
 #[test]
