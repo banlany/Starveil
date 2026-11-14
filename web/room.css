@@ -681,6 +681,9 @@ body.is-resizing-chat .room-chat {
 }
 
 .sc-card {
+  /* 聊天列表是 flex 容器：不写 flex:none，卡片数量一多就会被一起压缩
+     （配合上面的 overflow:hidden，min-height 退化成 0，卡片被压成一条）。 */
+  flex: none;
   margin: 8px 10px;
   padding: 0;
   overflow: hidden;
@@ -694,6 +697,7 @@ body.is-resizing-chat .room-chat {
   position: sticky;
   top: 0;
   z-index: 2;
+  flex: none;
   display: flex;
   gap: 6px;
   padding: 8px 10px 6px;
@@ -852,6 +856,8 @@ body.is-resizing-chat .room-chat {
 }
 
 .sc-float-card {
+  /* 同样不能被压：层里用 max-height + overflow 裁的是超出顶部的老卡。 */
+  flex: none;
   pointer-events: auto;
   padding: 0;
   overflow: hidden;
@@ -927,6 +933,15 @@ body.is-resizing-chat .room-chat {
 
 .sc-float-card.expanded .sc-caret {
   transform: rotate(180deg);
+}
+
+/* 关掉「浮动卡折叠」时头部只是标题栏，点击不该有展开反馈。 */
+.sc-float-card.no-fold .sc-float-head {
+  cursor: default;
+}
+
+.sc-float-card.no-fold .sc-float-head:hover {
+  background: none;
 }
 
 .sc-float-text {

@@ -90,6 +90,8 @@ export const DEFAULT_SETTINGS = {
     forceHttps: true,
     superChatOverlay: false,
     superChatAutoRemove: true,
+    // 悬浮层是否折叠成一行：关掉就直接显示正文（卡多的时候会占地方）。
+    superChatFold: true,
   },
   live: {
     // 「进入直播间自动全屏」只有一份：`player.autoFullscreen`。

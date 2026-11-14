@@ -600,10 +600,11 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 左下角的 SC 悬浮层：**折叠堆叠**。
+  /// 左下角的 SC 悬浮层：**折叠堆叠**（可在「SC 设置 → 浮动卡折叠」关掉）。
   ///
-  /// 每条只露「头像 + 昵称 + 金额」一行，点一下展开正文、再点收起；
+  /// 折叠时每条只露「头像 + 昵称 + 金额」一行，点一下展开正文、再点收起；
   /// 同时挂着的 SC 都列出来（以前只画最后 3 条），折叠后一条才一行高，占不了多少地方。
+  /// 关掉折叠就直接展开正文，代价是卡多了会顶到屏幕上方（超出部分裁掉最早的）。
   /// 进房补的历史 SC 不进来（`historical`），否则一进直播间就糊一片。
   function renderScOverlay() {
     const layer = $('sc-float-layer');
@@ -612,37 +613,42 @@ export function renderRoom(ctx, params = {}) {
     const enabled = Boolean(state.settings.player.superChatOverlay);
     layer.classList.toggle('hidden', !enabled);
     if (!enabled) return;
+    // 老设置里没有这个键：缺省按折叠处理，别让老用户升级后突然糊一屏。
+    const fold = state.settings.player.superChatFold !== false;
     const active = session.scMessages.filter((entry) => !entry.historical);
     // DOM 倒着放：CSS 是 `column-reverse`，最新的排在最下面，超出高度时老的先被裁掉。
     for (const entry of [...active].reverse()) {
       const { top, bottom } = scTierColors(entry.sc);
       const card = document.createElement('div');
-      card.className = `sc-float-card${entry.scOpen ? ' expanded' : ''}`;
+      const expanded = !fold || Boolean(entry.scOpen);
+      card.className = `sc-float-card${expanded ? ' expanded' : ''}${fold ? '' : ' no-fold'}`;
       card.dataset.end = String(entry.sc.end_time ?? '');
       card.style.backgroundColor = top;
       card.innerHTML = `
-        <div class="sc-float-head" role="button" tabindex="0" aria-expanded="${entry.scOpen ? 'true' : 'false'}" title="展开 / 收起">
+        <div class="sc-float-head"${fold ? ' role="button" tabindex="0" title="展开 / 收起"' : ''} aria-expanded="${expanded ? 'true' : 'false'}">
           ${avatarHtml(entry.user, entry.sc.avatar, 28)}
           <b>${escapeHtml(entry.user || 'B 站用户')}</b>
           <span>¥${Number(entry.sc.price) || 0}</span>
-          <i class="sc-caret">${icon('chevronDown', 11)}</i>
+          ${fold ? `<i class="sc-caret">${icon('chevronDown', 11)}</i>` : ''}
           <button class="sc-delete" title="关闭">${icon('close', 12)}</button>
         </div>
         <div class="sc-float-text">${escapeHtml(entry.text)}</div>`;
       card.querySelector('.sc-float-text').style.backgroundColor = bottom;
-      const head = card.querySelector('.sc-float-head');
-      // 展开状态记在 entry 上：新 SC 进来会整层重画，不记的话已经展开的会又缩回去。
-      const toggle = () => {
-        entry.scOpen = !entry.scOpen;
-        card.classList.toggle('expanded', entry.scOpen);
-        head.setAttribute('aria-expanded', String(entry.scOpen));
-      };
-      head.addEventListener('click', toggle);
-      head.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        toggle();
-      });
+      if (fold) {
+        const head = card.querySelector('.sc-float-head');
+        // 展开状态记在 entry 上：新 SC 进来会整层重画，不记的话已经展开的会又缩回去。
+        const toggle = () => {
+          entry.scOpen = !entry.scOpen;
+          card.classList.toggle('expanded', entry.scOpen);
+          head.setAttribute('aria-expanded', String(entry.scOpen));
+        };
+        head.addEventListener('click', toggle);
+        head.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggle();
+        });
+      }
       card.querySelector('.sc-delete').addEventListener('click', (event) => {
         event.stopPropagation();
         removeScMessage(entry, 'manual');
@@ -1108,6 +1114,7 @@ export function renderRoom(ctx, params = {}) {
         <h4>SC 设置</h4>
         <div class="chat-setting-row"><span>到期自动消失</span><button class="switch" id="cs-sc-auto" aria-checked="${state.settings.player.superChatAutoRemove}"></button></div>
         <div class="chat-setting-row"><span>左下角浮动显示</span><button class="switch" id="cs-sc-float" aria-checked="${state.settings.player.superChatOverlay}"></button></div>
+        <div class="chat-setting-row"><span>浮动卡折叠</span><button class="switch" id="cs-sc-fold" aria-checked="${state.settings.player.superChatFold !== false}"></button></div>
       </div>
       <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。切换性能档位会重建渲染器，当前屏上的弹幕会被清掉。</div>`;
     target.appendChild(wrap);
@@ -1164,6 +1171,7 @@ export function renderRoom(ctx, params = {}) {
     };
     bindPlayerSwitch('cs-sc-auto', 'superChatAutoRemove');
     bindPlayerSwitch('cs-sc-float', 'superChatOverlay');
+    bindPlayerSwitch('cs-sc-fold', 'superChatFold');
   }
 
   function setPlayerConfig(key, value) {
@@ -1175,7 +1183,7 @@ export function renderRoom(ctx, params = {}) {
         else clearScTimer(entry);
       }
     }
-    if (key === 'superChatOverlay') renderScOverlay();
+    if (key === 'superChatOverlay' || key === 'superChatFold') renderScOverlay();
   }
 
   function setConfig(key, value) {
