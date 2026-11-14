@@ -2116,27 +2116,46 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 房间信息
 
+  // 「观众数据」的口径按平台分：B 站给的是累计观看量（`watched_show`），
+  // 抖音 `user_count` / 快手 `watchingCount` 本身就是实时在看人数。
+  // 同一个位置不能一律写「看过」——数字含义不一样。
+  const AUDIENCE_LABEL = { douyin: '在看', kuaishou: '在看' };
+
+  /// 观众数据那一格该画什么：有累计观看量就写「看过」，否则按平台的「在看」。
+  /// 两者都没有（未开播 / 平台不提供）时返回 null，整格不画。
+  function audienceStat(platform, detail) {
+    const viewers = Number(detail?.viewers) || 0;
+    if (viewers > 0) return { label: '看过', value: viewers };
+    const online = Number(detail?.online) || 0;
+    const label = AUDIENCE_LABEL[platform];
+    if (label && online > 0) return { label, value: online };
+    return null;
+  }
+
   function renderRoomHeader() {
     const detail = session.detail;
     if (!detail) return;
     $('room-title').textContent = detail.title || '(无标题)';
     const avatar = canonicalImage(detail.avatar || detail.cover);
     const cover = canonicalImage(detail.cover || detail.avatar);
+    // 顶栏这一格：B 站给的是人气值，用火焰；抖音 / 快手的数字是在看人数，用人群。
+    const onlineIcon = AUDIENCE_LABEL[session.platform] ? 'users' : 'flame';
     $('room-sub').innerHTML = `
       ${avatarHtml(detail.user_name, avatar, 22, 'avatar-mini')}
       <span class="name">${escapeHtml(detail.user_name || '未知主播')}</span>
       <span class="dot">·</span>
       <span class="area">${escapeHtml(detail.area || PLATFORM_META[session.platform]?.short || '直播')}</span>
-      <span class="online">${icon('flame', 12)}${formatOnline(detail.online)}</span>`;
+      <span class="online">${icon(onlineIcon, 12)}${formatOnline(detail.online)}</span>`;
     $('chat-avatar').innerHTML = avatarHtml(detail.user_name, avatar, 42);
     bindImageFallback(page);
     $('chat-name').textContent = detail.user_name || '聊天';
     // 聊天区第二行：平台 + 开播状态 + 观众数据。
-    // 「看过人数」是 B 站的累计观看量，不是实时在线人数，所以口径写成「看过」。
-    const viewers = Number(detail.viewers) || 0;
+    // B 站的 viewers 是累计观看量，所以口径写成「看过」；抖音 / 快手给的是
+    // 实时在看人数，同一格写「在看」（见 audienceStat）。
+    const audience = audienceStat(session.platform, detail);
     const guards = Number(detail.guard_count) || 0;
     const dataBits = [];
-    if (viewers > 0) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(viewers)} 看过</span>`);
+    if (audience) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(audience.value)} ${audience.label}</span>`);
     // 大航海自己占一行（`.chat-head-guard` 的 flex-basis 是 100%）：
     // 它是「舰长数」，和看过人数挤在一起时窄一点就只剩半截，另起一行反而清爽。
     const guardBit = guards > 0 ? `<span class="chat-head-guard">${icon('anchor', 11)}${guards} 大航海</span>` : '';
@@ -2458,6 +2477,12 @@ export function renderRoom(ctx, params = {}) {
     // 竖屏下左下角的直播时长会被收起来，所以这里也补一行，信息不至于找不着。
     const startedAt = Number(detail.live_start_time) > 0 ? Number(detail.live_start_time) * 1000 : 0;
     const liveDuration = startedAt ? formatDuration(Date.now() - startedAt) : '未提供';
+    // 「热度」这一行同样按平台改口：抖音 / 快手给的数字就是在看人数。
+    const onlineLabel = AUDIENCE_LABEL[session.platform] || '人气';
+    const viewers = Number(detail.viewers) || 0;
+    const viewersRow = viewers > 0
+      ? `<div><span>看过</span><b>${formatOnline(viewers)}</b></div>`
+      : '';
     openModal({
       title: '房间信息',
       width: 520,
@@ -2467,7 +2492,8 @@ export function renderRoom(ctx, params = {}) {
           <div><span>房间号</span><b>${escapeHtml(session.roomId)}</b></div>
           <div><span>主播</span><b>${escapeHtml(detail.user_name || '')}</b></div>
           <div><span>分区</span><b>${escapeHtml(detail.area || '未提供')}</b></div>
-          <div><span>人气</span><b>${formatOnline(detail.online)}</b></div>
+          <div><span>${onlineLabel}</span><b>${formatOnline(detail.online)}</b></div>
+          ${viewersRow}
           <div><span>状态</span><b>${detail.live ? '直播中' : '未开播'}</b></div>
           <div><span>已直播</span><b>${escapeHtml(liveDuration)}</b></div>
           <div><span>直播流</span><b>${session.lines.length} 条线路 / ${session.qualities.length} 档清晰度</b></div>

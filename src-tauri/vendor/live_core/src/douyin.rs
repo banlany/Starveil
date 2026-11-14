@@ -422,11 +422,7 @@ fn parse_partition_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> 
         let online = room
             .get("room_view_stats")
             .and_then(|stats| stats.get("display_value"))
-            .map(|value| match value {
-                Value::Number(number) => number.as_u64().unwrap_or(0),
-                Value::String(text) => text.parse().unwrap_or(0),
-                _ => 0,
-            })
+            .map(number_of)
             .unwrap_or(0);
         items.push(LiveRoomItem {
             platform: Platform::Douyin,
@@ -452,6 +448,15 @@ fn text_of(value: &Value, key: &str) -> String {
         Some(Value::String(text)) => text.clone(),
         Some(Value::Number(number)) => number.to_string(),
         _ => String::new(),
+    }
+}
+
+/// 人数类字段（在看人数）两种类型都认：抖音在不同接口里回数字或数字字符串。
+fn number_of(value: &Value) -> u64 {
+    match value {
+        Value::Number(number) => number.as_u64().unwrap_or(0),
+        Value::String(text) => text.trim().parse().unwrap_or(0),
+        _ => 0,
     }
 }
 
@@ -510,11 +515,7 @@ fn parse_search_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> {
                 room.get("room_view_stats")
                     .and_then(|stats| stats.get("display_value"))
             })
-            .map(|value| match value {
-                Value::Number(number) => number.as_u64().unwrap_or(0),
-                Value::String(text) => text.parse().unwrap_or(0),
-                _ => 0,
-            })
+            .map(number_of)
             .unwrap_or(0);
         items.push(LiveRoomItem {
             platform: Platform::Douyin,
@@ -643,13 +644,16 @@ impl LiveSite for DouyinSite {
             return Err(LiveError::protocol("抖音返回的房间数据不完整（没有主播或标题）"));
         }
 
+        // 这个数字是「在看人数」（`user_count`，退到 `room_view_stats.display_value`），
+        // 不是 B 站那种人气值：前端按平台把它写成「在看」。
         let online = room
             .get("user_count")
-            .and_then(Value::as_u64)
+            .map(number_of)
+            .filter(|count| *count > 0)
             .or_else(|| {
                 room.get("room_view_stats")
                     .and_then(|stats| stats.get("display_value"))
-                    .and_then(Value::as_u64)
+                    .map(number_of)
             })
             .unwrap_or(0);
 
@@ -1117,6 +1121,18 @@ mod tests {
     fn 数字字段也能取文本() {
         let value = serde_json::json!({"id": 123});
         assert_eq!(text_of(&value, "id"), "123");
+    }
+
+    #[test]
+    fn 在看人数数字与字符串都认() {
+        // `user_count` / `room_view_stats.display_value` 在不同接口里类型不统一，
+        // 解析不到就只剩 0，界面上「在看」整格都不会画。
+        assert_eq!(number_of(&serde_json::json!(2345)), 2345);
+        assert_eq!(number_of(&serde_json::json!("6789")), 6789);
+        assert_eq!(number_of(&serde_json::json!(" 12 ")), 12);
+        // 带单位的串（"1.2万"）解析不出来，宁可当 0 也别画出个错数字。
+        assert_eq!(number_of(&serde_json::json!("1.2万")), 0);
+        assert_eq!(number_of(&Value::Null), 0);
     }
 
     #[test]
