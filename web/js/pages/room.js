@@ -42,6 +42,16 @@ const REFRESH_INFO_INTERVAL = 5 * 60 * 1000;
 // 刚插进列表就要被定时器删掉，只会闪一下，反而像出错。
 const SC_BACKFILL_MIN_MS = 10_000;
 
+// 浮动卡「时长均衡化」：B 站的 SC 停留时长按金额算，30 元就有一分钟、贵的能挂十几分钟。
+// 打开均衡化后压进 [5s, 上限] 区间——便宜的别赖着不走，贵的也别一屏霸占到底。
+// 只影响左下角悬浮层；SC 页签的「正在显示」仍按平台给的到期时间。
+const SC_FLOAT_MIN_MS = 5_000;
+// 平台没给 `end_time` 时的兜底停留时间。
+const SC_FLOAT_FALLBACK_MS = 10_000;
+// 均衡化上限只给两档，默认 20 秒（15 秒更利落，20 秒留得下读完一段话）。
+const SC_FLOAT_MAX_CHOICES = [[15, '15 秒'], [20, '20 秒']];
+const SC_FLOAT_MAX_DEFAULT = 20;
+
 // 直播间右侧「设置」页签里的数值项都用预设值下拉，档位表来自弹幕层
 // （DANMAKU_PRESETS），和设置页读的是同一份，不会出现两边档位对不上。
 const CS_PRESETS = DANMAKU_PRESETS;
@@ -231,6 +241,8 @@ export function renderRoom(ctx, params = {}) {
     // 历史条目可能上百条，和当前 SC 同屏会互相挤占，所以一次只渲染一个列表。
     scView: 'active',
     scTimers: new Map(),
+    // 悬浮层撤下的定时器（和上面按平台到期时间删列表的定时器不是一回事）。
+    scFloatTimers: new Map(),
     scSweep: 0,
     followRefreshing: false,
     dedupe: new Map(),
@@ -568,6 +580,7 @@ export function renderRoom(ctx, params = {}) {
   function removeScMessage(entry, reason = 'expired') {
     if (!session.scMessages.includes(entry)) return;
     clearScTimer(entry);
+    clearScFloatTimer(entry);
     session.scMessages = session.scMessages.filter((item) => item !== entry);
     session.scHistory.unshift({ ...entry, endedAt: Date.now(), reason });
     if (session.scHistory.length > 200) session.scHistory.pop();
@@ -591,6 +604,50 @@ export function renderRoom(ctx, params = {}) {
     );
   }
 
+  function clearScFloatTimer(entry) {
+    const timer = session.scFloatTimers.get(entry);
+    if (timer) clearTimeout(timer);
+    session.scFloatTimers.delete(entry);
+  }
+
+  /// 一张浮动卡该挂多久（毫秒）。关掉均衡化就返回 `0`（不额外限制，交给
+  /// 平台的到期时间与「到期自动消失」开关），打开则压进 [5s, 上限]。
+  function scFloatLifetime(sc, now) {
+    if (state.settings.player.superChatBalance === false) return 0;
+    const end = Number(sc?.end_time) || 0;
+    const raw = end > 0 ? end * 1000 - now : SC_FLOAT_FALLBACK_MS;
+    const max = Number(state.settings.player.superChatMax) || SC_FLOAT_MAX_DEFAULT;
+    return Math.min(Math.max(raw, SC_FLOAT_MIN_MS), max * 1000);
+  }
+
+  /// 排上「从悬浮层撤下」的时间点。只动悬浮层：SC 页签的「正在显示」
+  /// 仍按 `scheduleScRemoval` 的平台到期时间走，缩短后也不会从列表里消失。
+  function scheduleScFloatHide(entry) {
+    clearScFloatTimer(entry);
+    const lifetime = entry.sc && !entry.historical ? scFloatLifetime(entry.sc, Date.now()) : 0;
+    if (!lifetime) {
+      // 均衡化关掉 / 不是 SC / 进房快照：不额外限制，回到平台的到期时间。
+      // 但已经过了平台到期时间的（只有「到期自动消失」关着时才会还留在列表里）
+      // 保持撤下，别因为一次切换把一屏旧卡全翻出来。
+      const end = Number(entry.sc?.end_time) || 0;
+      if (end > 0 && end * 1000 <= Date.now()) return;
+      entry.floatUntil = 0;
+      return;
+    }
+    // 已经撤下的别因为改设置又冒出来：`floatUntil` 到期后仍留着过去的时间，
+    // 这里遇到就跳过；清 0 反而等于「不限制」，下一次重画又会把它画回来。
+    if (entry.floatUntil && entry.floatUntil <= Date.now()) return;
+    const until = Date.now() + lifetime;
+    entry.floatUntil = until;
+    session.scFloatTimers.set(
+      entry,
+      setTimeout(() => {
+        session.scFloatTimers.delete(entry);
+        renderScOverlay();
+      }, Math.min(lifetime, 24 * 60 * 60 * 1000))
+    );
+  }
+
   function purgeExpiredSc() {
     if (!state.settings.player.superChatAutoRemove) return;
     const now = Date.now();
@@ -606,6 +663,8 @@ export function renderRoom(ctx, params = {}) {
   /// 同时挂着的 SC 都列出来（以前只画最后 3 条），折叠后一条才一行高，占不了多少地方。
   /// 关掉折叠就直接展开正文，代价是卡多了会顶到屏幕上方（超出部分裁掉最早的）。
   /// 进房补的历史 SC 不进来（`historical`），否则一进直播间就糊一片。
+  /// 均衡化开启时每条只挂 `floatUntil` 那么久（见 scheduleScFloatHide），
+  /// 到点后这里就把它漏掉——条目本身还留在 SC 页签的「正在显示」里。
   function renderScOverlay() {
     const layer = $('sc-float-layer');
     if (!layer) return;
@@ -615,7 +674,10 @@ export function renderRoom(ctx, params = {}) {
     if (!enabled) return;
     // 老设置里没有这个键：缺省按折叠处理，别让老用户升级后突然糊一屏。
     const fold = state.settings.player.superChatFold !== false;
-    const active = session.scMessages.filter((entry) => !entry.historical);
+    const now = Date.now();
+    const active = session.scMessages.filter(
+      (entry) => !entry.historical && (!entry.floatUntil || entry.floatUntil > now)
+    );
     // DOM 倒着放：CSS 是 `column-reverse`，最新的排在最下面，超出高度时老的先被裁掉。
     for (const entry of [...active].reverse()) {
       const { top, bottom } = scTierColors(entry.sc);
@@ -695,6 +757,7 @@ export function renderRoom(ctx, params = {}) {
       const counter = $('sc-count');
       if (counter) counter.textContent = String(session.scMessages.length);
       scheduleScRemoval(entry);
+      scheduleScFloatHide(entry);
       renderScOverlay();
       if (session.tab === 'sc') {
         renderChatTab();
@@ -1075,8 +1138,9 @@ export function renderRoom(ctx, params = {}) {
     /// 模板里调 picker() 时顺手登记一份选项，绑定阶段照着同一份走，
     /// 避免「模板里加了一项、绑定忘了写」这种只有点开才发现的问题。
     const pickers = [];
-    const picker = (id, key, choices, numeric = true) => {
-      pickers.push({ id, key, choices, numeric });
+    // `scope`：值写回哪一份设置。弹幕项走 `danmaku`，SC 这类播放项走 `player`。
+    const picker = (id, key, choices, numeric = true, scope = 'danmaku') => {
+      pickers.push({ id, key, choices, numeric, scope });
       const current = choices.find((item) => item.selected) || choices[0];
       return `<button type="button" class="chat-setting-select" id="${id}" data-value="${escapeHtml(String(current.value))}" aria-haspopup="menu"><span class="chat-setting-value">${escapeHtml(current.label)}</span>${icon('chevronDown', 13)}</button>`;
     };
@@ -1115,8 +1179,10 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>到期自动消失</span><button class="switch" id="cs-sc-auto" aria-checked="${state.settings.player.superChatAutoRemove}"></button></div>
         <div class="chat-setting-row"><span>左下角浮动显示</span><button class="switch" id="cs-sc-float" aria-checked="${state.settings.player.superChatOverlay}"></button></div>
         <div class="chat-setting-row"><span>浮动卡折叠</span><button class="switch" id="cs-sc-fold" aria-checked="${state.settings.player.superChatFold !== false}"></button></div>
+        <div class="chat-setting-row"><span>浮动时长均衡</span><button class="switch" id="cs-sc-balance" aria-checked="${state.settings.player.superChatBalance !== false}"></button></div>
+        <div class="chat-setting-row"><span>最长停留</span>${picker('cs-sc-max', 'superChatMax', fixedChoices(SC_FLOAT_MAX_CHOICES, state.settings.player.superChatMax || SC_FLOAT_MAX_DEFAULT), true, 'player')}</div>
       </div>
-      <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。切换性能档位会重建渲染器，当前屏上的弹幕会被清掉。</div>`;
+      <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。切换性能档位会重建渲染器，当前屏上的弹幕会被清掉。SC 浮动卡开着「浮动时长均衡」时按金额压到 5 秒～上限；关掉则完全按平台给的到期时间。SC 页签的「正在显示」两种情况下都按平台时间。</div>`;
     target.appendChild(wrap);
 
     const bindSwitch = (id, key) => {
@@ -1130,9 +1196,15 @@ export function renderRoom(ctx, params = {}) {
     // 数值项全部自绘：点按钮弹 openMenu，选完把值写回按钮文字 + setConfig。
     // 按钮上的 data-value 是唯一真相（菜单项只负责显示勾选态），
     // 这样再次点开时高亮的就是当前值，不用回头读 config。
-    for (const { id, key, choices, numeric } of pickers) {
+    for (const { id, key, choices, numeric, scope } of pickers) {
       const button = wrap.querySelector(`#${id}`);
       const label = button.querySelector('.chat-setting-value');
+      // 数值项的转换和写入在菜单回调里做一次，两个 scope 只在这里分岔。
+      const write = (raw) => {
+        const value = numeric ? Number(raw) : raw;
+        if (scope === 'player') setPlayerConfig(key, value);
+        else setConfig(key, value);
+      };
       button.addEventListener('click', () => {
         const value = numeric ? Number(button.dataset.value) : button.dataset.value;
         openMenu(
@@ -1143,7 +1215,7 @@ export function renderRoom(ctx, params = {}) {
             onClick: () => {
               button.dataset.value = String(item.value);
               label.textContent = item.label;
-              setConfig(key, numeric ? Number(item.value) : item.value);
+              write(item.value);
             },
           }))
         );
@@ -1172,6 +1244,7 @@ export function renderRoom(ctx, params = {}) {
     bindPlayerSwitch('cs-sc-auto', 'superChatAutoRemove');
     bindPlayerSwitch('cs-sc-float', 'superChatOverlay');
     bindPlayerSwitch('cs-sc-fold', 'superChatFold');
+    bindPlayerSwitch('cs-sc-balance', 'superChatBalance');
   }
 
   function setPlayerConfig(key, value) {
@@ -1184,6 +1257,11 @@ export function renderRoom(ctx, params = {}) {
       }
     }
     if (key === 'superChatOverlay' || key === 'superChatFold') renderScOverlay();
+    // 时长这两项要重排屏上每条的撤下时间：刚打开均衡化时，正在挂的贵 SC 也要立刻收。
+    if (key === 'superChatBalance' || key === 'superChatMax') {
+      for (const entry of session.scMessages) scheduleScFloatHide(entry);
+      renderScOverlay();
+    }
   }
 
   function setConfig(key, value) {
@@ -3719,6 +3797,8 @@ export function renderRoom(ctx, params = {}) {
     clearTimeout(session.renewTimer);
     for (const timer of session.scTimers.values()) clearTimeout(timer);
     session.scTimers.clear();
+    for (const timer of session.scFloatTimers.values()) clearTimeout(timer);
+    session.scFloatTimers.clear();
     clearInterval(session.scSweep);
     if (session.pipWatch) {
       clearInterval(session.pipWatch);

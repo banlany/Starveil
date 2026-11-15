@@ -92,6 +92,11 @@ export const DEFAULT_SETTINGS = {
     superChatAutoRemove: true,
     // 悬浮层是否折叠成一行：关掉就直接显示正文（卡多的时候会占地方）。
     superChatFold: true,
+    // 浮动卡停留时长是否「均衡化」：开 → 按金额压进 [5s, superChatMax]；
+    // 关 → 完全按平台给的到期时间（B 站 30 元的 SC 也能挂一分钟）。
+    superChatBalance: true,
+    // 均衡化时的上限（秒）。只有 15 / 20 两档。
+    superChatMax: 20,
   },
   live: {
     // 「进入直播间自动全屏」只有一份：`player.autoFullscreen`。
