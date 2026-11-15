@@ -443,7 +443,13 @@ export function renderRoom(ctx, params = {}) {
         (document.fullscreenElement ||
           page.classList.contains('is-theater') ||
           (!video.paused && !session.chatCollapsed));
-      if (canHide && !document.querySelector('.menu-overlay:not(.closing)')) {
+      // 菜单或弹窗开着时不收：全屏下「弹幕与 SC 设置」是弹窗形式，
+      // 收起后 `ui-idle` 会把光标一起藏掉（cursor: none），看着像点不动。
+      if (
+        canHide &&
+        !document.querySelector('.menu-overlay:not(.closing)') &&
+        !document.querySelector('.modal-overlay')
+      ) {
         page.classList.add('ui-idle');
       }
     }, 2800);
@@ -3749,7 +3755,11 @@ export function renderRoom(ctx, params = {}) {
     wake();
     if (active) {
       setTimeout(() => {
-        if (document.fullscreenElement && !document.querySelector('.menu-overlay:not(.closing)')) {
+        if (
+          document.fullscreenElement &&
+          !document.querySelector('.menu-overlay:not(.closing)') &&
+          !document.querySelector('.modal-overlay')
+        ) {
           page.classList.add('ui-idle');
         }
       }, 3000);

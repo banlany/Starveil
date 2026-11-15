@@ -156,6 +156,18 @@ function portalRoot() {
   return document.getElementById('overlay-root');
 }
 
+/// 菜单的挂载点：有弹窗时挂进最上层那个弹窗（否则才挂到页面里）。
+///
+/// 菜单层 `.menu-overlay` 的 z-index 是 2500、弹窗层是 3000，菜单直接挂到
+/// 页面根节点上就画在弹窗遮罩**后面**——看着像「点了没反应」。
+/// 全屏时聊天栏是隐藏的，「弹幕与 SC 设置」只能从控制条齿轮打开（弹窗形式），
+/// 于是那几个下拉框在 Windows 全屏下全部点不开；窗口模式下从聊天「设置」页签
+/// 打开的是同一份面板、但没有弹窗，所以看着正常。
+function menuRoot() {
+  const modals = document.querySelectorAll('.modal-overlay');
+  return modals.length ? modals[modals.length - 1] : portalRoot();
+}
+
 export function openModal({ title = '', subtitle = '', body, actions = [], width = 460, className = '', onClose }) {
   const root = portalRoot();
   const overlay = document.createElement('div');
@@ -262,7 +274,8 @@ export function promptDialog({ title = '输入', text = '', placeholder = '', va
 
 export function openMenu(anchor, items, { align = 'end', placement = 'bottom', gap = 6 } = {}) {
   const rect = anchor.getBoundingClientRect();
-  const root = portalRoot();
+  // 弹窗里的下拉要挂进弹窗，否则会被弹窗遮罩盖住（见 menuRoot）。
+  const root = menuRoot();
   const overlay = document.createElement('div');
   overlay.className = 'menu-overlay';
   const menu = document.createElement('div');

@@ -954,6 +954,9 @@ textarea.input {
   padding: 24px;
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease);
+  /* 全屏时 `.ui-idle` 会把整页光标藏掉（cursor: none）；弹窗里必须能看见光标，
+     否则点下拉框全靠猜。 */
+  cursor: auto;
 }
 
 .modal-overlay.show {
