@@ -90,7 +90,8 @@ export const DEFAULT_SETTINGS = {
     forceHttps: true,
     superChatOverlay: false,
     superChatAutoRemove: true,
-    // 悬浮层是否折叠成一行：关掉就直接显示正文（卡多的时候会占地方）。
+    // 悬浮层新卡的**默认状态**：开 → 进来先折成一行，关 → 进来直接展开正文。
+    // 两种状态下每张卡都能点头部来回切换（这里只决定第一眼看到的样子）。
     superChatFold: true,
     // 浮动卡停留时长是否「均衡化」：开 → 按金额压进 [5s, superChatMax]；
     // 关 → 完全按平台给的到期时间（B 站 30 元的 SC 也能挂一分钟）。

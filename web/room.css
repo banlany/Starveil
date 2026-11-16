@@ -935,15 +935,7 @@ body.is-resizing-chat .room-chat {
   transform: rotate(180deg);
 }
 
-/* 关掉「浮动卡折叠」时头部只是标题栏，点击不该有展开反馈。 */
-.sc-float-card.no-fold .sc-float-head {
-  cursor: default;
-}
-
-.sc-float-card.no-fold .sc-float-head:hover {
-  background: none;
-}
-
+/* 每张卡都能点头部来回切（「浮动卡默认折叠」只决定进来时是哪种状态）。 */
 .sc-float-text {
   margin-top: 0;
   padding: 6px 8px 7px;
