@@ -156,7 +156,7 @@ export function renderRoom(ctx, params = {}) {
           </div>
           <div class="chat-head-actions">
             <button class="icon-btn" id="chat-follow" title="关注">${icon('follow', 17)}</button>
-            <button class="icon-btn" id="chat-collapse" title="收起聊天区">${icon('chevron', 17)}</button>
+            <button class="icon-btn" id="chat-collapse" title="收起聊天区"><span class="dir-landscape">${icon('chevron', 17)}</span><span class="dir-portrait">${icon('chevronDown', 17)}</span></button>
           </div>
         </div>
         <div class="chat-tabs" id="chat-tabs">
@@ -183,7 +183,7 @@ export function renderRoom(ctx, params = {}) {
         <button class="footer-action" id="footer-share">${icon('share', 17)}<span>分享</span></button>
       </div>
     </footer>
-    <button class="chat-expand hidden" id="chat-expand" title="展开聊天区">${icon('back', 18)}</button>`;
+    <button class="chat-expand hidden" id="chat-expand" title="展开聊天区"><span class="dir-landscape">${icon('back', 18)}</span><span class="dir-portrait">${icon('chevronUp', 16)}</span><span class="ce-label">聊天</span></button>`;
 
   const $ = (id) => page.querySelector(`#${id}`);
   const stage = $('stage');
@@ -1414,16 +1414,67 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  // ------------------------------------------------------------ 竖屏画面尺寸
+
+  /// 手机竖屏：舞台高度按**视频真实比例**算，不再用 16:9 死框。
+  ///
+  /// 竖屏直播（9:16）以前被 42vh 卡住，画面只占屏宽的一小条、两侧一大片黑；
+  /// 横屏直播也常在宽框里上下留黑。这里把「按宽度撑满应有的高度」和「可用高度」
+  /// 取小值量给 `.stage`：能贴到边就贴到边，实在放不下才在两侧留一点。
+  /// 两侧露出来的地方铺的是 `.stage-bg`（封面模糊），不是纯黑。
+  ///
+  /// 聊天区没折叠时给它留的高度：常规 220，矮屏按 35% 收着留。
+  /// 只量高度、宽度始终 100%：`.room-main` 的高度由 flex 决定、不随 stage 变，
+  /// 所以不存在「量高度 → 改布局 → 再量」的循环。
+  const MOBILE_CHAT_RESERVE = 220;
+
+  function applyStageSize() {
+    if (!IS_MOBILE) return;
+    // 剧场（CSS 全屏）里 stage 是 100vw/100vh，别让这里的像素值掺和进去。
+    if (page.classList.contains('is-theater') || document.fullscreenElement) {
+      page.classList.remove('stage-sized');
+      return;
+    }
+    const vw = video.videoWidth || videoB.videoWidth || 0;
+    const vh = video.videoHeight || videoB.videoHeight || 0;
+    // 横屏手机不需要这套：那边是左右分栏，视频自然撑满。
+    if (!vw || !vh || !portraitQuery.matches) {
+      page.classList.remove('stage-sized');
+      return;
+    }
+    const box = stage.parentElement;
+    const boxW = box.clientWidth;
+    const boxH = box.clientHeight;
+    if (!boxW || !boxH) return;
+    const reserve = session.chatCollapsed
+      ? 0
+      : Math.min(MOBILE_CHAT_RESERVE, Math.round(boxH * 0.35));
+    const availH = Math.max(120, boxH - reserve);
+    // 按宽度撑满时的高度 vs 剩余高度，谁小听谁的。
+    const height = Math.min(boxW * (vh / vw), availH);
+    page.classList.add('stage-sized');
+    // 竖屏视频折叠后基本就是一整屏，贴顶比居中顺眼（居中会在额头上留一条黑）。
+    page.classList.toggle('is-portrait-video', vh > vw);
+    page.style.setProperty('--stage-h', `${Math.round(height)}px`);
+  }
+
+  /// 舞台尺寸和控制条密度是一对：画面宽高变了，能塞下的按钮也跟着变。
+  function relayoutPlayer() {
+    applyStageSize();
+    applyControlDensity();
+  }
+
   function setChatCollapsed(collapsed) {
     session.chatCollapsed = collapsed;
     chat.classList.toggle('hidden', collapsed);
+    page.classList.toggle('chat-folded', collapsed);
     $('chat-expand').classList.toggle('hidden', !collapsed);
     if (!collapsed) {
       page.classList.remove('ui-idle');
       renderChatTab();
     }
-    // 收起/展开聊天栏会改画面宽度（横屏与平板），控制条放不放得下要重新算。
-    requestAnimationFrame(applyControlDensity);
+    // 收起/展开聊天栏会改画面宽度（横屏与平板）或高度（竖屏），重新量一次。
+    requestAnimationFrame(relayoutPlayer);
   }
 
   // ------------------------------------------------------------ 聊天栏宽度
@@ -2036,7 +2087,8 @@ export function renderRoom(ctx, params = {}) {
     api.setScreenOrientation(target).catch(() => {});
     page.classList.remove('ui-idle');
     wake();
-    requestAnimationFrame(applyControlDensity);
+    // 进出全屏都会改可用空间（全屏时 stage 由 CSS 拉满，不再用这里的像素高度）。
+    requestAnimationFrame(relayoutPlayer);
   }
 
   /// 舞台上「双击切全屏」要跳过的区域。
@@ -2164,9 +2216,9 @@ export function renderRoom(ctx, params = {}) {
     session.playStartedAt = Date.now();
     session.lastProgressTime = video.currentTime;
     session.lastProgressAt = Date.now();
-    // 竖屏直播（9:16）和横屏直播的容器高度不一样：竖屏让视频区更高一些，
-    // 横屏保持 16:9，避免宽画面上下留出两条大黑边。
-    page.classList.toggle('is-portrait-video', video.videoHeight > video.videoWidth);
+    // 第一帧出来才知道真实分辨率：竖屏直播按等比高度撑开（见 applyStageSize），
+    // 横屏仍是 16:9，免得宽画面上下留出两条大黑边。
+    relayoutPlayer();
     // 真正出画了才开始计观看时长。
     startWatchClock();
   });
@@ -3790,10 +3842,14 @@ export function renderRoom(ctx, params = {}) {
   updateVolumeIcon();
   updatePlayIcon();
   // 控制条要等真正有了宽度才能量出放不放得下：插进 DOM 后按 rAF 量一次，
-  // 之后横竖屏切换、窗口缩放都重量一次。
-  const onControlResize = () => applyControlDensity();
+  // 之后横竖屏切换、窗口缩放都重量一次。画面高度也一并跟着重算（竖屏那套）。
+  const onControlResize = () => relayoutPlayer();
   window.addEventListener('resize', onControlResize);
   portraitQuery.addEventListener?.('change', onControlResize);
+  // 切清晰度会换分辨率，比例可能从 9:16 变成 16:9（或反过来），重新量一次。
+  const onVideoResize = () => relayoutPlayer();
+  video.addEventListener('resize', onVideoResize);
+  videoB.addEventListener('resize', onVideoResize);
   // 安卓返回键退全屏（app.js 的 handleAndroidBack 统一处理按键，这里只负责收布局）。
   const onExitTheater = () => {
     if (page.classList.contains('is-theater')) setTheater(false);

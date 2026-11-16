@@ -41,6 +41,8 @@ const RUNTIME_VARS = new Set([
   '--safe-right',
   '--tab-underline-inset',
   '--mask-solid',
+  // room.js 的 applyStageSize 按视频比例量出来的竖屏舞台高度
+  '--stage-h',
 ]);
 
 const problems = [];

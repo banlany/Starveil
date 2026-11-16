@@ -305,9 +305,12 @@ html.is-mobile .chat-resizer {
 }
 
 @media (orientation: portrait) {
-  /* 竖屏：视频在上、聊天在下。16:9 的视频固定高度后，剩余空间全部给弹幕与聊天。 */
+  /* 竖屏：视频在上、聊天在下。
+     高度不再死守 16:9：room.js 的 applyStageSize() 会按视频真实比例量一个
+     `--stage-h`（撑满宽度应有高度 vs 剩余高度取小），首帧之前仍用 16:9 兜底。 */
   html.is-mobile .room-main {
     flex-direction: column;
+    background: var(--media-bg);
   }
 
   html.is-mobile .stage {
@@ -318,11 +321,47 @@ html.is-mobile .chat-resizer {
     max-height: 52vh;
   }
 
+  html.is-mobile .room-page.stage-sized .stage {
+    aspect-ratio: auto;
+    max-height: none;
+    height: var(--stage-h);
+  }
+
+  /* 聊天区向下收走后画面独自占一屏，垂直居中比贴顶顺眼（下面会空出一条底色）。 */
+  html.is-mobile .room-page.chat-folded .room-main {
+    justify-content: center;
+  }
+
+  /* 竖屏直播本身就快占满一屏，折叠后贴顶——居中会在额头上多留一条黑。 */
+  html.is-mobile .room-page.chat-folded.is-portrait-video .room-main {
+    justify-content: flex-start;
+  }
+
   html.is-mobile .room-chat {
     width: 100%;
     flex: 1 1 auto;
     border-left: none;
     border-top: 1px solid var(--room-line);
+  }
+
+  /* 竖屏的收起/展开是「向下折」，按钮上的箭头也跟着换成上下方向。
+     折叠后靠底部中间这颗「向上箭头 + 聊天」把手拉回来，别再藏到屏幕边上。 */
+  html.is-mobile .chat-expand {
+    right: 50%;
+    top: auto;
+    bottom: calc(var(--safe-bottom) + 60px);
+    transform: translateX(50%);
+    width: auto;
+    min-width: 72px;
+    height: 34px;
+    padding: 0 12px;
+    gap: 4px;
+  }
+
+  html.is-mobile .chat-expand .ce-label {
+    display: inline;
+    font-size: 12px;
+    font-weight: 600;
   }
 
   /* 竖屏下顶部信息压一行，别把视频挤下去。 */
@@ -416,15 +455,6 @@ html.is-mobile .chat-resizer {
     margin: 0;
     opacity: 1;
     transform: rotate(-90deg);
-  }
-}
-
-/* 竖屏视频（9:16 这类直播）：视频按剩余空间自适应，不被 16:9 死锁。
-   由 room.js 在 playing 时按 videoWidth/videoHeight 打上 is-portrait-video。 */
-@media (orientation: portrait) {
-  html.is-mobile .room-page.is-portrait-video .stage {
-    aspect-ratio: auto;
-    height: 42vh;
   }
 }
 

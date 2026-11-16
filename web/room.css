@@ -1585,6 +1585,35 @@ body.is-resizing-chat .room-chat {
   background: var(--room-float-hover-bg);
 }
 
+/* 收起 / 展开聊天的箭头按屏幕方向给两套：桌面与横屏是「向右 / 向左」，
+   手机竖屏是「向下 / 向上」——那边聊天区是在下方，箭头方向得跟得上。
+   两个 span 都渲染出来，由 CSS 挑一个显示，免得旋转屏幕时还要改 innerHTML。 */
+.dir-landscape {
+  display: flex;
+  align-items: center;
+}
+
+.dir-portrait {
+  display: none;
+}
+
+/* 竖屏折叠后那颗按钮才带「聊天」两个字：桌面/横屏是贴在侧边的一条窄栏，
+   加了字反而挡画面；竖屏它是屏幕底部唯一的入口，写清楚更好找。 */
+.ce-label {
+  display: none;
+}
+
+@media (orientation: portrait) {
+  html.is-mobile .dir-landscape {
+    display: none;
+  }
+
+  html.is-mobile .dir-portrait {
+    display: flex;
+    align-items: center;
+  }
+}
+
 /* ------------------------------------------------------------ 响应式 */
 
 @media (max-width: 1180px) {
