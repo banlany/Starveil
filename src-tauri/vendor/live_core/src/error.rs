@@ -44,6 +44,12 @@ impl LiveError {
     pub fn parse(message: impl Into<String>) -> Self {
         LiveError::Parse(message.into())
     }
+
+    /// 平台明确说了「你请求太快 / 被拦了」时用这个：文案里会带上平台的原文，
+    /// 比统一写成「解析失败」有用得多。
+    pub fn risk_control(message: impl Into<String>) -> Self {
+        LiveError::RiskControl(message.into())
+    }
 }
 
 impl From<reqwest::Error> for LiveError {

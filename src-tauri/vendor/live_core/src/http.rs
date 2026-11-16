@@ -101,6 +101,13 @@ impl HttpSession {
             raw.to_vec()
         };
         let body = String::from_utf8_lossy(&bytes);
+        // 抖音 / 快手被限流时就是「HTTP 200 + 0 字节」：直接交给 serde 只会得到
+        // 一句 `EOF while parsing a value at line 1 column 0`，用户完全看不懂。
+        if body.trim().is_empty() {
+            return Err(LiveError::risk_control(format!(
+                "{url} 返回了空内容（HTTP 200 但没有任何数据，通常是短时限流）"
+            )));
+        }
         serde_json::from_str(&body).map_err(|error| {
             let preview: String = body.chars().take(120).collect();
             LiveError::parse(format!("{url} 返回的不是 JSON（{error}）：{preview}"))

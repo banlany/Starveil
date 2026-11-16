@@ -148,6 +148,27 @@ fn extract_state(html: &str) -> Option<Value> {
     None
 }
 
+/// 快手限流时 HTTP 仍是 200，只把原因塞在 `playList[0].errorType` 里，例如
+/// `{ "type": 2, "title": "请求过快，请稍后重试" }`，同时作者、标题、流地址全空。
+///
+/// 认不出这一段，用户看到的就是「未开播、没有标题和主播 id」——把平台限流
+/// 说成房间不存在，既误导又没法自救。
+fn check_rate_limit(room: &Value) -> Result<(), LiveError> {
+    let Some(error) = room.get("errorType").filter(|value| value.is_object()) else {
+        return Ok(());
+    };
+    let kind = error.get("type").and_then(Value::as_i64).unwrap_or(0);
+    if kind == 0 {
+        return Ok(());
+    }
+    let title = text_of(error, "title");
+    Err(LiveError::risk_control(if title.is_empty() {
+        format!("快手返回错误码 {kind}")
+    } else {
+        title
+    }))
+}
+
 /// 把 `playUrls` 里所有码率抽出来。结构可能是数组，也可能是按编码分组的对象，
 /// 所以不写死路径，递归找 `representation` 列表。
 fn collect_representations(node: &Value, out: &mut Vec<(String, i64, String)>) {
@@ -280,7 +301,17 @@ impl LiveSite for KuaishouSite {
             .or_else(|| play_list.iter().find(|entry| entry.is_object()))
             .ok_or_else(|| LiveError::protocol("快手没有返回房间信息"))?;
 
+        // 快手限流时不改 HTTP 状态，也不报错，只在 playList[0] 里放一个
+        // `errorType`：`{ type: 2, title: "请求过快，请稍后重试" }`，其余字段全空。
+        // 不认这个字段的话，界面上只会显示「未开播、没有标题和主播」——把
+        // 「被限流」说成「房间是空的」，用户根本不知道该怎么办。
+        check_rate_limit(first)?;
         let author = first.get("author").cloned().unwrap_or(Value::Null);
+        if text_of(&author, "id").is_empty() && text_of(&author, "name").is_empty() {
+            return Err(LiveError::risk_control(
+                "快手返回的房间数据是空的（通常是短时限流，稍等几秒再进）",
+            ));
+        }
         let live_stream = first.get("liveStream").cloned().unwrap_or(Value::Null);
         let game = first.get("gameInfo").cloned().unwrap_or(Value::Null);
         let stream_id = text_of(&live_stream, "id");
@@ -642,5 +673,26 @@ mod tests {
         assert_eq!(normalize_image("https://a/b/c"), "https://a/b/c.jpg");
         assert_eq!(normalize_image("https://a/b/c.webp"), "https://a/b/c.webp");
         assert_eq!(normalize_image(""), "");
+    }
+
+    #[test]
+    fn 限流条目要报出平台原话而不是当成空房间() {
+        // 真实抓到的形状：作者、流、标题全空，只有 errorType 说明原因。
+        let room = serde_json::json!({
+            "liveStream": {},
+            "author": {},
+            "gameInfo": {},
+            "isLiving": false,
+            "errorType": {"type": 2, "title": "请求过快，请稍后重试", "content": "浏览其他内容"}
+        });
+        let error = check_rate_limit(&room).expect_err("应该报限流");
+        assert!(matches!(error, LiveError::RiskControl(_)), "错误类型要能被 UI 认出来");
+        assert!(error.to_string().contains("请求过快"), "要带上平台原话：{error}");
+
+        // 正常条目（没有 errorType，或 type 为 0）不能被误判。
+        assert!(check_rate_limit(&serde_json::json!({"author": {"id": "3x"}})).is_ok());
+        assert!(
+            check_rate_limit(&serde_json::json!({"errorType": {"type": 0, "title": ""}})).is_ok()
+        );
     }
 }

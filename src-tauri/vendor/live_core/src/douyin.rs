@@ -28,6 +28,18 @@ use std::time::{Duration, Instant};
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 const REFERER: &str = "https://live.douyin.com";
 
+/// 匿名 `ttwid` 的进程内缓存：`(cookie, 取到的时刻)`。
+///
+/// 放在模块级是为了能在「接口回空内容」时作废它重拿一份——被限流或标记的
+/// ttwid 单看字符串和正常的没区别，只能靠请求结果判断。
+static ANON_COOKIE: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+
+fn clear_anonymous_cookie() {
+    if let Ok(mut guard) = ANON_COOKIE.get_or_init(|| Mutex::new(None)).lock() {
+        *guard = None;
+    }
+}
+
 /// 清晰度的展示名与顺序。抖音用 `FULL_HD1` 这类键描述档位。
 ///
 /// 注意这套键**只在没有 SDK 档位表时兜底**：`FULL_HD1` 实际是 1080P，
@@ -62,25 +74,45 @@ impl DouyinSite {
     ///
     /// 抖音的房间/取流接口只认 `ttwid`，登录 Cookie 里未必带它
     /// （用户可能是从别的入口登进来），所以两种情况都保证 ttwid 在里面。
+    ///
+    /// 另外顺手补上首页下发的 `__ac_nonce` / `msToken`：登录 Cookie 里通常
+    /// 没有这两个，而少它们的请求更容易被回 200 + 空 body（看着像「解析失败」）。
+    /// 补的时候要把匿名 cookie 里的 `ttwid` 剔掉，别和登录态那份打架。
     fn cookie(http: &HttpSession) -> Result<String, LiveError> {
         let Some(login) = http.cookie().map(str::trim).filter(|text| !text.is_empty()) else {
             return Self::anonymous_cookie(http);
         };
+        let anon = Self::anonymous_cookie(http).ok();
         if login.to_ascii_lowercase().contains("ttwid=") {
-            return Ok(login.to_string());
+            let extra: String = anon
+                .as_deref()
+                .map(|text| {
+                    text.split(';')
+                        .map(str::trim)
+                        .filter(|pair| {
+                            !pair.is_empty() && !pair.to_ascii_lowercase().starts_with("ttwid=")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .unwrap_or_default();
+            return Ok(if extra.is_empty() {
+                login.to_string()
+            } else {
+                format!("{login}; {extra}")
+            });
         }
-        match Self::anonymous_cookie(http) {
-            Ok(anon) => Ok(format!("{login}; {anon}")),
+        Ok(match anon {
+            Some(anon) => format!("{login}; {anon}"),
             // 拿不到匿名 ttwid 时至少带上登录 Cookie，别让登录态白丢。
-            Err(_) => Ok(login.to_string()),
-        }
+            None => login.to_string(),
+        })
     }
 
     /// 匿名 `ttwid`。抖音要求浏览器先落一个 ttwid 才认后续请求，
     /// 这里拿一次缓存 10 分钟（进程内共享，避免每开一个房间都打页面）。
     fn anonymous_cookie(http: &HttpSession) -> Result<String, LiveError> {
-        static CACHE: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
-        let cache = CACHE.get_or_init(|| Mutex::new(None));
+        let cache = ANON_COOKIE.get_or_init(|| Mutex::new(None));
         if let Ok(guard) = cache.lock()
             && let Some((value, at)) = guard.as_ref()
             && at.elapsed() < Duration::from_secs(600)
@@ -152,10 +184,29 @@ impl DouyinSite {
     }
 
     /// 通过 web_rid（网页房间号）进房。
+    ///
+    /// 第一次用「登录态优先」的 Cookie；如果平台回了空内容或空房间（被限流的
+    /// 典型表现），丢掉匿名缓存、换成纯匿名 `ttwid` 再试一次。登录态被标记时
+    /// 这一步往往能救回来，比直接报错有用。
     fn enter(http: &HttpSession, web_rid: &str) -> Result<Value, LiveError> {
         let cookie = Self::cookie(http)?;
+        match Self::enter_with(http, web_rid, &cookie) {
+            Ok(room) => Ok(room),
+            Err(first) if first.retryable() => {
+                clear_anonymous_cookie();
+                let fallback = Self::anonymous_cookie(http)?;
+                if fallback == cookie {
+                    return Err(first);
+                }
+                Self::enter_with(http, web_rid, &fallback).map_err(|_| first)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn enter_with(http: &HttpSession, web_rid: &str, cookie: &str) -> Result<Value, LiveError> {
         let referer = format!("{REFERER}/{web_rid}");
-        let headers = Self::request_headers(&cookie, &referer);
+        let headers = Self::request_headers(cookie, &referer);
         let borrowed: Vec<(&str, &str)> = headers
             .iter()
             .map(|(key, value)| (*key, value.as_str()))
@@ -183,7 +234,9 @@ impl DouyinSite {
             .and_then(Value::as_array)
             .and_then(|rooms| rooms.first())
             .ok_or_else(|| {
-                LiveError::protocol("抖音没有返回房间数据，可能是房间不存在、未开播或被风控限制")
+                LiveError::risk_control(
+                    "抖音没有返回房间数据，可能是房间不存在、未开播，或者短时限流",
+                )
             })?;
         Ok(room.clone())
     }
@@ -191,7 +244,22 @@ impl DouyinSite {
     /// 通过一次性 room_id（19 位）进房；reflow 接口对已下播的房间也能返回主播信息。
     fn reflow(http: &HttpSession, room_id: &str) -> Result<Value, LiveError> {
         let cookie = Self::cookie(http)?;
-        let headers = Self::request_headers(&cookie, REFERER);
+        match Self::reflow_with(http, room_id, &cookie) {
+            Ok(room) => Ok(room),
+            Err(first) if first.retryable() => {
+                clear_anonymous_cookie();
+                let fallback = Self::anonymous_cookie(http)?;
+                if fallback == cookie {
+                    return Err(first);
+                }
+                Self::reflow_with(http, room_id, &fallback).map_err(|_| first)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn reflow_with(http: &HttpSession, room_id: &str, cookie: &str) -> Result<Value, LiveError> {
+        let headers = Self::request_headers(cookie, REFERER);
         let borrowed: Vec<(&str, &str)> = headers
             .iter()
             .map(|(key, value)| (*key, value.as_str()))
@@ -213,7 +281,9 @@ impl DouyinSite {
             .and_then(|data| data.get("room"))
             .filter(|room| room.is_object())
             .cloned()
-            .ok_or_else(|| LiveError::protocol("抖音没有返回房间数据（reflow 响应为空）"))
+            .ok_or_else(|| {
+                LiveError::risk_control("抖音没有返回房间数据（reflow 响应为空，可能被限流）")
+            })
     }
 
     /// 重新取一份 `stream_url`（带新签名）。有网页房间号就走 enter，
