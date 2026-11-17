@@ -430,31 +430,45 @@ export function renderRoom(ctx, params = {}) {
   chatToBottom.addEventListener('click', () => scrollChatToBottom(true));
   composer.addEventListener('submit', submitDanmaku);
   updateComposer();
-  const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
-  const wake = () => {
+  const IDLE_DELAY = 2800;
+
+  /// 这一轮空闲到底该不该把顶部浮层和底部控制条收起来。
+  ///
+  /// 只问「有没有东西挡着」，跟横竖屏、聊天区折不折叠无关。
+  /// 0.7.3 里这里挂着 `!session.chatCollapsed`：手机竖屏向下折叠后 chatCollapsed
+  /// 恒为 true，画面明明已经独占了整屏，上下两条黑边却再也收不起来。
+  ///
+  /// 暂停时窗口/竖屏里仍然留着——那颗「继续播放」就在控制条上，收掉就找不着了；
+  /// 全屏（桌面 Fullscreen API / 安卓剧场）里点一下画面就能唤回，照收不误，
+  /// 免得暂停在广告画面上时两块黑条常驻。
+  function canAutoHide() {
+    if (volumeWrap.classList.contains('is-open')) return false;
+    // 菜单或弹窗开着时不收：全屏下「弹幕与 SC 设置」是弹窗形式，
+    // 收起后 `ui-idle` 会把光标一起藏掉（cursor: none），看着像点不动。
+    if (document.querySelector('.menu-overlay:not(.closing)')) return false;
+    if (document.querySelector('.modal-overlay')) return false;
+    if (video.paused && !isPlayerFullscreen()) return false;
+    return true;
+  }
+
+  /// 记一次「有操作」：立刻恢复上下控件，再排一次空闲检查。
+  ///
+  /// 折叠/展开、重新出画这些状态变化也必须走这里。只靠鼠标/触摸事件触发的话，
+  /// 上一次排的定时器早在「不该收」的时候空转掉了，之后不碰屏幕就一直不收。
+  /// 注意别把 Event 当参数传进来（`addEventListener` 会塞一个），签名保持无参。
+  function wake() {
     page.classList.remove('ui-idle');
     clearTimeout(session.idleTimer);
     if (session.destroyed) return;
     session.idleTimer = setTimeout(() => {
-      // 全屏（桌面 Fullscreen API / 安卓剧场模式）时聊天栏已隐藏，即使视频正在缓冲
-      // 也要让顶部浮层和底部控制条自动收起，不然暂停在广告画面上就是两块常驻黑条。
-      const canHide =
-        !volumeWrap.classList.contains('is-open') &&
-        (document.fullscreenElement ||
-          page.classList.contains('is-theater') ||
-          (!video.paused && !session.chatCollapsed));
-      // 菜单或弹窗开着时不收：全屏下「弹幕与 SC 设置」是弹窗形式，
-      // 收起后 `ui-idle` 会把光标一起藏掉（cursor: none），看着像点不动。
-      if (
-        canHide &&
-        !document.querySelector('.menu-overlay:not(.closing)') &&
-        !document.querySelector('.modal-overlay')
-      ) {
-        page.classList.add('ui-idle');
-      }
-    }, 2800);
-  };
-  for (const name of stageEvents) page.addEventListener(name, wake, { passive: true });
+      if (canAutoHide()) page.classList.add('ui-idle');
+    }, IDLE_DELAY);
+  }
+
+  // 事件对象不能直接喂给 wake()：它会被当成定时器参数，等于立刻判空闲。
+  const onActivity = () => wake();
+  const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
+  for (const name of stageEvents) page.addEventListener(name, onActivity, { passive: true });
 
   // ------------------------------------------------------------ 弹幕渲染
 
@@ -510,14 +524,13 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
+  /// 只按关键词屏蔽。0.7.4 删掉了「按用户屏蔽」：昵称允许重复、也常改，
+  /// 同名会误伤别人，改个名就能绕过，留着只会让人以为屏蔽坏了。
   function blocked(message) {
     const config = state.settings.danmaku;
     if (!config.block) return false;
     const keywords = String(config.blockKeywords || '').split('\n').map((item) => item.trim()).filter(Boolean);
-    const users = String(config.blockUsers || '').split('\n').map((item) => item.trim()).filter(Boolean);
-    if (keywords.some((keyword) => message.text.includes(keyword))) return true;
-    if (users.some((user) => message.user.includes(user))) return true;
-    return false;
+    return keywords.some((keyword) => message.text.includes(keyword));
   }
 
   function deduped(message) {
@@ -1192,7 +1205,6 @@ export function renderRoom(ctx, params = {}) {
         <h4>屏蔽设置</h4>
         <div class="chat-setting-row"><span>启用屏蔽</span><button class="switch" id="cs-block" aria-checked="${config.block}"></button></div>
         <label class="chat-setting-field"><span>关键词屏蔽</span><textarea class="chat-setting-textarea" id="cs-block-keywords" placeholder="每行一个关键词">${escapeHtml(config.blockKeywords || '')}</textarea></label>
-        <label class="chat-setting-field"><span>用户屏蔽</span><textarea class="chat-setting-textarea" id="cs-block-users" placeholder="每行一个用户名">${escapeHtml(config.blockUsers || '')}</textarea></label>
         <div class="chat-setting-row"><span>重复过滤</span><button class="switch" id="cs-dedupe" aria-checked="${config.dedupe}"></button></div>
         <div class="chat-setting-row"><span>过滤模式</span>${picker('cs-dedupe-mode', 'dedupeMode', fixedChoices([['content', '按内容'], ['user', '按用户'], ['strict', '刷屏严格']], config.dedupeMode), false)}</div>
         <div class="chat-setting-row"><span>过滤窗口</span>${picker('cs-dedupe-window', 'dedupeWindow', presetChoices(CS_PRESETS.dedupeWindow, config.dedupeWindow, (value) => `${value} 秒`))}</div>
@@ -1255,7 +1267,6 @@ export function renderRoom(ctx, params = {}) {
     bindSwitch('cs-stroke', 'stroke');
     bindSwitch('cs-block', 'block');
     bindTextarea('cs-block-keywords', 'blockKeywords');
-    bindTextarea('cs-block-users', 'blockUsers');
     bindSwitch('cs-dedupe', 'dedupe');
     const bindPlayerSwitch = (id, key) => {
       const button = wrap.querySelector(`#${id}`);
@@ -1469,10 +1480,10 @@ export function renderRoom(ctx, params = {}) {
     chat.classList.toggle('hidden', collapsed);
     page.classList.toggle('chat-folded', collapsed);
     $('chat-expand').classList.toggle('hidden', !collapsed);
-    if (!collapsed) {
-      page.classList.remove('ui-idle');
-      renderChatTab();
-    }
+    if (!collapsed) renderChatTab();
+    // 折叠/展开都算一次操作：重排空闲定时器。折叠后画面独享整屏，在播就该
+    // 2.8 秒后把上下控件一起收掉——这正是 0.7.3 里竖屏折叠后一直不收的原因。
+    wake();
     // 收起/展开聊天栏会改画面宽度（横屏与平板）或高度（竖屏），重新量一次。
     requestAnimationFrame(relayoutPlayer);
   }
@@ -2209,6 +2220,9 @@ export function renderRoom(ctx, params = {}) {
   video.addEventListener('playing', () => {
     setHint(null);
     updatePlayIcon();
+    // 暂停时定时器空转过、或者根本没排上：重新出画后重排一次，
+    // 否则「暂停 → 继续」之后上下控件会一直挂在画面上。
+    wake();
     session.failed = false;
     // 出画 = 这一轮重连成功，计数清零；否则几次小抖动累加满 3 次之后就再也不自动重连了。
     session.errorRetries = 0;
@@ -3821,19 +3835,9 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('is-fullscreen', active);
     $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
     $('room-back').title = active ? '退出全屏' : '返回';
-    if (!active) page.classList.remove('ui-idle');
+    // 以前这里另外挂了一个 3 秒的 setTimeout 补收一次，现在 wake() 就是唯一入口：
+    // 它会先清掉旧定时器再按 canAutoHide 收，全屏里暂停也照样收。
     wake();
-    if (active) {
-      setTimeout(() => {
-        if (
-          document.fullscreenElement &&
-          !document.querySelector('.menu-overlay:not(.closing)') &&
-          !document.querySelector('.modal-overlay')
-        ) {
-          page.classList.add('ui-idle');
-        }
-      }, 3000);
-    }
   };
   document.addEventListener('fullscreenchange', onFullscreenChange);
 

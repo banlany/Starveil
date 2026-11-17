@@ -463,7 +463,16 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ------------------------------------------------------------ 空闲隐藏 */
 
-.room-page.ui-idle {
+/* 0.7.4 起窗口/竖屏里也一样自动收起（以前只在全屏或「聊天没折叠且在播」时收），
+   所以光标不能整页藏掉：聊天栏里还得看得见指针。全屏才整页藏，
+   窗口模式只藏画面上的那一块。 */
+.room-page.ui-idle.is-fullscreen,
+.room-page:fullscreen.ui-idle,
+html.is-theater .room-page.ui-idle {
+  cursor: none;
+}
+
+.room-page.ui-idle .stage {
   cursor: none;
 }
 

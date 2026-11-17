@@ -468,7 +468,6 @@ async function exportFollow() {
     settings: state.settings,
     shield: {
       keywords: state.settings.danmaku?.blockKeywords || '',
-      users: state.settings.danmaku?.blockUsers || '',
     },
     history: state.history,
     accounts: collectAccounts(),
@@ -488,12 +487,12 @@ function importFollow(after) {
     try {
       const data = JSON.parse(await file.text());
       // 本页导出的文件把关键词屏蔽单独放在 `shield` 里（沿用 dart 的命名），
-      // importData 只认 settings.danmaku.blockKeywords / blockUsers，这里先搬过去。
+      // importData 只认 settings.danmaku.blockKeywords，这里先搬过去。
+      // `shield.users`（按用户屏蔽）0.7.4 起已删除，老文件里带着也只当没看见。
       if (data.shield) {
         data.settings = data.settings || {};
         data.settings.danmaku = data.settings.danmaku || {};
         if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
-        if (!data.settings.danmaku.blockUsers) data.settings.danmaku.blockUsers = data.shield.users || '';
       }
       // 走和「设置 → 数据同步 → 导入」同一条路（importData），不再自己往
       // localStorage 里塞原文：旧写法既不合并、也不刷新内存里的 state，

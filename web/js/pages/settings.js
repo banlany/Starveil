@@ -50,7 +50,7 @@ import {
 
 // 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
 // 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
-const FALLBACK_VERSION = '0.7.3';
+const FALLBACK_VERSION = '0.7.4';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -586,9 +586,8 @@ function detailSections(key, ctx, repaint) {
         {
           label: '弹幕屏蔽',
           rows: [
-            { type: 'switch', key: 'danmaku.block', title: '启用弹幕屏蔽', desc: '关闭后，关键词和用户屏蔽都会暂时失效' },
+            { type: 'switch', key: 'danmaku.block', title: '启用弹幕屏蔽', desc: '关闭后，关键词屏蔽会暂时失效' },
             { type: 'textarea', key: 'danmaku.blockKeywords', title: '关键词屏蔽', desc: '每行一个关键词，命中后不显示该弹幕', placeholder: '例如：广告\n加群' },
-            { type: 'textarea', key: 'danmaku.blockUsers', title: '用户屏蔽', desc: '每行一个用户名，支持包含匹配', placeholder: '例如：某用户' },
           ],
         },
         {
@@ -1080,9 +1079,10 @@ function paintSync(content, ctx, repaint) {
       app: 'Starveil',
       exportedAt: new Date().toISOString(),
       settings: state.settings,
+      // `shield` 沿用 dart 导出的命名，导入侧（importer.js）认这个键。
+      // 0.7.4 起只剩关键词：按用户屏蔽已删除，users 不再导出。
       shield: {
         keywords: state.settings.danmaku?.blockKeywords || '',
-        users: state.settings.danmaku?.blockUsers || '',
       },
       // 走 store 的读取而不是直接 JSON.parse：localStorage 里的数据可能被
       // 半写入或手工改坏，未捕获的异常会让「导出备份」点了毫无反应。

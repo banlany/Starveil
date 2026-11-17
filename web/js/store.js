@@ -134,7 +134,6 @@ export const DEFAULT_SETTINGS = {
     dedupeStep: 2,
     block: false,
     blockKeywords: '',
-    blockUsers: '',
     safeTop: 8,
     safeBottom: 8,
     perf: 'balanced',
@@ -265,6 +264,10 @@ function loadSettings() {
     settings.player.autoFullscreen = true;
   }
   delete settings.live?.autoFullscreen;
+  // 0.7.4 删掉了「按用户屏蔽」（昵称可重名、可随时改，按昵称匹配误伤又绕得过）。
+  // 老用户落盘里还留着这串名单：不清理的话它会一直跟着备份和同步包一起走，
+  // 对方导入后还是一份改了也没用的死数据。
+  delete settings.danmaku?.blockUsers;
   return settings;
 }
 

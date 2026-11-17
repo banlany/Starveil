@@ -332,11 +332,11 @@ function importDartProfile(data) {
   }
   if (danmaku('RenderEmoji') !== undefined) apply('danmaku.emoji', Boolean(danmaku('RenderEmoji')));
   if (danmaku('Enable') !== undefined) apply('danmaku.enabled', Boolean(danmaku('Enable')));
-  // 关键词/用户屏蔽在 dart 的导出里是顶层 danmuShield，不是嵌在 settings 里。
+  // 关键词屏蔽在 dart 的导出里是顶层 danmuShield，不是嵌在 settings 里。
+  // 同一段里的 `users`（按用户屏蔽）0.7.4 起不再支持，读到也直接丢掉。
   const shield = data.danmuShield || {};
-  if (Array.isArray(shield.keywords) || Array.isArray(shield.users)) {
+  if (Array.isArray(shield.keywords)) {
     apply('danmaku.blockKeywords', (shield.keywords || []).join('\n'));
-    apply('danmaku.blockUsers', (shield.users || []).join('\n'));
   }
   if (Number.isFinite(Number(settings.ScaleMode))) {
     apply('player.scaleMode', SCALE_MODES[Number(settings.ScaleMode)] || 'contain');
@@ -451,6 +451,9 @@ function importBundle(data, options = {}) {
         delete patch[key];
       }
     }
+    // 0.7.4 删掉了「按用户屏蔽」。旧备份与旧同步包里还带着 blockUsers，
+    // 就这么合并进来会成为一份界面上看不见、却会跟着下次同步继续传的字段。
+    if (patch.danmaku && typeof patch.danmaku === 'object') delete patch.danmaku.blockUsers;
     state.settings = merge(clone(state.settings), patch);
     saveSettings();
     settingsCount = Object.keys(patch).length;
