@@ -48,7 +48,7 @@ import {
 } from '../ui.js';
 
 // 兜底版本号，与 tauri.conf.json 一致；运行时优先用 app.getVersion()。
-const FALLBACK_VERSION = '0.7.4';
+const FALLBACK_VERSION = '0.7.5';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
