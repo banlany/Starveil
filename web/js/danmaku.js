@@ -1,33 +1,15 @@
-// 弹幕层：封装 fly-barrage（canvas 渲染 + 虚拟轨道避让），对外只暴露项目需要的接口。
-//
-// 设计要点：
-// 1. **弹幕流与直播流彻底解耦**：库每帧读一次「进度」来算弹幕位置，这个进度由
-//    我们喂进去的时钟源提供。这里用的是**单调墙钟**（createMonotonicClock），
-//    不读 `video.currentTime`、也不理会 `video.paused`——直播流暂停、缓冲、
-//    断流重连、还没开播，弹幕都照常流动。早期版本直接绑视频时间，上面任何一种情况
-//    都会让整层弹幕冻住，而聊天栏还在刷新，看着就像弹幕流被直播流拖死了。
-// 2. 库内部不回收已下屏的弹幕实例，长时间观看会持续增长；
-//    超过阈值时走 `prune()` 摘掉滚出屏幕的实例，屏上正在滚的不受影响。
-// 3. 库没有「满轨排队」：轨道占满时它会把弹幕随便塞进一条轨道（叠字）。
-//    这里用发送队列限速；被判定满轨的**退回队尾稍后重试**，而不是当场丢掉。
-//    真正允许丢弃的只有一种情况：这条在队列里等得比 QUEUE_MAX_AGE 还久
-//    （轨道容量是物理上限，等太久的弹幕再放出来也只是错位的旧话）。
-// 4. **尺寸变化不重建渲染器**：进出全屏、窗口缩放、聊天栏收起都只走库自己的
-//    `resize()` + `setRenderConfig()`，弹幕实例、待发队列和计数全部保留。
-//    早期版本这里直接 `rebuild()`，结果每切一次全屏弹幕就「重新加载」一次。
-// 5. **时钟要单调且平滑**：墙钟本身每帧都在变，不需要再做帧间预测；
-//    它也不会因为视频时间跳变（换线、跳帧）而整体回退。
+// 弹幕层：封装 fly-barrage（canvas + 虚拟轨道避让）。
+// 时钟用单调墙钟，与视频状态解耦；实例超过阈值时用 prune() 回收；
+// 满轨的弹幕退回队列重试；尺寸变化只 resize，不重建。
 
 import { IS_MOBILE } from './platform.js';
 
 const RENDERER_KEY = 'FlyBarrage';
 
-/// 库里 `lineHeight` 是**行高倍数**（内部按 `fontSize * lineHeight` 算高度），不是像素。
-/// 算显示区域和生成弹幕实例必须是同一个数，否则轨道会比区域高一点。
+/// lineHeight 是行高倍数；计算区域与创建实例必须用同一个值。
 const LINE_HEIGHT_RATIO = 1.35;
 
-/// 兜底默认值与 store.js 的 `DEFAULTS.danmaku` 保持一致。
-/// 配置还没加载时如果两处不同，弹幕会先按另一套字号/粗细画一遍再跳变。
+/// 兜底默认值，与 store.js 的 DEFAULTS.danmaku 一致。
 const FALLBACK_CONFIG = {
   font: 20,
   weight: 700,
@@ -42,34 +24,20 @@ const FALLBACK_CONFIG = {
   bigEmojiLines: 2,
 };
 
-/// 大表情（收藏集/房间表情，只能整条单独发送）能选几种大小。
-/// 单位是「行」而不是像素：一行 = 一个弹幕轨道高，所以「占 2 行」既是画多大、
-/// 也是轨道算法要给它留几条轨道（见 syncMaxGrade）。设置页与直播间弹幕设置共用这份表。
-export const BIG_EMOJI_LINE_OPTIONS = [1, 2, 3, 4, 5];
+/// 大表情可选行数（1 行 = 一个轨道高），设置页与直播间共用。
+const BIG_EMOJI_LINE_OPTIONS = [1, 2, 3, 4, 5];
 
 const DEFAULT_BIG_EMOJI_LINES = 2;
 
-/// 性能档位：只改**绘制成本**与实例上限，不动用户设定的字号、颜色、区域。
-/// canvas 上最贵的是描边，所以档位越高越倾向把它关掉；
-/// DPR 是第二贵的因素（画布面积按 dpr² 增长），极速档把它压到 1.25；
-/// sendScale < 1 表示「发送间隔放大」，档位越高每秒进的弹幕越少，绘制压力更小。
-///
-/// **阴影一律不开**（以前「平衡」档是 shadowBlur 2）。两个原因：
-/// 一是库会把 shadow* 常驻在绘制上下文上，于是每帧每个 drawImage 都要过一次
-/// 高斯模糊；二是弹幕走的是「预渲染成位图再贴」的路径，模糊在生成位图时已经烘进去
-/// 一次，贴在画布上再来一遍等于双份。实测关掉省 30% 单帧绘制时间，字也更干净。
-///
-/// 移动端默认就把 DPR 压到 2：安卓手机的 devicePixelRatio 常见 2.75~3，
-/// 而库每帧要「清离屏画布 → 画弹幕 → 清主画布 → 整屏合成」，
-/// 填充量按 dpr² 走，3 降到 2 直接省掉一半多，20px 的字在 2 倍下依然锐利。
+/// 性能档位：只调整绘制成本与实例上限，不改字号、颜色、区域。
+/// 阴影一律关闭；移动端 DPR 上限 2。
 const PERF_PROFILES = {
   balanced: { maxStored: 1500, dprCap: IS_MOBILE ? 2 : 0, minSpace: 26, sendScale: 1, noStroke: false },
   smooth: { maxStored: 1000, dprCap: 1.75, minSpace: 22, sendScale: 0.8, noStroke: false },
   ultra: { maxStored: 700, dprCap: 1.25, minSpace: 18, sendScale: 0.6, noStroke: true },
 };
 
-/// 性能档位与帧率上限的选项表。
-/// 设置页与直播间弹幕设置弹层都从这里取，避免两处各写一份导致取值/文案不一致。
+/// 性能档位与帧率选项表，设置页与直播间共用。
 export const PERF_OPTIONS = [
   { value: 'balanced', label: '平衡（默认）', desc: '保留描边' },
   { value: 'smooth', label: '流畅', desc: '降低画布精度' },
@@ -82,11 +50,7 @@ export const FPS_OPTIONS = [
   { value: 30, label: '30 帧', desc: '省电档' },
 ];
 
-/// 弹幕数值设置的可选档位。设置页与直播间「设置」页签共用这一张表。
-///
-/// 为什么两侧都不给滑块或数字框：直播间面板只有两百多像素宽，滑块拖不准；
-/// 数字框在手机上一聚焦就弹键盘，整个面板被顶上去，改完还得再收回来。
-/// 统一成下拉之后，两边取值完全一致，也不会出现「设置页能调到 37°、直播间只有整数档」。
+/// 弹幕数值档位表，设置页与直播间「设置」页签共用。
 export const DANMAKU_PRESETS = {
   opacity: [20, 30, 40, 50, 60, 70, 80, 90, 100],
   area: [15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100],
@@ -101,27 +65,17 @@ export const DANMAKU_PRESETS = {
   dedupeStep: [1, 2, 3, 4, 5, 6, 8, 10],
 };
 
-/// 单次 drain 最多补发几条。批量发送时不能一口气全塞进去，
-/// 否则一帧里创建大量实例，正好撞上掉帧。
+/// 单次 drain 最多补发的条数。
 const MAX_PER_DRAIN = 3;
 
-/// 待发队列的两个上限。
-/// 超过软上限就开始**压缩发送间隔**，优先把积压消化掉——刷屏时本来也分不清快慢，
-/// 但少丢一条是一条。硬上限只是防内存失控的兜底（40 条/秒也要堆两分钟才到），
-/// 到了这一步说明无论如何都发不完，才丢最旧的。
+/// 待发队列的软/硬上限：软上限触发压缩发送间隔，硬上限丢弃最旧。
 const QUEUE_SOFT_LIMIT = 80;
 const QUEUE_HARD_LIMIT = 4000;
 
-/// 一条弹幕最多在队列里等多久（毫秒）。
-///
-/// 轨道容量是物理上限（十来个轨道 × 每条滚 N 秒 ≈ 每秒几条），刷屏时进得比出得快，
-/// 硬排队只会让队列越拖越长：观众看到的是几十秒前的话，直播间早就翻篇了。
-/// 所以等太久的一律按「显示不下」处理——超过这个时间还没轮到的，允许丢。
-/// 反过来，一两百毫秒的瞬时爆发（比如一堆人同时刷「哈哈」）完全在这个窗口里，一条都不会少。
+/// 弹幕在队列中的最长等待毫秒数，超时按「显示不下」丢弃。
 const QUEUE_MAX_AGE = 3000;
 
-/// 已经预热过的表情图（url → Image）。持有引用是为了避免图片还没下载完就被回收，
-/// 命中之后浏览器缓存会接管，弹幕库自己再取一次就是同步的。
+/// 已预热的表情图缓存（url → Image）。
 const preloadedEmoticons = new Map();
 
 function preloadEmoticon(url) {
@@ -139,17 +93,7 @@ function rendererClass() {
   return lib?.BarrageRenderer || lib?.default || null;
 }
 
-/// 弹幕时钟（秒），给弹幕库当进度源。
-///
-/// **只用单调墙钟，完全不看视频**。理由：
-/// - 库每画一帧读一次进度算位置。早期版本绑 `video.currentTime`，而这个值在 WebView 里
-///   不保证每帧都变（安卓上常见十几到几十毫秒跳一次），弹幕就会一段一段往前挪；
-/// - 更糟的是它跟着视频走：暂停、缓冲（readyState 掉下来）、断流、还没开播，
-///   进度一律不动 → 整层弹幕冻住，而聊天栏还在刷新，看起来就是「弹幕流挂了」。
-///
-/// 直播里弹幕的语义本来就是「此刻发的」，跟真实时间走才对。墙钟（`performance.now()`）
-/// 单调递增、不受系统时间调整影响，视频卡多久都不影响它；换线重连也不会回退。
-/// 代价是弹幕与画面不再逐帧对齐，但直播流本身就有秒级延迟，这点偏差看不出来。
+/// 弹幕时钟（秒）：只用单调墙钟，不读 video.currentTime。
 function createMonotonicClock(origin = performance.now()) {
   return {
     get currentTime() {
@@ -176,14 +120,12 @@ export function createDanmakuLayer(container, video, config = null) {
   const Renderer = rendererClass();
   // 整层共用一个时钟（不是每次 rebuild 新建），见 createMonotonicClock。
   const clock = createMonotonicClock();
-  // 时钟对象要**始终是同一个引用**：库在构造时按引用把它存下来，
-  // 之后 rebuild 只是重建渲染器，时钟继续往前跑，弹幕不会因为重建而集体「归零重放」。
+  // 时钟对象始终保持同一引用，重建渲染器时不归零。
   const clockSource = {
     get currentTime() {
       return clock.currentTime;
     },
-    // 永远返回「在播放」：库的 `play()` 看到 paused 为真就只画一帧、不启动渲染循环，
-    // 这会直接表现成「弹幕层空着不动」。弹幕是否流动只由我们自己的开关决定。
+    // 始终返回播放中，避免库因 paused 停止渲染循环。
     get paused() {
       return false;
     },
@@ -194,8 +136,7 @@ export function createDanmakuLayer(container, video, config = null) {
     queue: [],
     queueTimer: 0,
     sent: 0,
-    // 弹幕实例 id 的独立自增序号：回收实例时 `sent` 会归零，但 id 绝不能复用
-    // （库的预渲染缓存按 id 存 ImageBitmap，复用会让新弹幕画出上一条的图）。
+    // 实例 id 自增且不复用（预渲染缓存按 id 存位图）。
     seq: 0,
     lastSendAt: 0,
     // 实测宽度的移动平均，用于估算轨道容量（见 sendGap）
@@ -212,14 +153,12 @@ export function createDanmakuLayer(container, video, config = null) {
     enabled: true,
     width: 0,
     height: 0,
-    // 表情图：`images` 直接交给库（构造时按引用持有，push 之后新弹幕立刻能用），
-    // 两个 Map 负责 url ↔ id 双向去重，避免同张图反复登记。
+    // images 按引用交给库；两个 Map 负责 url ↔ id 去重。
     images: [],
     imageIdByUrl: new Map(),
     imageUrlById: new Map(),
     imageSeq: 0,
-    // 轨道避让表（vtToVtsMap）是按「大表情占几行」建的；这里记住建表时的行数，
-    // 免得库自己改过 maxGrade 之后我们误判成「已经是最新的」。
+    // 轨道避让表建立时的行数，用于判断是否需要重建。
     gradeMapGrade: 0,
   };
 
@@ -239,24 +178,10 @@ export function createDanmakuLayer(container, video, config = null) {
     host.innerHTML = '';
   }
 
-  /// 把绘制位置吸附到**设备像素栅格**。
-  ///
-  /// 弹幕是一条条预渲染好的位图，每帧 `drawImage(bitmap, left, top, w, h)`。
-  /// 库给的位置是连续浮点，而画布上下文带一层 `scale(dpr)`，于是 `left * dpr`
-  /// 几乎每帧都落在小数设备像素上——Canvas 2D 对非整数目标会走双线性重采样，
-  /// 文字边缘的灰度因此逐帧变化。实测：落在半个设备像素上比整数位置边缘对比度低 11%，
-  /// 位置一路连续变化，观感就是**字一边移动一边轻微发虚/发毛**，
-  /// 越是慢速、细字越明显（这也是「画面不放卡，但弹幕看着不流畅」的主因之一）。
-  ///
-  /// 吸附后源位图与目标矩形是 1:1 整数像素，走的是快速 blit，边缘稳定不抖。
-  /// 代价是运动量化到 1 个设备像素（dpr 2 上等于 0.5 CSS px），
-  /// 弹幕每帧要走好几个设备像素，这点量化看不出来。
-  /// 库保证 `left` 每帧都会按当前进度重算，所以这里改写不会累积漂移。
+  /// 把绘制位置吸附到设备像素栅格，避免位图重采样导致文字发虚。
   function snapToDevicePixels({ br, barrage }) {
     const dpr = Number(br?.dpr) || 1;
-    // 每帧位移不到 1.5 个设备像素时不要吸附：那种速度下量化会从「连续微抖」
-    // 变成「隔一帧跳 1 像素」，反而更难看。按 60fps 估最坏情况（帧率越低位移越大）。
-    // 滚动弹幕才带 speed，顶部/底部固定弹幕没有，它们不动，吸附一次就一直准。
+    // 每帧位移不足 1.5 个设备像素时不吸附，避免隔帧跳动。
     const speed = Number(barrage?.speed);
     if (Number.isFinite(speed) && speed > 0 && (speed * dpr) / 60 < 1.5) return;
     if (typeof barrage?.left === 'number') barrage.left = Math.round(barrage.left * dpr) / dpr;
@@ -281,9 +206,7 @@ export function createDanmakuLayer(container, video, config = null) {
     applyPerf();
   }
 
-  /// 库的 send() 依赖虚拟轨道已经建好（要读 virtualTrack.top），
-  /// 而轨道只在 setBarrages()/resize 时才会初始化；直播场景是逐条 send，
-  /// 所以这里显式初始化一次，否则每条 send 都会抛 “reading 'top'”。
+  /// send() 依赖虚拟轨道已初始化，发送前显式初始化一次。
   function primeTracks() {
     const calculate = session.renderer?.barrageLayoutCalculate;
     const algorithm = calculate?.virtualTrackAlgorithm;
@@ -291,7 +214,7 @@ export function createDanmakuLayer(container, video, config = null) {
     if (algorithm.realTracks?.length && algorithm.virtualTracks?.length) return;
     const config = session.config || FALLBACK_CONFIG;
     try {
-      // initTracks 会顺手按**当时的** maxGrade 建避让表，所以先抬到「大表情占几行」。
+      // initTracks 按当前 maxGrade 建避让表，故先抬到「大表情占几行」。
       algorithm.maxGrade = bigEmojiLines();
       algorithm.initTracks(lineHeightFor(Number(config.font) || FALLBACK_CONFIG.font));
     } catch {
@@ -310,20 +233,12 @@ export function createDanmakuLayer(container, video, config = null) {
     return Math.max(1, Math.min(lines, realTrackNum));
   }
 
-  /// **让库把「大表情占几行」算进避让范围。**
-  ///
-  /// 库的 `vtToVtsMap`（轨道 → 与它交叉、需要一起检查的高轨道）只在 `initTracks` 里
-  /// 按当时的 `maxGrade` 建一次。建表时 `maxGrade = 1` 等于告诉库「每条弹幕只占一行」：
-  /// 一条两行高的大表情被放进 2~3 号轨道后，后面来的小弹幕只检查自己那一条轨道，
-  /// 完全看不见它 → 直接压上去。所以大表情能用几行，`maxGrade` 就得是几。
-  ///
-  /// 只重建这张表、不动轨道本身：屏上的弹幕实例（含它们的 top）都还在。
+  /// 让库按大表情行数建立轨道避让表（maxGrade）。
   function syncMaxGrade(extra = 0) {
     const algorithm = session.renderer?.barrageLayoutCalculate?.virtualTrackAlgorithm;
     if (!algorithm?.virtualTracks?.length) return;
     const grade = Math.max(bigEmojiLines(), Number(extra) || 0, 1);
-    // 用自己记的「这张表是按几行建的」判断，而不是 maxGrade：
-    // 库的 layoutScrollBarrages 会改 maxGrade 却不重建表，两者可能对不上。
+    // 用建表时记录的行数判断，而不是 maxGrade。
     if (session.gradeMapGrade === grade && algorithm.vtToVtsMap.size) return;
     algorithm.maxGrade = grade;
     algorithm.vtToVtsMap.clear();
@@ -338,10 +253,7 @@ export function createDanmakuLayer(container, video, config = null) {
     session.gradeMapGrade = grade;
   }
 
-  /// 轨道兜底：库在 `setRenderConfig` / `resize` 重排时会先清空轨道表，
-  /// 之后若没人再触发布局，新弹幕就拿不到 `top`（`show` 是 true 但 `top` 是 undefined），
-  /// 表现是**弹幕整个不显示**、且不会报错。
-  /// 这里在发送前检查一次，轨道没了就重建并把已有实例重新排一遍。
+  /// 发送前确认轨道已初始化，缺失时重建并重排已有实例。
   function ensureTracks() {
     const calculate = session.renderer?.barrageLayoutCalculate;
     const algorithm = calculate?.virtualTrackAlgorithm;
@@ -357,16 +269,7 @@ export function createDanmakuLayer(container, video, config = null) {
     }
   }
 
-  /// 把刚放进轨道的那条弹幕，补登记到**所有轨道范围与它相交**的虚拟轨道里。
-  ///
-  /// 库的增量插入（`avoidOverlapInsert`）对「空虚拟轨道」有一条捷径：
-  /// 只要这条虚拟轨道自己的 `barrages` 是空的就直接放进去，不检查与它相交的其他轨道。
-  /// 而它登记时只写进被选中的那一条虚拟轨道——一条两行高的大表情只属于某个 grade 2 轨道，
-  /// 于是「1 号实际轨道」那条 grade 1 虚拟轨道仍然是空的，下一条普通弹幕走捷径直接压上去。
-  /// 反过来也一样（先有普通弹幕、再来大表情）。
-  ///
-  /// 这里按实际占用的轨道区间补一遍登记，`isEmpty` 和 `getLastBarrage()` 才名副其实。
-  /// 新增的实例总是最后一个，所以数组仍是按时间顺序，插入位置的计算不受影响。
+  /// 把实例补登记到所有相交的虚拟轨道，保证避让判断完整。
   function registerOccupancy(instance) {
     const algorithm = session.renderer?.barrageLayoutCalculate?.virtualTrackAlgorithm;
     if (!algorithm?.virtualTracks?.length) return;
@@ -386,24 +289,14 @@ export function createDanmakuLayer(container, video, config = null) {
     }
   }
 
-  /// 清空已登记的表情图（连同 url ↔ id 去重表）。
-  /// 库是按 `[图片id]` 匹配正文的：只把正文写回文字而留着旧图，
-  /// 弹幕层会继续把 `[热]` 画成表情（聊天栏是纯 DOM，所以才出现「聊天生效、弹幕不生效」）。
+  /// 清空已登记的表情图与 url ↔ id 去重表。
   function clearImages() {
     session.images.length = 0;
     session.imageIdByUrl.clear();
     session.imageUrlById.clear();
   }
 
-  /// 摘掉已经滚出屏幕（`endTime` 已过）的弹幕实例，返回清掉的条数。
-  ///
-  /// 库只按 `time <= endTime` 决定画不画：实例本身永远留在
-  /// `scrollBarrageInstances` / `canShowScrollBarrageInstances` 和每条虚拟轨道的
-  /// `barrages` 里，数组只增不减 —— 每帧渲染都要对这个越来越长的集合做一次 filter，
-  /// 预渲染缓存还按条存着一张 ImageBitmap。所以长时间观看必须回收。
-  ///
-  /// 回收是就地剔除而不是重建渲染器：仍在屏上的实例 `endTime > now`，一条都不动，
-  /// 所以画面不会闪、不会跳位；顺手把它们的位图从预渲染缓存里删掉。
+  /// 摘掉已经滚出屏幕的实例，返回清理条数。
   function pruneEnded() {
     const renderer = session.renderer;
     const calc = renderer?.barrageLayoutCalculate;
@@ -461,16 +354,13 @@ export function createDanmakuLayer(container, video, config = null) {
     return removed.size;
   }
 
-  /// 整体重建渲染器。只在两种情况下用：
-  /// 直播流重连（时间轴归零）、字号变化（每条弹幕实例的宽高是创建时固定的）。
+  /// 重建渲染器：仅用于字号变化或直播流重连。
   function rebuild() {
     if (session.destroyed || !Renderer) return;
-    // **不清队列**：待发的弹幕还没上过屏，重建只是换了个画布，它们照旧可以显示。
-    // 清理定时器只是让它按新配置重新起一轮节奏。
+    // 不清空待发队列。
     clearTimeout(session.queueTimer);
     session.queueTimer = 0;
-    // 表情尺寸是按字号算的，重建后（字号/档位变了）必须重新量一遍；
-    // 已经上屏的实例随 dispose 一起没了，不存在「旧图新尺寸」的问题。
+    // 重建后按新字号重新量表情尺寸。
     clearImages();
     dispose();
     measure();
@@ -481,9 +371,7 @@ export function createDanmakuLayer(container, video, config = null) {
     return Math.max(18, Math.round(font * LINE_HEIGHT_RATIO));
   }
 
-  /// 弹幕走 canvas，拿不到 CSS 变量，只能从 body 已算出的 `font-family` 上取一份：
-  /// 这样换皮肤（雅黑 ↔ 苹方/内置 HarmonyOS Sans）时弹幕字体跟着变，
-  /// 而不是永远写死一套系统字体、在安卓上又掉回 Roboto。
+  /// 弹幕字体取自 body 计算后的 font-family，跟随皮肤。
   function themeFontFamily() {
     try {
       const value = getComputedStyle(document.body).fontFamily;
@@ -506,10 +394,7 @@ export function createDanmakuLayer(container, video, config = null) {
     );
     // 极速档无视用户的描边开关：描边是剩下最贵的一项（阴影已经全局关掉）。
     const strokeWidth = perf.noStroke ? 0 : config.stroke ? Math.max(0, Number(config.strokeWidth) || 0) : 0;
-    // 用户设定的「滚动速度」是**弹幕持续秒数**（越小越快）。
-    // 固定时长模式：所有弹幕都用这段时间穿过画面，(画布宽 + 弹幕宽) / 时长 得到每条的速度，
-    // 长弹幕自动更快、短弹幕更慢，不会出现「长弹幕挂半天不走」。防追尾由库按每条弹幕的
-    // 基准速度再动态减速。
+    // 固定时长模式：每条速度 = (画布宽 + 自身宽) / 时长。
     const durationSeconds = Math.max(3, Math.min(20, Number(config.speed) || 8));
     return {
       scrollDuration: durationSeconds * 1000,
@@ -527,8 +412,7 @@ export function createDanmakuLayer(container, video, config = null) {
       lineCap: 'round',
       lineJoin: 'round',
       miterLimit: 10,
-      // 阴影一律关（见 PERF_PROFILES 的说明）。这里显式写成 0 而不是省略字段：
-      // 库会把这几个值直接赋给 ctx.shadow*，缺字段会赋成 undefined。
+      // 阴影显式置 0：库会把 undefined 直接赋给 ctx.shadow*。
       shadowColor: 'rgba(0, 0, 0, 0)',
       shadowBlur: 0,
       shadowOffsetX: 0,
@@ -536,8 +420,7 @@ export function createDanmakuLayer(container, video, config = null) {
     };
   }
 
-  /// 把性能档位落到渲染器实例上：DPR 上限 + 帧率上限。
-  /// 这两项都不在库的 renderConfig 里，只能改实例字段。
+  /// 应用性能档位：DPR 上限与帧率上限。
   function applyPerf() {
     const renderer = session.renderer;
     if (!renderer) return;
@@ -557,16 +440,7 @@ export function createDanmakuLayer(container, video, config = null) {
     applyFrameLimit();
   }
 
-  /// 帧率上限：库的渲染循环是裸 rAF，没有节流开关，这里包一层 `_render`。
-  /// 跳帧时必须自己把下一帧排上，否则链条会断（续帧写在原函数末尾）。
-  ///
-  /// **按帧计数，不按时间阈值**。旧实现是「距上次绘制不足 0.75 个间隔就跳过」，
-  /// 表面上能到目标帧率，实际步长是「16.7ms、16.7ms、25ms」这种不均匀序列——
-  /// 位置是按真实时间算的，步长一不均，弹幕就是一顿一顿地往前挪。
-  /// 现在改成先量出屏幕的刷新周期，再算「每隔几个 vsync 画一次」：
-  /// 120Hz 屏选 60 → 严格每 2 帧画一次，每步都是 16.67ms，均匀。
-  /// 刷新率与目标不整除时（90Hz 选 60）只能取最接近的整数倍，45 帧，
-  /// 但仍然是均匀的——均匀的 45 比忽快忽慢的 60 看着顺。
+  /// 帧率上限：包一层 _render，按 vsync 计数跳帧，并自行续帧。
   function applyFrameLimit() {
     const renderer = session.renderer;
     if (!renderer) return;
@@ -574,9 +448,7 @@ export function createDanmakuLayer(container, video, config = null) {
     renderer.__starveilRender = original;
     const fps = Number((session.config || FALLBACK_CONFIG).fps) || 0;
     const interval = fps >= 10 ? 1000 / fps : 0;
-    // 刷新周期用 rAF 间隔的滑动平均来估：rAF 回调紧跟 vsync，间隔就是刷新周期。
-    // 不用「取最小间隔」——主线程偶尔挤一下会把个别间隔压短，最小值一偏低就会
-    // 多抽一帧。平均更稳，而且万一估大了只是多画几帧，不会少画。
+    // 刷新周期取 rAF 间隔的滑动平均。
     let period = 0;
     let lastCall = 0;
     let skip = 0;
@@ -611,8 +483,7 @@ export function createDanmakuLayer(container, video, config = null) {
     session.height = host.clientHeight;
   }
 
-  /// 把当前设置同步给渲染器。
-  /// 只在真正影响渲染的字段变化时才调用，否则库会做一次没必要的重排。
+  /// 同步渲染配置；仅在影响渲染的字段变化时调用。
   function syncRenderConfig() {
     const renderer = session.renderer;
     if (!renderer) return;
@@ -642,8 +513,7 @@ export function createDanmakuLayer(container, video, config = null) {
     }
   }
 
-  /// 重排之后确认「可渲染集合」没有异常清空。
-  /// 集合空了的表现是画面突然一片空白；这里发现为空就再排一次轨道。
+  /// 重排后检查可渲染集合，为空时重新排轨道。
   function ensureLayout() {
     const calculate = session.renderer?.barrageLayoutCalculate;
     if (!calculate) return;
@@ -679,7 +549,7 @@ export function createDanmakuLayer(container, video, config = null) {
     // 重排可能把轨道表清掉（库的行为），先补轨道再看可显示集合。
     ensureTracks();
     ensureLayout();
-    // 尺寸变化不应该停掉动画，但保险起见确认渲染循环还在跑。
+    // 尺寸变化不停动画，确认渲染循环仍在跑。
     if (session.enabled && !session.renderer.animationHandle) session.renderer.play();
   }
 
@@ -692,12 +562,7 @@ export function createDanmakuLayer(container, video, config = null) {
     });
   }
 
-  /// 两条弹幕之间的最小间隔（毫秒）：按「轨道实际能吸收的速率」算，而不是拍一个固定值。
-  ///
-  /// 一条弹幕要等前一条的右边缘让出 `宽 + 间距`，它才能在右边缘入场；
-  /// 固定时长模式下速度是 (画布宽 + 宽) / 时长，于是单轨每
-  ///   `(宽 + 间距) × 时长 / (画布宽 + 宽)`
-  /// 毫秒才能放一条，再除以轨道数就是整体的入场速率。宽度用实测的移动平均值估算。
+  /// 两条弹幕的最小间隔，按轨道实际吞吐计算，宽度用移动平均值估算。
   function sendGap() {
     const config = session.config || FALLBACK_CONFIG;
     const lanes = Math.max(2, Math.min(20, Number(config.lines) || 10));
@@ -711,8 +576,7 @@ export function createDanmakuLayer(container, video, config = null) {
     const perTrack = ((width + profile().minSpace) * durationMs) / (canvasWidth + width);
     // 上限 400ms：再慢就变成明显延迟了。
     const gap = Math.min(400, perTrack / tracks);
-    // 积压越多发得越快（最多压到 1/4 间隔）：宁可这一屏挤一点，也别把弹幕存在队列里
-    // 越攒越旧——观众看到的是「三分钟前的话」，还不如早点放出来。
+    // 积压越多发送越快，最多压到 1/4 间隔。
     const backlog = session.queue.length;
     const compress = backlog > QUEUE_SOFT_LIMIT
       ? Math.min(4, 1 + (backlog - QUEUE_SOFT_LIMIT) / 60)
@@ -730,8 +594,7 @@ export function createDanmakuLayer(container, video, config = null) {
 
   function drain() {
     if (session.destroyed || !session.renderer || !session.queue.length) return;
-    // 先把等太久的清掉：它们的「出现时刻」已经过去，补放出来只是错位的旧话。
-    // 这一步算「显示不下」，会计入 dropped；队列里剩下的都是还来得及显示的。
+    // 先丢弃等待过久的弹幕。
     const now = performance.now();
     while (session.queue.length && now - session.queue[0].at > QUEUE_MAX_AGE) {
       session.queue.shift();
@@ -743,8 +606,7 @@ export function createDanmakuLayer(container, video, config = null) {
       scheduleDrain();
       return;
     }
-    // 一次最多补发 MAX_PER_DRAIN 条：时间戳间隔检查在循环里只能发出 1~2 条，
-    // 但 lastSendAt 很久没更新时（切标签页、窗口刚恢复）会一次塞进整批。
+    // 单次最多补发 MAX_PER_DRAIN 条。
     let attempts = 0;
     while (session.queue.length && attempts < MAX_PER_DRAIN) {
       if (performance.now() - session.lastSendAt < gap) break;
@@ -753,9 +615,7 @@ export function createDanmakuLayer(container, video, config = null) {
       session.lastSendAt = performance.now();
       attempts += 1;
       if (result === 'full') {
-        // 放回**队尾**，下一轮再看轨道有没有空出来：既不能插队，也不能赖在队头
-        // 把后面所有人堵死——那样刷屏过后队列会拖几十秒，新弹幕还被压在
-        // 一堆注定要丢的旧弹幕后面。多久算「等太久」由 QUEUE_MAX_AGE 统一裁决。
+        // 满轨的弹幕放回队尾，下一轮重试。
         session.queue.push(entry);
         continue;
       }
@@ -764,13 +624,7 @@ export function createDanmakuLayer(container, video, config = null) {
     if (session.queue.length) scheduleDrain();
   }
 
-/// 表情图尺寸对齐。
-///
-/// **大表情**（`lines > 0`，行数由设置项 `danmaku.bigEmojiLines` 决定）：
-/// 高 = 行数 × 行高。行高就是轨道高度，所以高 2 行 = 轨道算法里的 grade 2，
-/// 占位和尺寸天然一致——想让它真占两条轨道，不用另做一套布局。
-/// **小表情**（`lines = 0`，正文里的 `[热]`）：等比缩到「一个行高」附近，
-/// 它要和同一行的文字齐平，撑高轨道反而挤掉正常弹幕。
+/// 表情尺寸：大表情高 = 行数 × 行高；小表情缩到一个行高内。
 function fitEmoticon(width, height, fontSize, lines = 0) {
   const rawWidth = Math.max(1, Number(width) || 20);
   const rawHeight = Math.max(1, Number(height) || 20);
@@ -779,9 +633,7 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     ? lineHeightFor(fontSize) * Number(lines)
     : Math.max(12, Math.round(fontSize * LINE_HEIGHT_RATIO * 0.92));
   let nextWidth = (rawWidth / rawHeight) * nextHeight;
-  // 横条表情（收藏集里常见）限宽：大表情按 10 个字宽，小表情 8 个字符宽，
-  // 否则一条就能占掉半屏、把后面的弹幕全挤掉。
-  // 被限宽时**等比缩回去**，高度跟着变——grade 由真实高度算，不会出现「说占两行其实只占一行」。
+  // 横条表情限宽：大表情 10 字宽、小表情 8 字宽，超出时等比缩小。
   const maxWidth = fontSize * (big ? 10 : 8);
   if (nextWidth > maxWidth) {
     const scale = maxWidth / nextWidth;
@@ -796,14 +648,7 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
   };
 }
 
-  /// 登记一张表情图，返回库用的图片 id（正文里会写成 `[id]`，所以不能带中括号）。
-  /// 同一张图**同一尺寸**重复出现时复用已有 id；同名但不同图（不同房间的 `[热]`）另起一个。
-  ///
-  /// 去重键必须带上宽高：B 站同一张房间表情既能整条单独发（大表情，两行高），
-  /// 也能作为 `[乐]` 嵌在文字里（小表情，一个行高）。只按 url 去重的话，
-  /// 后出现的那个会直接复用先登记的尺寸——小表情突然被画成两行高的大图，
-  /// 压住它上下的弹幕（就是「忽大忽小、还遮挡」）。库里的图片尺寸在登记时就定死了，
-  /// 所以尺寸不同必须是两个图片 id，不能省。
+  /// 登记表情图并返回图片 id；复用条件是 url 与尺寸都相同。
   function registerImage(url, size, preferredId) {
     const key = `${url}@${size.width}x${size.height}`;
     const known = session.imageIdByUrl.get(key);
@@ -817,15 +662,7 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     return id;
   }
 
-  /// 把正文里的表情片段换成库认识的 `[图片id]` 占位符。
-  ///
-  /// 两种形态（见 `live_core` 的 `Emoticon`）：
-  /// - 内嵌小表情：正文本来就是 `[热]`，图片 id 取「热」后无需改动正文；
-  /// - 大表情：正文是表情名（`冲鸭`，收藏集那类自带中括号），必须整段替换成占位符，
-  ///   否则库只会把它当普通文字画出来。
-  ///
-  /// 关掉「显示弹幕表情」时原样返回文字：`[大哭]`、`[热]`、`[下次一定]` 这些占位符照旧画出来，
-  /// 大表情的正文本来就是可读的词，也不动。图片一张都不登记。
+  /// 把正文中的表情替换成 `[图片id]` 占位符；关闭表情时原样返回。
   function applyEmoticons(message, fontSize) {
     // 不要写成 `message.text || ''`：数字 0 之类的假值会被吞掉。
     let text = message.text == null ? '' : String(message.text);
@@ -839,10 +676,7 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       const url = typeof emoticon?.url === 'string' ? emoticon.url : '';
       if (!key || !url || !text.includes(key)) continue;
       const bracketed = key.startsWith('[') && key.endsWith(']');
-      // 大表情的前提是「整条弹幕就只有这一个表情」。平台偶尔会在带小表情的弹幕上
-      // 也塞一个表情对象，此时后端拿到的 key 是整段正文——照大表情处理，
-      // 一条普通弹幕会突然变成两行高的巨图，把周围弹幕全压住。
-      // 正文除了这个 key 还有别的字，就按小表情画（宁可小，不要挡）。
+      // 仅当正文只有该表情时才按大表情处理。
       const big = Boolean(emoticon.big) && whole === key.trim();
       // 大表情的高 = 设置里的行数 × 行高；小表情仍是「一个行高」量级。
       const size = fitEmoticon(emoticon.width, emoticon.height, fontSize, big ? bigEmojiLines() : 0);
@@ -852,26 +686,20 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     return text;
   }
 
-  /// 试着把一条弹幕送进库里。
-  /// 返回 `'shown'` 成功上屏、`'full'` 当下没有空轨道（可以稍后重试）、
-  /// `'dropped'` 参数不合法等没法显示的原因（重试也没用）。
+  /// 尝试上屏，返回 'shown' / 'full'（可重试）/ 'dropped'。
   function emit(message) {
     const config = session.config || FALLBACK_CONFIG;
     const renderer = session.renderer;
     if (!renderer) return 'full';
     const fontSize = Math.max(12, Math.min(48, Number(config.font) || FALLBACK_CONFIG.font));
-    // 颜色统一截到 RGB888：平台偶尔会下发 32 位带 alpha 的值，
-    // `padStart(6)` 不会截断，会拼出 `#xxxxxxxx` 这种非法 hex —— canvas 直接不画，
-    // 表现就是「彩色弹幕不渲染」。
+    // 颜色截断为 RGB888，避免带 alpha 的值拼出非法 hex。
     const color =
       message.color == null
         ? '#ffffff'
         : `#${(Number(message.color) & 0xffffff).toString(16).padStart(6, '0')}`;
     const position = Number(message.position) || 0;
     const barrageType = position === 1 ? 'top' : position === 2 ? 'bottom' : 'scroll';
-    // 速度策略：不在这里传 addition.speed，让库走**固定时长模式**——
-    // 每条弹幕按 (画布宽 + 自身宽) / scrollDuration 单独算速度，长弹幕更快、短弹幕更慢，
-    // 所有弹幕「同时开始、同时结束」。追尾由库的轨道分配器按每条弹幕的基准速度动态减速。
+    // 不传 speed，由库按固定时长模式计算速度。
     const option = {
       id: `d${++session.seq}`,
       time: Math.max(0, clockSource.currentTime * 1000),
@@ -898,38 +726,31 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       return 'dropped';
     }
     if (!created) return 'dropped';
-    // 大表情占几行：把避让表抬到它的实际 grade。
-    // 正常情况配置已经抬好了（primeTracks/syncMaxGrade），这里兜住
-    // 「横条表情被限宽后变矮」之外的极端情况（比如轨道数刚变过）。
+    // 发送前确保避让表已抬到该弹幕的 grade。
     if (Number(created.grade) > (session.gradeMapGrade || 1)) syncMaxGrade(Number(created.grade));
-    // 用实测宽度修正发送速率（EMA），下一次 sendGap() 会更接近真实轨道容量。
-    // 高轨道弹幕（大表情）不算进来：它一条顶几条的高度，混进平均会把正常弹幕的节奏拖慢。
+    // 用实测宽度修正发送间隔（EMA）；高轨道弹幕不计入。
     if (!(Number(created.grade) > 1)) {
       session.widthAvg = session.widthAvg
         ? session.widthAvg * 0.85 + created.width * 0.15
         : created.width;
     }
-    // 满轨：库把它丢到随机轨道上，直接画就是叠字。这条先从库里撤下来，
-    // 交给 drain 退回队列重试——满轨是**这一刻**没位置，不是永远显示不下。
+    // 满轨时先撤下实例，交给 drain 重试。
     if (created.fallbackTrack) {
       dropInstance(created);
       return 'full';
     }
-    // 交叉登记：一条弹幕占了几条实际轨道，就写进这几条轨道上所有虚拟轨道的占用表。
-    // 不做这一步，两行高的大表情和普通弹幕会互相看不见（见 registerOccupancy 注释）。
+    // 补登记相交轨道的占用表。
     if (barrageType === 'scroll') registerOccupancy(created);
-    // 回收阈值用的计数（id 走 seq，两者必须分开）。只统计真正上屏的，
-    // 满轨重试的那几次不该被算成「已发送」。
+    // 上屏计数与实例 id 分开，仅统计真正上屏的。
     session.sent += 1;
     return 'shown';
   }
 
-  /// 把刚创建但放不下的实例从库里摘干净。
-  /// 它没有被塞进任何虚拟轨道，只要从两个实例数组里删掉就不会再参与渲染与布局。
+  /// 把放不下的实例从库中移除。
   function dropInstance(instance) {
     const calc = session.renderer?.barrageLayoutCalculate;
     if (!calc) return;
-    // 这里不记 `dropped`：撤下只是因为这一轮满轨，drain 会决定是重试还是最终丢弃。
+    // 不记 `dropped`：撤下只因本轮满轨，最终丢弃由 drain 决定。
     for (const list of [calc.scrollBarrageInstances, calc.canShowScrollBarrageInstances]) {
       const index = list.indexOf(instance);
       if (index >= 0) list.splice(index, 1);
@@ -949,15 +770,11 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
   build();
   syncRenderConfig();
 
-  // 只**重新拉起**渲染循环，不在暂停时停它。
-  // 早期这里还挂了 `pause → renderer.pause()`，于是点一下暂停（或直播流缓冲、
-  // 自动重连时短暂 paused）整层弹幕就冻住，看起来就像弹幕流跟着直播流一起死了。
-  // 弹幕要不要流动只由弹幕开关决定，与视频状态无关。
+  // 只重新拉起渲染循环，暂停时不停止它。
   video.addEventListener('play', () => {
     if (session.enabled) session.renderer?.play();
   });
-  // 同理：断流重连、未开播时渲染循环也可能被别处停掉，这里定时补一脚，
-  // 保证「弹幕在流动」这件事不依赖任何外部事件。空转开销可以忽略（每 5 秒一次）。
+  // 定时兜底拉起渲染循环。
   session.keepAliveTimer = setInterval(() => {
     if (session.destroyed || !session.enabled) return;
     const renderer = session.renderer;
@@ -970,21 +787,17 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     update(config) {
       const previous = session.config;
       session.config = { ...FALLBACK_CONFIG, ...(config || {}) };
-      // 关掉表情要把已登记的图片撤干净：库里只认 `[图片id]`，
-      // 旧图留着就会继续命中正文里的 `[赞]`／`[热]`，表现是「聊天栏关掉了、弹幕层还画表情」。
+      // 关闭表情时清空已登记图片。
       if (session.config.emoji === false) clearImages();
       if (!session.renderer) return;
-      // 字号或性能档位变了只能重建：字号决定每条实例的宽高，
-      // 性能档位可能改 DPR（画布尺寸），两者都无法在现有实例上热改。
+      // 字号或性能档位变化需重建。
       if (!previous || previous.font !== session.config.font || previous.perf !== session.config.perf) {
         rebuild();
         return;
       }
       // 行数/区域/速度只影响渲染配置，库内部重排轨道并保留现有弹幕实例。
       syncRenderConfig();
-      // 大表情大小变了：已登记的图是旧尺寸，清掉让后面的弹幕重新登记；
-      // 屏上的旧实例宽高在创建时就定死了，随它滚过去，不必整层重建。
-      // 同时把避让表按新行数重建，否则「改成 3 行」之后小弹幕还是看不见它。
+      // 大表情行数变化：清空已登记图片并按新行数重建避让表。
       if (previous && previous.bigEmojiLines !== session.config.bigEmojiLines) {
         clearImages();
         syncMaxGrade();
@@ -998,8 +811,7 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     /** 立刻显示一条弹幕；超出发送速率时先入队，排队期间一条都不会被悄悄丢掉 */
     send(message) {
       if (session.destroyed || !session.renderer) return;
-      // 只有堆到硬上限才挤掉最旧的，正常直播碰不到这一步（见 QUEUE_HARD_LIMIT）。
-      // 早期版本这里写的是 300 条，一场热闹的直播里会不声不响地丢掉大量弹幕。
+      // 仅在堆到硬上限时挤掉最旧的一条。
       if (session.queue.length >= QUEUE_HARD_LIMIT) {
         session.queue.shift();
         session.dropped += 1;

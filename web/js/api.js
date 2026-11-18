@@ -5,8 +5,7 @@ const TAURI = window.__TAURI__;
 const hasTauri = Boolean(TAURI?.core?.invoke);
 const invoke = hasTauri ? TAURI.core.invoke : null;
 
-// 抖音、快手已接入取流（详情/清晰度/播放/推荐），先开放出来。
-// 它们的弹幕还没接入，进房后聊天栏会给出明确提示。
+// 已接入的平台列表。
 export const ENABLED_PLATFORMS = ['bilibili', 'douyu', 'huya', 'douyin', 'kuaishou'];
 export const ALL_PLATFORMS = ['bilibili', 'douyu', 'huya', 'douyin', 'kuaishou'];
 
@@ -25,8 +24,7 @@ export function isPlatformEnabled(platform) {
   return ENABLED_PLATFORMS.includes(platform);
 }
 
-// 斗鱼：签名脚本由后端按房间拉取，签名在 WebView 的 JS 引擎里执行，
-// 之后每次取流都用当前时间戳重新签一次（与 Dart 版 QuickJS 的做法一致）。
+// 斗鱼签名：脚本由后端按房间拉取，在 WebView 内用当前时间戳重新签名。
 const douyuSessions = new Map();
 
 function signDouyu(script, roomId, did) {
@@ -66,8 +64,7 @@ export function canonicalImage(url) {
   return value;
 }
 
-/// B 站原图经常是 720p/1080p，卡片只需要一百多像素宽；
-/// 让 CDN 直接返回缩略图，能显著减少解码与显存开销。
+/// 让 CDN 返回缩略图，减少解码与显存开销。
 export function coverImage(url, platform) {
   const value = canonicalImage(url);
   if (!value || platform !== 'bilibili' || !/hdslb\.com/i.test(value)) return value;
@@ -142,10 +139,7 @@ function listCall(command, args, platform) {
 }
 
 // ---------------------------------------------------------------- 抖音列表签名
-//
-// 抖音的分区房间接口（首页推荐 / 分类房间共用）验 `a_bogus`，签名脚本只能在
-// WebView 里跑。查询串交给后端拼（`douyin_query`），保证「签名用的串」和
-// 「真正发出去的串」逐字符一致；前端只负责算 msToken 和签名值。
+// 查询串由后端拼（douyin_query），前端只算 msToken 与 a_bogus 签名。
 async function douyinSign({ kind, page = 1, partition = '' }) {
   // 浏览器演示模式（直接打开 web/）没有后端，签名拿不到查询串，直接跳过。
   if (!invoke) return {};
@@ -203,8 +197,7 @@ export const api = {
     }
     return payload;
   },
-  // `audioOnly` 走本机代理的纯音频分支：同屏播放时 A 只留声音，
-  // 视频 tag 在代理层就被丢掉了，省带宽也少解一路码。
+  // audioOnly 走代理的纯音频分支，视频 tag 在代理层丢弃。
   async play(key, index, options = {}) {
     const audioOnly = Boolean(options.audioOnly);
     if (key.startsWith('douyu:')) {
@@ -243,8 +236,7 @@ export const api = {
   webdavDownload(url, username, password, allowInsecureTls = false) {
     return call('webdav_download', { url, username, password, allowInsecureTls });
   },
-  // 局域网同步：后端起一个本机 HTTP 服务（默认 23244）并用 UDP 23245 广播发现对方。
-  // 数据在 Rust 侧只当中转，真正的打包/合并仍然由前端的 importer 做。
+  // 局域网同步：HTTP 23244 + UDP 23245 发现；Rust 只中转，打包与合并由 importer 负责。
   lanSyncStart() {
     return call('lan_sync_start');
   },
@@ -336,9 +328,7 @@ export const api = {
   onDanmaku(handler) {
     // 浏览器里没有后端事件，用演示弹幕驱动布局/样式调试。
     if (!hasTauri) return startDemoDanmaku(handler);
-    // 后端每 100ms 把这一轮收到的弹幕**合并成数组**发过来（事件名 danmaku-batch）。
-    // 逐条 emit 时每条都要过一次 evaluateJavascript，安卓上尤其贵，
-    // 所以这里把数组摊开交给调用方，调用方拿到的仍然是一条一条的消息。
+    // 后端每 100ms 批量推送弹幕（danmaku-batch），这里摊开逐条交给调用方。
     return TAURI.event.listen('danmaku-batch', (event) => {
       const payload = event.payload;
       if (Array.isArray(payload)) {
@@ -348,8 +338,7 @@ export const api = {
       }
     });
   },
-  // 弹幕连接状态（连接中 / 已连接 / 失败原因 / 本平台不支持）。
-  // 和 onDanmaku 分开：状态是"当前这一刻"的结论，界面用它画聊天栏顶部的横幅。
+  // 弹幕连接状态，供聊天栏顶部横幅使用。
   onDanmakuStatus(handler) {
     if (!hasTauri) return Promise.resolve(() => {});
     return TAURI.event.listen('danmaku-status', (event) => handler(event.payload));
@@ -398,8 +387,7 @@ const DEMO_DM_TEXTS = [
   '明天还播吗',
 ];
 
-/// 演示用的表情弹幕。真机上这些图是平台下发的 https 地址，这里用内联 SVG，
-/// 保证离线打开 web/ 也能看到「表情混排」的渲染效果（弹幕层与聊天栏共用）。
+/// 演示用表情弹幕：内联 SVG，离线打开 web/ 也能看到表情混排效果。
 const DEMO_EMOTICON = {
   key: '[赞]',
   url:

@@ -1,16 +1,5 @@
-//! FLV 流续接：上游换了地址，但下游那条 HTTP 响应不能断。
-//!
-//! 斗鱼的直链带 `expire=300`，到点 CDN 会干净地关掉连接。续签只能拿到一条
-//! **新的**直链，而这条新直链是从 FLV 头开始的一整段新流。如果原样往同一个
-//! 响应体里写，播放器（mpegts.js 的 FLV demuxer）会在流中间再遇到一次
-//! `FLV\x01` 头，把它当成非法 tag，直接报错——表现就是「断流、重连」。
-//!
-//! 这里做两件事，让播放器完全感知不到换过地址：
-//! 1. 丢掉续接流的 FLV 头（9 字节头 + 4 字节 PreviousTagSize）和脚本 tag；
-//! 2. 从第一个视频关键帧开始输出，并把每个 tag 的时间戳接着上一路往下排。
-//!
-//! 时间戳是「流启动至今的毫秒数」，同一个房间的两条直链本来就能对上；但显式
-//! 重排一遍更稳：主播重推流时时间戳会归零，直接透传会让播放器认为时间倒退。
+//! FLV 流续接：上游换地址时下游 HTTP 响应不断。
+//! 丢弃续接流的 FLV 头与脚本 tag，从第一个视频关键帧开始输出，并重排时间戳。
 
 /// tag 头 11 字节 + 数据 + PreviousTagSize 4 字节。
 const TAG_HEADER: usize = 11;
@@ -41,12 +30,7 @@ fn tag_at(bytes: &[u8]) -> Option<(u8, u32, &[u8], usize)> {
     Some((bytes[0], ts, &bytes[TAG_HEADER..TAG_HEADER + size], total))
 }
 
-/// 判断是不是「能直接开始解码的画面帧」。
-///
-/// 斗鱼每条新连接的开头是：脚本 tag → 音频配置帧（7 字节）→ AVC/HEVC 序列头
-/// （50 字节，frameType 也是 1，但它不是画面，时间戳还是从零起的小值）。
-/// 只认 `frameType == 1` 会把序列头当成起点，后面的真实时间戳一减就是几千万，
-/// 播放器直接卡死。所以 AVC/HEVC 还要看 AVCPacketType（1 = NALU，0 = 序列头）。
+/// 是否为可直接解码的画面帧：AVC/HEVC 需 `AVCPacketType == 1`（排除序列头）。
 fn is_keyframe(kind: u8, payload: &[u8]) -> bool {
     if kind != TAG_VIDEO || payload.len() < 2 || payload[0] >> 4 != FRAME_KEY {
         return false;
@@ -189,13 +173,7 @@ impl FlvSplicer {
     }
 }
 
-/// 只保留音频的过滤器（同屏播放用）。
-///
-/// 同屏时主画面来自 B，A 只贡献声音和弹幕。A 的画面反正不显示，再传一遍
-/// 1080p 视频既占带宽又要多解一路码（安卓上直接体现为 B 掉帧），所以在代理
-/// 这一层就把视频 tag 丢掉，下游只收到一条纯音频的 FLV。
-///
-/// 音频 tag 的时间戳本来就是连续的，不需要像续接那样重排；只做筛选。
+/// 只保留音频的过滤器（同屏播放时 A 路使用），丢弃视频 tag。
 #[derive(Default)]
 pub struct AudioOnlyFilter {
     pending: Vec<u8>,

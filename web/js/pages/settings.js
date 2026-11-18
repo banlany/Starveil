@@ -26,8 +26,7 @@ import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { SKINS, accentForMode, skinAccents, skinModes } from '../../skins/registry.js';
 // 外部数据导入（starveil 备份 / dart profile / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
-// 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
-// 改档位定义时只改 danmaku.js 一处。
+// 弹幕性能/帧率选项由 danmaku.js 提供，与直播间共用。
 import { DANMAKU_PRESETS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
 // 缓冲档位和播放器参数是同一份定义（player-buffer.js），别再抄一遍数值。
 import { BUFFER_PRESETS } from '../player-buffer.js';
@@ -48,8 +47,7 @@ import {
   loadMore,
 } from '../ui.js';
 
-// 版本号兜底值：与 src-tauri/tauri.conf.json 的 version 保持一致；
-// 运行时优先用 Tauri 的 app.getVersion() 覆盖，避免打包时漏改这里。
+// 兜底版本号，与 tauri.conf.json 一致；运行时优先用 app.getVersion()。
 const FALLBACK_VERSION = '0.7.4';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
@@ -60,9 +58,7 @@ const REFERENCE_REPO = 'https://github.com/June6699/dart_simple_live';
 const PERF_MAP = Object.fromEntries(PERF_OPTIONS.map((option) => [option.value, option.label]));
 const FPS_MAP = Object.fromEntries(FPS_OPTIONS.map((option) => [option.value, option.label]));
 
-/// 把一个档位数组转成 select 用的 { 值: 文案 }。
-/// 当前值不在档位里（老版本拖滑块存下来的 37、23 之类）时补一项进去，
-/// 否则下拉会「自己显示成最近的档位」，看着像设置被改了。
+/// 档位数组转成 { 值: 文案 }；当前值不在档位里时补一项。
 function presetMap(key, values, format) {
   const list = [...values];
   const current = Number(getSetting(key));
@@ -73,9 +69,7 @@ function presetMap(key, values, format) {
   return Object.fromEntries(list.map((value) => [value, format(value)]));
 }
 
-/// 弹幕数值项统一成「预设值下拉」，和直播间右侧「设置」页签用同一套档位
-/// （DANMAKU_PRESETS）。滑块在窄屏上拖不准，数字框在手机上一聚焦就弹键盘，
-/// 两边行为不一致还容易改不到想要的值。
+/// 弹幕数值项统一用预设下拉，与直播间「设置」页签共用 DANMAKU_PRESETS。
 function presetRow(key, title, values, format, desc = '') {
   return { type: 'select', key, title, desc, numeric: true, valueMap: presetMap(key, values, format) };
 }
@@ -211,14 +205,12 @@ export function renderSettingsDetail(ctx, params = {}) {
 
   document.getElementById('view').appendChild(page);
   paint();
-  // 深浅切换会改变色板里「雪白」那一项的实际色值（深色是白、浅色是深灰）。
-  // 色块颜色是 inline style 写进去的，不重绘就一直停在上一档。
+  // 雪白的实际色值随明暗档变化，切换后需重绘色块。
   const onTheme = () => {
     if (key === 'appearance') paint();
   };
   window.addEventListener('simple-live:theme', onTheme);
-  // 局域网同步的轮询要跟着页面生命周期走：离页必须停，否则定时器会一直
-  // 往已经移除的 DOM 上写，还会持续请求后端。
+  // 局域网轮询跟随页面生命周期，离页即停。
   return () => {
     window.removeEventListener('simple-live:theme', onTheme);
     stopSyncTimers();
@@ -227,8 +219,7 @@ export function renderSettingsDetail(ctx, params = {}) {
 
 // ---------------------------------------------------------------- 行构建
 
-/// 当前实际生效的明暗档（applyTheme 写在 <html data-theme> 上）。
-/// 皮肤锁死单档时这里已经是唯一可用的那一档，所以直接读 DOM，不再还原设置值。
+/// 当前生效的明暗档，读 <html data-theme>。
 function currentMode() {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 }
@@ -246,9 +237,7 @@ function buildRow(config, repaint, ctx) {
       card.type = 'button';
       card.className = `skin-card${skin.id === active ? ' is-active' : ''}`;
       card.setAttribute('aria-pressed', String(skin.id === active));
-      // 色点：别的皮肤展示自己 accents 的第一项（用来看「这套皮肤默认长什么样」），
-      // **当前皮肤跟着 `appearance.accent` 走** —— 用户把主题色换成樱粉或自定义色之后，
-      // 这个点必须一起变，否则色板已经换了、皮肤那行还顶着原来的蓝，看着像没生效。
+      // 色点：其它皮肤取 accents 第一项，当前皮肤取 appearance.accent。
       const modes = skinModes(skin.id);
       const fallback = skinAccents(skin.id)[0]?.color || 'currentColor';
       const raw =
@@ -379,8 +368,7 @@ function buildRow(config, repaint, ctx) {
   } else if (config.type === 'colors') {
     const swatches = document.createElement('div');
     swatches.className = 'swatches';
-    // 预设主题色由当前皮肤提供（registry 的 accents），别处不再维护第二份色板。
-    // 第一个是这套皮肤的默认色：点它就等于「跟随皮肤」，换皮肤时会跟着变。
+    // 预设色来自当前皮肤 registry，第一项为默认色。
     const accents = skinAccents(currentSkin().id);
     const fallback = accents[0].color;
     const current = String(getSetting('appearance.accent', fallback)).toLowerCase();
@@ -388,8 +376,7 @@ function buildRow(config, repaint, ctx) {
       const isDefault = accent.color.toLowerCase() === fallback.toLowerCase();
       const swatch = document.createElement('button');
       swatch.className = `swatch${current === accent.color.toLowerCase() ? ' active' : ''}`;
-      // 色块显示「这个色在当前的深/浅档下长什么样」：雪白在浅色模式其实是深灰，
-      // 这里跟着换算，不然色板里会画一块浅色模式下根本用不了的白。
+      // 色块按当前明暗档换算后显示。
       swatch.style.background = accentForMode(accent.color, currentMode());
       swatch.title = isDefault ? `${accent.name}（这套皮肤的默认色）` : accent.name;
       swatch.setAttribute('aria-label', accent.name);
@@ -399,8 +386,7 @@ function buildRow(config, repaint, ctx) {
       });
       swatches.appendChild(swatch);
     }
-    // 自定义色：预设色不一定对得上壁纸/头像，留一个出口。
-    // 走同一份 `appearance.accent`，只是标记成用户自己挑的（换皮肤不再覆盖）。
+    // 自定义色写入 appearance.accent，并标记为用户自选。
     const custom = !accents.some((accent) => accent.color.toLowerCase() === current);
     const picker = document.createElement('button');
     picker.className = `swatch swatch-custom${custom ? ' active' : ''}`;
@@ -475,8 +461,7 @@ function detailSections(key, ctx, repaint) {
             {
               type: 'radioGroup',
               key: 'appearance.theme',
-              // 选项跟着皮肤走：只提供一套配色的皮肤不给「跟随系统」和另一档，
-              // 否则用户会选到一个永远不会生效的选项。
+              // 只列出皮肤支持的明暗档。
               options: [
                 ...(locked ? [] : [{ label: '跟随系统', value: 'system', desc: '随系统的深色/浅色设置自动切换' }]),
                 ...(modes.includes('light') ? [{ label: '浅色模式', value: 'light', desc: locked ? LOCKED_HINT : '' }] : []),
@@ -492,8 +477,6 @@ function detailSections(key, ctx, repaint) {
         {
           label: '主题颜色',
           rows: [
-            // 「动态取色」在 0.6.2 删除：它只在部分平台封面上取到过颜色，
-            // 移动端根本没有稳定的取色来源，留着只会让人以为主题色会自己变。
             { type: 'colors' },
           ],
         },
@@ -548,16 +531,14 @@ function detailSections(key, ctx, repaint) {
               valueMap: {
                 auto: '跟随平台',
                 highest: '最高清晰度',
-                // 键名不能写成纯数字：JS 对象会把整数样式的键按数值排到最前面，
-                // 菜单顺序就乱了（会变成 480/720/1080 打头）。
+                // 键名不能是纯数字，否则对象键按数值排序会打乱菜单顺序。
                 fullhd: '1080P 优先',
                 hd: '720P 优先',
                 sd: '480P 优先',
                 smooth: '流畅优先',
               },
               onChange: () => {
-                // 「记住清晰度」优先于默认清晰度，改了默认值就得把各平台记住的档位清掉，
-                // 否则新设置看起来「没生效」。键名前缀与 room.js 的 QUALITY_KEY 一致。
+                // 改默认清晰度时清掉各平台记住的档位；键面前缀与 room.js 一致。
                 for (const key of Object.keys(localStorage)) {
                   if (key.startsWith('simple-live.quality.')) localStorage.removeItem(key);
                 }
@@ -592,9 +573,7 @@ function detailSections(key, ctx, repaint) {
         {
           label: '直播间行为',
           rows: [
-            // 「进入直播间自动全屏」只在「播放页设置 → 直播间」里保留一份：
-            // 这里原本也有一份 `live.autoFullscreen`，但从没被读过，两处各改各的
-            // 就是 0.6.2 修掉的「同一个设置不联动」。
+            // 自动全屏只在 player 段保留一份。
             { type: 'switch', key: 'live.autoSwitchNext', title: '关播后自动换下一个', desc: '当前房间确认下播后，自动切到关注列表里的下一个直播间' },
             { type: 'switch', key: 'live.allowBackground', title: '允许后台继续播放', desc: '窗口失去焦点时保持视频与弹幕连接' },
             { type: 'switch', key: 'live.gesture', title: '滑动调节音量/亮度', desc: '播放页左右两侧上下滑动调节' },
@@ -654,9 +633,7 @@ function detailSections(key, ctx, repaint) {
         },
         { label: '提示', rows: [{ type: 'info', title: '即时生效', desc: '修改会立即保存，并在当前/下一个直播间生效', value: '已保存到本机' }] },
       ];
-      // 发送弹幕是写操作：默认连这一组设置都不出现，要在「关于」页连点版本号
-      // 7 次解锁（做法与安卓的开发者选项一致，见 docs/hidden-features.md）。
-      // 解锁后仍然默认关闭，需要用户再手动打开。
+      // 发送弹幕默认隐藏，需在「关于」页连点版本号 7 次解锁。
       if (getSetting('danmaku.sendUnlocked')) {
         groups.push({
           label: '发送弹幕（实验）',
@@ -697,8 +674,7 @@ function detailSections(key, ctx, repaint) {
         {
           label: '排序',
           rows: [
-            // 累计次数会把半年前刷过的房间一直顶在前面，近期常看的反而沉底；
-            // 直播中的永远排最前，这一项只决定「都在播」或「都没播」时的先后。
+            // 排序按近期观看次数，直播中的始终排在前面。
             { type: 'select', key: 'follow.sortWindow', title: '按进房热度排序', numeric: true, valueMap: { 7: '近 7 天的进房次数', 15: '近 15 天的进房次数', 0: '累计进房次数' }, desc: '直播中的主播始终排在前面；这一项决定其余情况下的顺序。' },
           ],
         },
@@ -757,8 +733,7 @@ function detailSections(key, ctx, repaint) {
             {
               type: 'action',
               icon: 'info',
-              // 安卓上应用私有目录连文件管理器都进不去（Android 11+ 连 Android/data 都封了），
-              // 所以那边落地成「分享日志文件」：系统分享面板发到微信/邮件/本地文件。
+              // 安卓日志通过系统分享面板导出。
               title: IS_MOBILE ? '分享日志文件' : '打开日志目录',
               desc: IS_MOBILE
                 ? '把运行日志通过系统分享发出去，便于反馈播放问题'
@@ -797,8 +772,7 @@ function applyScaleMode(mode) {
 // ---------------------------------------------------------------- 特殊页
 
 function paintHistory(content, ctx) {
-  // 观看记录页有两个视图：原始记录（最近看过的房间）与统计（按主播聚合的时长/次数）。
-  // 两者共用同一份数据源，不新增路由，避免动返回栈。
+  // 观看记录页两个视图：原始记录与统计，共用同一份数据源。
   let view = 'records';
   let range = 'week';
   let shown = 120;
@@ -821,17 +795,14 @@ function paintHistory(content, ctx) {
     if (view === 'stats') paintStats();
     else paintRecords();
     if (!animate) return;
-    // 切换「记录/统计」、清空后重画，内容整块是重建的，硬换很突兀。
-    // 重放同一个 class 才能让动画重新跑一次（浏览器只在 class 新出现时触发）。
+    // 重放动画 class 以重新触发过渡。
     content.classList.remove('pane-in');
     void content.offsetWidth;
     content.classList.add('pane-in');
   };
 
   function paintRecords() {
-    // 「加载更多」是直接再调一次本函数的，而顶部分段控件是 paint() 加的。
-    // 这里先清掉上一次画的内容（只留第一段），否则每点一次就叠一层：
-    // 两个「清空记录」、两份提示、两整份卡片，DOM 数量随点击次数涨。
+    // 重新渲染前清掉上一次画的内容，避免叠加。
     while (content.childElementCount > 1) content.lastElementChild.remove();
     const head = document.createElement('div');
     head.className = 'history-actions';
@@ -972,8 +943,7 @@ function formatBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/// 把用户输入规整成 `#rrggbb`。接受 `#RGB` / `#RRGGBB` / 不带 `#`，
-/// 其它一律返回 null——不去猜「红」「red」这类颜色名，猜错比报错更难受。
+/// 规整为 `#rrggbb`，接受 `#RGB` / `#RRGGBB` / 无 `#`，无法识别时返回 null。
 function normalizeHex(input) {
   const raw = String(input || '').trim().replace(/^#/, '');
   if (/^[0-9a-f]{3}$/i.test(raw)) {
@@ -983,10 +953,7 @@ function normalizeHex(input) {
   return null;
 }
 
-/// 把毫秒转成「2 小时 13 分」这类人话，统计卡片和排行都用它。
-///
-/// 最大单位固定到小时：用量到 30 小时时写「1 天 6 小时」，用户还得在脑子里换算，
-/// 而这个统计本来就是「看了多少小时」的直观量，超过 24 小时也照写 30 小时。
+/// 毫秒转成「2 小时 13 分」，最大单位为小时。
 function formatWatchTime(ms) {
   const seconds = Math.round((Number(ms) || 0) / 1000);
   if (seconds < 60) return `${seconds} 秒`;
@@ -997,9 +964,7 @@ function formatWatchTime(ms) {
   return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`;
 }
 
-/// 同步包范围说明。WebDAV 与局域网打包的是同一份 `buildBundle()`，
-/// 清单直接取自 `bundleScope()`，避免「界面上说同步了、实际没同步」。
-/// 开关一改就要重绘，所以每次调用都现算，不缓存。
+/// 同步包范围说明，清单取自 bundleScope()，每次现算。
 function bundleScopeNote() {
   const scope = bundleScope();
   const list = (items) => items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
@@ -1009,8 +974,7 @@ function bundleScopeNote() {
   </div></div>`;
 }
 
-/// 「同步内容」卡片：决定同步包里带不带观看记录与登录信息。
-/// 本机备份是另一条路（落在自己磁盘上），不受这里的开关影响。
+/// 「同步内容」卡片：控制同步包是否带观看记录与登录信息，不影响本机备份。
 function paintSyncScope(content, repaint) {
   const scope = getSetting('sync', {}) || {};
   const historyOn = scope.includeHistory !== false;
@@ -1073,8 +1037,7 @@ function stopSyncTimers() {
 }
 
 function paintSync(content, ctx, repaint) {
-  // 定时器在「数据同步」页内自己管：离开页面（renderSettingsDetail 的 dispose）要停掉，
-  // 重新进入或点「重画」时先把旧的清掉，否则两次轮询会同时往 DOM 里写。
+  // 轮询定时器由页面 dispose 清理，重画前先清旧定时器。
   stopSyncTimers();
   // ① 本机备份：仍是原来的导出一份 JSON / 导入回来。
   const backup = document.createElement('div');
@@ -1101,16 +1064,14 @@ function paintSync(content, ctx, repaint) {
       app: 'Starveil',
       exportedAt: new Date().toISOString(),
       settings: state.settings,
-      // `shield` 沿用 dart 导出的命名，导入侧（importer.js）认这个键。
-      // 0.7.4 起只剩关键词：按用户屏蔽已删除，users 不再导出。
+      // shield 沿用 dart 导出命名，导入侧认这个键。
       shield: {
         keywords: state.settings.danmaku?.blockKeywords || '',
       },
-      // 走 store 的读取而不是直接 JSON.parse：localStorage 里的数据可能被
-      // 半写入或手工改坏，未捕获的异常会让「导出备份」点了毫无反应。
+      // 走 store 读取，避免坏数据导致导出无反应。
       follows: loadFollow(),
       history: state.history,
-      // 0.6.2 补上：这两项以前既不在备份里也不在同步包里，换机后统计面板永远是空的。
+      // 备份与同步包都带上这两项，否则换机后统计面板为空。
       search: loadSearchHistory(),
       stats: loadStats(),
       // 登录信息（Cookie）一并导出，换机后导入即可恢复登录态。
@@ -1122,12 +1083,10 @@ function paintSync(content, ctx, repaint) {
   });
   backup.querySelector('#sync-import').addEventListener('click', () => pickJsonFile(runImport));
 
-  // ② 同步内容：决定后面两块（局域网 / WebDAV）打包时带什么。
-  // 开关一改就 repaint——清单文案是现算的，不重绘会显示上一个状态。
+  // ② 同步内容：决定局域网与 WebDAV 打包时带什么，开关改动后重绘。
   paintSyncScope(content, repaint);
 
-  // ③ 局域网同步：同一 Wi-Fi 下的设备自动互相发现，点一下就能拉取/发送整包配置。
-  // 传输走本机起的 HTTP 服务（见 src-tauri/src/lan_sync.rs），不经任何第三方服务器。
+  // ③ 局域网同步：同一 Wi-Fi 下自动发现并通过本机 HTTP 服务传输（src-tauri/src/lan_sync.rs）。
   const lan = document.createElement('div');
   lan.className = 'tool-card';
   lan.innerHTML = `
@@ -1157,8 +1116,7 @@ function paintSync(content, ctx, repaint) {
     )}<div>${escapeHtml(text)}</div></div>`;
   };
 
-  // 发现列表每 2 秒刷一次（UDP 广播本身 3 秒一次），顺带把收到的包捞出来。
-  // 发布自己的数据放在单独的 15 秒节拍上：打包要遍历关注/记录/统计，不必跟着刷新走。
+  // 发现列表每 2 秒刷新，自身数据每 15 秒发布一次。
   let lastPublish = 0;
   let busy = false;
   const publish = async () => {
@@ -1334,9 +1292,7 @@ function paintSync(content, ctx, repaint) {
   })();
 
 
-  // ④ 从 dart_simple_live 迁移：直接吃它导出的 profile JSON。
-  // 这里只建节点，真正插入 DOM 放到 WebDAV 之后——让「局域网 / WebDAV」两条同步路子相邻，
-  // 迁移入口排在最后。
+  // ④ 从 dart_simple_live 导入 profile JSON；节点在 WebDAV 之后插入。
   const migrate = document.createElement('div');
   migrate.className = 'tool-card';
   migrate.innerHTML = `
@@ -1366,10 +1322,7 @@ function paintSync(content, ctx, repaint) {
     }
   }
 
-  // ④ WebDAV 同步：整包上传/下载，不做字段级合并。
-  // 和上面的局域网同步是两条独立的路：WebDAV 靠自己的网盘当中转（跨网络也能用），
-  // 局域网同步只在同一 Wi-Fi 内直连。0.6.1 之前这里叫「WebDAV 局域网同步」，
-  // 名字和功能对不上，0.6.2 拆开成两块。
+  // ⑤ WebDAV 同步：整包上传/下载，不做字段级合并。
   const config = state.settings.sync.webdav;
   const sync = document.createElement('div');
   sync.className = 'tool-card';
@@ -1457,8 +1410,7 @@ function paintSync(content, ctx, repaint) {
 
   sync.querySelector('#dav-download').addEventListener('click', async () => {
     const cfg = readForm();
-    // 先下载再确认：不知道云端那份到底带了什么（对方可能关着历史/登录信息同步），
-    // 泛泛地写「关注、观看记录与设置」会让人误判。
+    // 先下载再确认，确认框列出包内实际内容。
     showState('正在读取云端文件…');
     try {
       const payload = await api.webdavDownload(target(), cfg.username, cfg.password, cfg.insecureTls);
@@ -1528,8 +1480,7 @@ function describeImport(summary) {
   return `导入完成：${parts.length ? parts.join('，') : '没有可导入的内容'}`;
 }
 
-/// 一份同步包里实际带了什么，用在「即将覆盖」的确认弹窗上。
-/// 直接数包里的键而不是读本机设置——对端开着哪些开关，只有包自己知道。
+/// 同步包内容摘要，用于覆盖确认弹窗。
 function describeBundleContents(bundle) {
   const parts = [];
   if (bundle.follow?.length) parts.push(`关注 ${bundle.follow.length} 个`);
@@ -1544,8 +1495,7 @@ function describeBundleContents(bundle) {
   return parts.join('、');
 }
 
-/// 导入一份数据并把 Cookie 注回后端。文件导入 / WebDAV / 局域网三条路共用：
-/// 少了注入这一步，页面看着「已登录」，取流其实还是游客。
+/// 导入数据并把 Cookie 注回后端；文件导入、WebDAV、局域网三条路共用。
 async function applyImport(data) {
   const summary = importData(data);
   for (const platform of summary.accounts || []) {
@@ -1624,8 +1574,7 @@ function paintAbout(content, ctx) {
       <div class="setting-row"><div class="setting-info"><div class="setting-title">致敬</div><div class="setting-desc">界面与交互参考 dart_simple_live（xiaoyaocz）</div></div></div>
     </div>`;
   content.appendChild(card);
-  // 隐藏开关：连点版本号 7 次解锁「发送弹幕」，做法与安卓的开发者选项一致。
-  // 解锁说明见 docs/hidden-features.md（本地文档，不入库）。
+  // 连点版本号 7 次解锁「发送弹幕」（见 docs/hidden-features.md）。
   const versionLabel = card.querySelector('#about-version');
   let taps = 0;
   let lastTap = 0;

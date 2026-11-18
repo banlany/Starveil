@@ -406,11 +406,8 @@ impl LiveSite for KuaishouSite {
         page: u32,
         _sign: &QuerySign,
     ) -> Result<Vec<LiveRoomItem>, LiveError> {
-        // 快手网页首页分「首屏」和「换一批」两套接口：
-        // - `home/list` 是首屏，固定返回 4 个 label 分组、每组 12 个房间，
-        //   **没有分页参数**，`?page=2` 也是同一份数据；
-        // - `home/more?labelId=N` 才是「换一批」，每次调用返回一批新的热门房间。
-        // 之前用 page>1 直接返回空，界面上「加载更多」就成了死按钮。
+        // 首页分两套接口：`home/list` 是首屏，固定 4 个 label 分组、每组 12 个房间，
+        // 不接受分页参数；`home/more?labelId=N` 才是「换一批」。
         if page > 1 {
             // labelId 2~5 对应首屏那四个分组（热推 / 端游 / 手游 / 主机），
             // 按页轮换，避免每次「加载更多」都只翻同一个分组。

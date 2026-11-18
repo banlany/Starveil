@@ -1,10 +1,4 @@
-//! Windows 系统能力：剪贴板写入、用默认浏览器打开链接。
-//!
-//! 这两件事以前是 `cmd /C clip` / `cmd /C start` 做的，每次都会闪一个黑色终端窗口，
-//! 而且 `copy` 还要同步等子进程退出，界面会明显卡一下。
-//!
-//! 这里直接调 Win32 API：不弹窗、不起子进程、不阻塞 UI 线程。
-//! 只声明真正用到的几个函数，不引入 `windows` crate（少一个依赖，也少一层版本耦合）。
+//! Windows 系统能力：写剪贴板、打开链接与目录，直接调用 Win32 API。
 
 #[cfg(windows)]
 mod platform {
@@ -72,9 +66,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 用系统默认程序打开链接。
-///
-/// `ShellExecuteW` 的返回值 <= 32 表示失败（32 本身是 `SE_ERR_NOASSOC`）。
+/// 用默认程序打开链接；`ShellExecuteW` 返回值 <= 32 视为失败。
 #[cfg(windows)]
 pub fn open_in_browser(url: &str) -> Result<(), String> {
     use platform::*;
@@ -101,9 +93,6 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
 }
 
 /// 用资源管理器打开目录。
-///
-/// 和 `open_in_browser` 是同一个 `ShellExecuteW`，区别只是目标换成路径：
-/// 对目录传 "open" 会直接开出那个文件夹，而不是拿浏览器去解析 `file://`。
 #[cfg(windows)]
 pub fn open_folder(path: &str) -> Result<(), String> {
     use platform::*;

@@ -1,21 +1,10 @@
 /* ============================================================
-   移动端布局（Android / iOS）
-   ------------------------------------------------------------
-   由 `<html class="is-mobile">` 激活（index.html 的 head 内联脚本在首帧前打标，
-   platform.js 会再确认一次）。桌面浏览器 / 桌面客户端不带这个类，
-   所以下面的规则一条都不会命中，桌面外观与行为完全不变。
-
-   四件事：
-   1. 去掉 Windows 那套自绘标题栏与边缘缩放热区；
-   2. rail 竖屏在底部（拇指可达）、横屏回左侧（与桌面一致），
-      顶部留状态栏、底部留手势条；
-   3. 直播间竖屏改上下分栏（视频在上、聊天在下），横屏保持左右分栏；
-   4. 状态栏/导航栏的颜色由 `store.js` 的 `applyTheme` 推给原生，这里只负责留白。
+   移动端布局（Android / iOS），由 html.is-mobile 激活。
+   系统栏颜色由 store.js 的 applyTheme 推送，这里只负责留白。
    ============================================================ */
 
 html.is-mobile {
-  /* 系统状态栏 / 手势条的留白；viewport-fit=cover 已在 index.html 打开。
-     横屏时刘海在侧边，所以左右也要留。 */
+  /* 系统状态栏与手势条留白（viewport-fit=cover）。 */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -42,8 +31,7 @@ html.is-mobile body {
 
 /* ------------------------------------------------------------ 外壳：rail → 底部 TabBar */
 
-/* 用 order 而不是 column-reverse：body 里还有 overlay-root / toast-root，
-   反转整个 body 会把它们挪到上面去。 */
+/* 用 order 调整底栏位置，避免影响 overlay-root 等固定层。 */
 html.is-mobile .app {
   flex-direction: column;
 }
@@ -56,8 +44,7 @@ html.is-mobile .main {
 html.is-mobile .rail {
   order: 2;
   width: 100%;
-  /* 0.7.4：58 → 50。底栏每省下 8px 都直接变成内容可视高度，
-     按钮仍是 44px（Android 无障碍下限），只是不再在按钮上下留白。 */
+  /* 底栏高度 50px，按钮保持 44px 触控热区。 */
   height: calc(50px + var(--safe-bottom));
   flex-direction: row;
   align-items: stretch;
@@ -77,8 +64,7 @@ html.is-mobile .rail-top {
 }
 
 html.is-mobile .rail-btn {
-  /* 触控热区不小于 44px（Android 无障碍下限），图标本身保持原尺寸。
-     flex 均分让四个按钮等宽，不会在右侧空出一截。 */
+  /* 触控热区不小于 44px，四键等宽。 */
   width: auto;
   height: 44px;
   min-width: 44px;
@@ -142,9 +128,7 @@ html.is-mobile .rail-btn .ico {
     color: var(--muted);
   }
 
-  /* 选中项是主题色 + 实心图标，不垫底色；按下时才给一层主题色淡底。
-     桌面那条 `.rail-btn:active` 特异性比这里上面的 `:hover` 低，会被压掉，
-     所以触屏这一份得自己写（值保持一致，两边看起来是同一个反馈）。 */
+  /* 触屏按下态；桌面规则会被 :hover 覆盖，这里单独写。 */
   html.is-mobile .rail-btn.active:hover {
     background: transparent;
     color: var(--accent);
@@ -159,8 +143,7 @@ html.is-mobile .rail-btn .ico {
     background: var(--surface-3);
   }
 
-  /* 触屏点完 `:hover` 会一直粘在刚点的那个标签上：未选中的会一直显示成
-     前景色，跟真正选中的（主题色）混在一起。这里把悬停态按住不动。 */
+  /* 触屏无 hover，点按后保持未选中样式。 */
   html.is-mobile .platform-tab:hover {
     color: var(--muted);
   }
@@ -177,8 +160,7 @@ html.is-mobile .topbar {
   height: calc(var(--topbar-height) + var(--safe-top));
   padding-left: 12px;
   padding-right: 12px;
-  /* 五个平台的标签在 360px 宽的竖屏上放不下：让标签条自己横向滚动，
-     而不是被居中布局挤到两边溢出（右侧的搜索按钮是绝对定位，留出它的位置）。 */
+  /* 窄屏下标签条横向滚动，并为右侧搜索按钮留位。 */
   justify-content: flex-start;
   padding-right: 96px;
 }
@@ -192,10 +174,7 @@ html.is-mobile .topbar-refresh {
   left: 10px;
 }
 
-/* 手机顶栏从左到右是「刷新 / 平台标签 / 搜索」三块挨着的东西：
-   刷新是图标、标签是文字、搜索又是图标，中间没有分隔，看上去就是一整条。
-   两条 1px 竖线把它们切成三段——只有首页有刷新按钮，所以左边那条
-   跟着 .has-refresh 出现，分类页只留右边那条（平台 | 搜索）。 */
+/* 顶栏分隔线：首页有刷新时两侧都显示，分类页只留右侧。 */
 html.is-mobile .topbar::before,
 html.is-mobile .topbar::after {
   content: '';
@@ -225,8 +204,7 @@ html.is-mobile .topbar::after {
 html.is-mobile .platform-tabs {
   flex: 0 1 auto;
   min-width: 0;
-  /* 去掉 logo 之后标签只剩文字，标签之间不需要再留 4px：收紧到 2px，
-     窄屏上一屏能多露出半个标签，也是在暗示「这一条还能往左滑」。 */
+  /* 标签间距 2px。 */
   gap: 2px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -273,9 +251,7 @@ html.is-mobile .page-pad {
   padding-bottom: calc(24px + var(--safe-bottom));
 }
 
-/* 竖屏（手机、平板竖着拿）：卡片列数不能白捡桌面的 210px 最小列宽。
-   minmax 的最小值跟屏宽走，一行几张就由「屏宽 / 这个值」决定，
-   360dp 的手机是 2 张，768 的平板正好 3 张，再宽也不会一路加到豆腐块。 */
+/* 竖屏卡片列数按屏宽自适应。 */
 @media (orientation: portrait) {
   html.is-mobile .room-grid {
     grid-template-columns: repeat(auto-fill, minmax(clamp(148px, 26vw, 240px), 1fr));
@@ -288,8 +264,7 @@ html.is-mobile .page-pad {
   }
 }
 
-/* 关注卡片在手机上一行两张：头像小一号、留白收紧，一张卡从 178px 压到 126px，
-   一屏能多看两排。高度不再写死，内容多了自己长。 */
+/* 关注卡片一行两张，头像缩小、留白收紧。 */
 html.is-mobile .follow-card {
   min-height: 126px;
   padding: 14px 8px 8px;
@@ -344,8 +319,7 @@ html.is-mobile .setting-row.clickable:active {
 }
 
 /* 弹层在窄屏上占满宽度，别再留 40px 边。 */
-html.is-mobile .modal,
-html.is-mobile .dialog {
+html.is-mobile .modal {
   max-width: calc(100vw - 24px);
 }
 
@@ -356,16 +330,13 @@ html.is-mobile .room-page {
   padding-top: var(--safe-top);
 }
 
-/* 横屏（平板/手机横过来）：底部 TabBar 会占掉一行，视频区让出空间即可，
-   其余保持桌面那套左右分栏。 */
+/* 横屏保留左右分栏，视频区让出底栏高度。 */
 html.is-mobile .chat-resizer {
   display: none;
 }
 
 @media (orientation: portrait) {
-  /* 竖屏：视频在上、聊天在下。
-     高度不再死守 16:9：room.js 的 applyStageSize() 会按视频真实比例量一个
-     `--stage-h`（撑满宽度应有高度 vs 剩余高度取小），首帧之前仍用 16:9 兜底。 */
+  /* 竖屏：视频在上、聊天在下；--stage-h 由 applyStageSize 计算。 */
   html.is-mobile .room-main {
     flex-direction: column;
     background: var(--media-bg);
@@ -402,8 +373,7 @@ html.is-mobile .chat-resizer {
     border-top: 1px solid var(--room-line);
   }
 
-  /* 竖屏的收起/展开是「向下折」，按钮上的箭头也跟着换成上下方向。
-     折叠后靠底部中间这颗「向上箭头 + 聊天」把手拉回来，别再藏到屏幕边上。 */
+  /* 竖屏折叠为向下收起，展开把手位于底部中间。 */
   html.is-mobile .chat-expand {
     right: 50%;
     top: auto;
@@ -442,9 +412,7 @@ html.is-mobile .chat-resizer {
     height: calc(46px + var(--safe-bottom));
   }
 
-  /* 竖屏控制条放不下的控件不是一刀切全藏：room.js 的 applyControlDensity 会量宽度，
-     按「线路 → 画质 → 时间」的顺序逐级挂上下面这些类，刚好放得下就停手。
-     小窗按钮留在控制条上（竖屏最常用），收起来的项在「更多」菜单里都能找到。 */
+  /* 控制条逐级收起（见 applyControlDensity），收起的项在「更多」菜单里。 */
   html.is-mobile .room-page.ctrl-hide-line #ctrl-line,
   html.is-mobile .room-page.ctrl-hide-quality #ctrl-quality,
   html.is-mobile .room-page.ctrl-hide-clock #player-clock {
@@ -466,14 +434,12 @@ html.is-mobile .chat-resizer {
     height: 40px;
   }
 
-  /* 档位名最长给到 5 个字左右（「1080p60」放得下，「蓝光 4M · HLS」会缩写），
-     再长就让省略号收尾——绝不让文字把中间那段撑爆。 */
+  /* 档位文字过长时省略。 */
   html.is-mobile .room-page .player-controls .ctrl-label {
     max-width: 4.6em;
   }
 
-  /* 音量条在窄屏上不再往右展开（那会把右边的按钮顶出去），
-     改成按钮正上方的竖条浮层，点按钮开关、点别处自动收起。 */
+  /* 音量条改为按钮上方的竖条浮层。 */
   html.is-mobile .room-page .volume-wrap {
     position: relative;
     gap: 0;
@@ -516,14 +482,11 @@ html.is-mobile .chat-resizer {
   }
 }
 
-/* 横屏（手机横过来）：设置页/搜索这类「一行一行读」的页面限宽，
-   读起来不至于一行跨一米；首页、关注、分类是卡片流，两侧空间要用来多放几列，
-   所以不能限宽——之前统一限 760px，横屏时两侧各空出一大块，列数还是竖屏那些。 */
+/* 横屏下设置、搜索类页面限宽；卡片流页面不限宽。 */
 @media (orientation: landscape) {
   html.is-mobile .settings-page,
   html.is-mobile .settings-content,
-  /* 分类下的直播间列表是卡片流，不是「一行一行读」的正文，限宽会让平板上两侧空一片、
-     列数还不如竖屏（`:not` 把 `.category-rooms-body` 排除在外）。 */
+  /* 分类房间列表为卡片流，不限宽。 */
   html.is-mobile .subpage-body:not(.category-rooms-body),
   html.is-mobile .search-body {
     max-width: 760px;
@@ -531,10 +494,7 @@ html.is-mobile .chat-resizer {
     margin-right: auto;
   }
 
-  /* 横屏用更小的最小列宽：640px 宽的手机也能从 3 列变 4 列，平板能再多几列。
-     最小列宽跟着屏宽涨（clamp 的下限 150px、上限 280px），
-     1280 CSS px 的平板是 5 列、1920 是 6 列，不会像以前那样一路加到一行十几个豆腐块。
-     上限那档再配合下面的限宽，2560 这种超宽屏也不会超过 6 列。 */
+  /* 横屏最小列宽随屏宽变化（clamp 150–280px）。 */
   html.is-mobile .room-grid {
     grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 17vw, 280px), 1fr));
     gap: 14px 10px;
@@ -549,9 +509,7 @@ html.is-mobile .chat-resizer {
   }
 }
 
-/* 超宽屏（高分辨率平板横屏）：列数到此为止，剩下的空间居中留白。
-   限宽 1760px 配上 280px 的最小列宽，最多 6 列——再多的列只会让封面变小、
-   标题只剩两三个字，翻起来更累。 */
+/* 超宽屏限制最大列数并居中留白。 */
 @media (orientation: landscape) and (min-width: 1500px) {
   html.is-mobile .room-grid,
   html.is-mobile .follow-grid {
@@ -588,18 +546,14 @@ html.is-pip .stage {
 }
 
 /* ------------------------------------------------------------ 安卓「全屏」 */
-/* WebView 不支持 requestFullscreen，全屏是 room.js 的 setTheater 拼出来的：
-   这里把视频铺满、其余 UI 收起，系统栏由原生 set_immersive 藏起来。
-   桌面走浏览器 Fullscreen API（.room-page.is-fullscreen），不受这一段影响。 */
+/* 安卓全屏（html.is-theater）：视频铺满，系统栏由 set_immersive 隐藏。 */
 html.is-mobile.is-theater {
   /* 系统栏已经藏了，再按 safe-area 留白就会在顶部露一条黑边。 */
   --safe-top: 0px;
   --safe-bottom: 0px;
 }
 
-/* 顶部浮层（返回 / 标题 / 关注 / 分享）要留着：全屏只看画面时也得知道在哪个房间、
-   能一键退出。它和底部控制条共用 room.js 的 ui-idle，2.8 秒无操作一起淡出，
-   碰一下屏幕再一起回来。 */
+/* 顶部浮层保留，与底部控制条共用 ui-idle。 */
 html.is-theater .rail,
 html.is-theater .room-footer,
 html.is-theater .room-chat,
@@ -630,17 +584,14 @@ html.is-theater .stage {
   border-radius: 0 !important;
 }
 
-/* 系统栏藏了，顶栏直接贴在物理屏幕边缘，补一层渐变让文字在亮画面上也读得清。
-   渐隐在皮肤层（--media-fade-top），浮层底色在它上面：给了不透明底色的皮肤
-   会盖掉这层渐隐，得到一条纯色顶栏。 */
+/* 顶部渐变，保证文字在亮画面上可读。 */
 html.is-theater .room-topbar {
   padding: calc(var(--safe-top) + 12px) calc(var(--safe-right) + 18px) 26px calc(var(--safe-left) + 18px);
   background: var(--media-topbar-bg), var(--media-fade-top);
 }
 
 /* ------------------------------------------------------------ 下拉刷新 */
-/* app.js 的 initPullRefresh 负责手势，这里只管那颗胶囊的外观。
-   默认停在屏幕上方外面，拖动时由 JS 用 transform 拉下来。 */
+/* 下拉刷新胶囊外观；位置由 JS 控制。 */
 .pull-refresh {
   position: fixed;
   top: calc(var(--safe-top, 0px) + 8px);
@@ -655,8 +606,7 @@ html.is-theater .room-topbar {
   border: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
-  /* 不要投影：胶囊是压在列表上方的，阴影会投到下面的内容上，
-     在浅色卡片和封面上看起来像一圈脏边。 */
+  /* 不加投影，避免在内容上留下暗边。 */
   box-shadow: none;
   z-index: 3500;
   pointer-events: none;
@@ -696,11 +646,7 @@ html.is-mobile .pull-refresh {
 }
 
 /* ------------------------------------------------------------ 左右滑动翻页 */
-/* 切完页给聊天栏一个极轻的淡入，免得看起来像「闪了一下」。
-   ｜ 整页切换（首页/分类页切平台）的入场已经由 styles.css 的 .page-enter 统一处理，
-   这里只管直播间内部切聊天标签——它不重建页面，蹭不到那条动画。
-   只用 opacity，不动 transform：#view 里可能有 position: fixed 的浮层，
-   transform 会让它们改成相对 #view 定位。 */
+/* 切聊天标签时的淡入，只用 opacity。 */
 html.is-mobile .chat-list.swipe-in {
   animation: swipe-fade var(--dur-fast) var(--ease);
 }

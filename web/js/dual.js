@@ -1,29 +1,21 @@
-// 同屏播放的 B 路：独立的取流 + 播放，不碰直播间 A 的那套状态机。
-//
-// A 的画面在同屏时会被 B 盖住，A 只保留声音和弹幕（走代理的纯音频流）。
-// 这里只负责把 B 播起来，并提供三件事给上层：静音、按秒对齐、销毁。
+// 同屏播放的 B 路：独立取流与播放，向 A 提供音量、对齐与销毁。
 import { api, normalizePlatform } from './api.js';
 import { flvBufferOptions, hlsBufferOptions } from './player-buffer.js';
 
 /// 直链判断：只认 http(s) 且以 .flv / .m3u8 结尾（允许带查询串）。
 const STREAM_URL = /^https?:\/\/\S+\.(flv|m3u8)(\?|#|$)/i;
 
-/// 本应用自己的代理地址：`/stream/<token>`，路径里没有扩展名。
-///
-/// 「更多 → 复制直播流」复制的就是它。它带着平台的 Referer / UA，粘回同屏
-/// 面板能直接播；以前只认 .flv/.m3u8，这种地址会被当成直播间链接丢给平台解析，
-/// 报「没认出这个链接属于哪个平台」。
+/// 本应用的代理地址 `/stream/<token>`，无扩展名；带 Referer / UA，可直接用于同屏播放。
 const LOCAL_PROXY = /^https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/stream\/[^\s?#/]+(?:[?#]\S*)?$/i;
 
-/// B 默认不用最高档：两路同时解码对机器压力不小，画面只占屏幕的一半时
-/// 1080p 和 4K 的差别看不出来，带宽却差一倍。
+/// B 默认不用最高档，降低两路同时解码的压力。
 const QUALITY_HINT = 1;
 
 /// 缓冲里能退/进多少秒。mpegts 的后向缓冲是 30~60 秒，留一点余量。
 const SEEK_LIMIT = 30;
 
 /// 解析用户输入：直播间链接/房间号，或者一条直链。
-export async function parseDualTarget(currentPlatform, input) {
+async function parseDualTarget(currentPlatform, input) {
   const value = String(input || '').trim();
   if (!value) throw new Error('请填写 B 的直播间链接或流地址');
   if (STREAM_URL.test(value) || LOCAL_PROXY.test(value)) {
@@ -51,10 +43,7 @@ export async function parseDualTarget(currentPlatform, input) {
   };
 }
 
-/// 在已缓冲的范围内前后走一段：`seconds` 正数往前，负数往后退。
-///
-/// 直播流没法「提前」拿到还没收到的内容，所以前向最多追到缓冲末尾前 0.6 秒，
-/// 超过就停在还能播的那一头。返回实际移动了多少秒（0 表示没动）。
+/// 在已缓冲范围内前后移动：seconds 正数向前、负数向后，前向最多到缓冲末尾前 0.6 秒。
 export function seekInBuffer(video, seconds) {
   const delta = Number(seconds);
   if (!Number.isFinite(delta) || Math.abs(delta) < 0.05) return 0;
@@ -125,8 +114,7 @@ export function createDualPlayback(video, onState) {
     onState?.(snapshot());
   }
 
-  // 出画才算真的载入成功：到这里把 loading / 重试计数都归零，
-  // 否则面板会一直写着「正在载入 B…」。
+  // 出画即载入成功，重置 loading 与重试计数。
   video.addEventListener('playing', () => {
     if (!session.open) return;
     session.loading = false;
@@ -363,10 +351,7 @@ export function createDualPlayback(video, onState) {
     emit();
   }
 
-  /// 面板上的 B 音量。0 等同静音。
-  ///
-  /// 这里刻意不 emit：面板的滑块是连续的 input 事件，一 emit 就会
-  /// renderDualPanel 重画 innerHTML，正在拖的滑块立刻被换掉、拖动中断。
+  /// 面板上的 B 音量；不触发事件，避免拖动时重画面板。
   function setVolume(value) {
     const next = Math.max(0, Math.min(1, Number(value) || 0));
     video.volume = next;
@@ -374,10 +359,7 @@ export function createDualPlayback(video, onState) {
     video.muted = session.muted;
   }
 
-  /// 按秒对齐：`seconds` 正数往前跳，负数往后退。
-  ///
-  /// 直播流没法「提前」拿到还没收到的内容，所以只在前向缓冲里走：
-  /// 目标超出已缓冲范围时，停在还能播的那一头，并把实际移动量返回给上层。
+  /// 对齐到指定偏移：seconds 正数向前、负数向后，返回实际位移。
   function seekBy(seconds) {
     return seekInBuffer(video, seconds);
   }

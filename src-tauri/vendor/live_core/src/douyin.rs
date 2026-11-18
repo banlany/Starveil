@@ -72,12 +72,9 @@ impl DouyinSite {
 
     /// 请求用的 Cookie：登录态优先，缺 `ttwid` 时补一个匿名的。
     ///
-    /// 抖音的房间/取流接口只认 `ttwid`，登录 Cookie 里未必带它
-    /// （用户可能是从别的入口登进来），所以两种情况都保证 ttwid 在里面。
-    ///
-    /// 另外顺手补上首页下发的 `__ac_nonce` / `msToken`：登录 Cookie 里通常
-    /// 没有这两个，而少它们的请求更容易被回 200 + 空 body（看着像「解析失败」）。
-    /// 补的时候要把匿名 cookie 里的 `ttwid` 剔掉，别和登录态那份打架。
+    /// 房间/取流接口只认 `ttwid`，登录 Cookie 未必带它。另外补上首页下发的
+    /// `__ac_nonce` / `msToken`，缺这两项时接口容易回 200 + 空 body。
+    /// 从匿名 Cookie 补值时剔掉它那份 `ttwid`，避免同名重复。
     fn cookie(http: &HttpSession) -> Result<String, LiveError> {
         let Some(login) = http.cookie().map(str::trim).filter(|text| !text.is_empty()) else {
             return Self::anonymous_cookie(http);

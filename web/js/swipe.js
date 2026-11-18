@@ -1,17 +1,9 @@
-// 横向滑动手势（移动端）。
-//
-// 只认「明确横向」的拖动：水平位移过阈值、且明显大于垂直位移，其它一律交给
-// 浏览器当纵向滚动。所以列表上下滑、点击、长按都不受影响。
-//
-// 两个额外让路：
-// 1. 起点落在可以横向滚动的容器里（平台标签条之类）——那里用户想滚动的是它本身；
-// 2. 起点在输入框/下拉框上——那是选词、拖动光标的手势。
-
-// 触发需要的水平位移。比系统手势的阈值小一点，屏幕窄、手指短也好触发。
+// 横向滑动手势（移动端）：位移过阈值且明显偏横才翻页，
+// 起点在横向滚动容器或输入控件上时不接管。
 const MIN_DISTANCE = 52;
-// |dy| 超过 |dx| 的这个比例就判成「斜着滚列表」，放弃这次手势。
+// |dy| 超过 |dx| 的这个比例就判成纵向滚动。
 const MAX_TILT = 0.62;
-// 按下到抬起超过这个时间算慢速拖动，不当作翻页。
+// 按下到抬起超过这个时长不算翻页。
 const MAX_MS = 800;
 
 function startsInScrollableX(node, boundary) {
@@ -24,9 +16,8 @@ function startsInScrollableX(node, boundary) {
   return false;
 }
 
-/// 绑定横向滑动，`handler('left' | 'right')`。
-/// left = 手指往左划（看下一页），right = 往右划（看上一页）。
-/// 移动端之外调用无效——桌面上鼠标拖拽会误触。
+/// 绑定横向滑动，`handler('left' | 'right')`：left = 手指左划（下一页），right = 右划（上一页）。
+/// 仅在移动端生效。
 export function bindHorizontalSwipe(target, handler) {
   let tracking = false;
   let startX = 0;

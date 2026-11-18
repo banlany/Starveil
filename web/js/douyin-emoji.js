@@ -1,15 +1,6 @@
-// 抖音直播间的小表情。
-//
-// 抖音只在正文里给 `[捂脸]` 这样的**词**，图并不在弹幕数据里：`rtfContent` 的图片片段
-// 只覆盖「互动表情 / 粉丝团表情」那一小部分，普通小表情全靠这张本地表换算。
-// 图与 dart 版同一套 assets，已转成 WebP（q90，2.1 MB → 0.45 MB）。
-//
-// 键是正文里的原样 token（带中括号），值是 `[文件名, 宽, 高]`。
-// 尺寸要如实带出来：原图并非全是正方形（96×96 有 118 张，其余宽到 96~111），
-// 弹幕层按宽高比缩放，写死 96×96 会把宽的那几张压扁。
-//
-// 注意 `new Map()` 只吃 `[键, 值]` 两项：多写的第三、四个元素会被**静默丢掉**，
-// 值就退化成字符串再被解构成一堆字符。所以尺寸必须包成数组，不能平铺。
+// 抖音直播间小表情的本地映射表。
+// 键为正文里的原样 token（带中括号），值为 [文件名, 宽, 高]；尺寸用于按比例缩放，
+// 因此必须包成数组，不能平铺成多个元素。
 const FILES = new Map([
   ['[V5]', ['clv.webp', 96, 96]],
   ['[给力]', ['clw.webp', 96, 96]],
@@ -160,15 +151,14 @@ const BASE = 'assets/douyin-emoji/';
 const TOKEN = /\[[^\[\]]{1,16}\]/g;
 
 /// 把一个 token 换成 `{ url, width, height }`；不是抖音表情就返回 null。
-export function douyinEmoji(key) {
+function douyinEmoji(key) {
   const hit = FILES.get(key);
   if (!hit) return null;
   const [file, width, height] = hit;
   return { url: `${BASE}${file}`, width, height };
 }
 
-/// 补全一条弹幕里缺图的表情：已有 `emoticons` 里没有的 token 才补，避免盖掉平台下发的图。
-/// 一个都没补上时返回 `null`（调用方按「没有表情」处理，别塞个空数组进去）。
+/// 补全弹幕中缺图的表情；没有可补的 token 时返回 null。
 export function expandDouyinEmoticons(text, emoticons) {
   const value = text == null ? '' : String(text);
   if (!value.includes('[')) return emoticons && emoticons.length ? emoticons : null;

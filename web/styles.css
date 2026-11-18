@@ -1,9 +1,7 @@
 /* ============================================================
    Simple Live · 基础样式（结构与布局）
-   ------------------------------------------------------------
-   颜色、圆角、阴影、字体、动效时长全部来自皮肤文件
-   `web/skins/<id>/skin.css`；这个文件里**不许出现颜色字面量**。
-   需要新颜色时先往皮肤契约里加变量，再在这里消费。
+   颜色、圆角、阴影、字体、动效时长全部来自 skins/<id>/skin.css，
+   本文件不写颜色字面量。
    ============================================================ */
 
 :root {
@@ -60,9 +58,7 @@ img {
   max-width: 100%;
 }
 
-/* 图标也属于皮肤：线宽 / 端点 / 拐角三件套从 --icon-* 取，
-   一套皮肤里侧栏、按钮、菜单的图标会一起换质感。
-   `stroke` 和 `fill` 仍由 icon() 写在标签上（个别图形要实心），别在这里覆盖。 */
+/* 图标的线宽、端点、拐角取自 --icon-*；stroke / fill 由 icon() 写在标签上。 */
 .ico {
   display: block;
   flex: none;
@@ -78,14 +74,6 @@ img {
 
 .muted {
   color: var(--muted);
-}
-
-.accent {
-  color: var(--accent);
-}
-
-.spacer {
-  flex: 1;
 }
 
 /* ------------------------------------------------------------ 外壳 */
@@ -125,8 +113,7 @@ img {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  /* 只过渡颜色。以前这里还挂了 transform，配上 `.rail-btn:active` 的缩放，
-     点一下导航图标就跟着缩一下，看着像「点哪动哪」。 */
+  /* 只过渡颜色，导航按钮按下时不位移、不缩放。 */
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
@@ -135,8 +122,7 @@ img {
   height: 25px;
 }
 
-/* 线条 / 实心两版图标叠在同一个按钮里，按选中态切。
-   两版都留在 DOM 里，切页时不用重写 innerHTML，也不会先闪一下。 */
+/* 线框 / 实心两版图标叠放在按钮内，按选中态切换。 */
 .rail-btn .rail-ico {
   display: flex;
   align-items: center;
@@ -160,8 +146,7 @@ img {
   background: var(--surface);
 }
 
-/* 选中项：主题色 + 实心图标，不再垫深色块。
-   深色块在底栏上像一块「按下去的按钮」，而且和皮肤的主色毫无关系。 */
+/* 选中项：主题色 + 实心图标，不垫底色。 */
 .rail-btn.active {
   color: var(--accent);
   background: transparent;
@@ -172,14 +157,12 @@ img {
   background: var(--surface);
 }
 
-/* 按下只加深一层主题色淡底，不缩放、不位移。
-   导航是常驻的，图标一缩就像在抖；点一次缩一次，连点几下更像没点准。 */
+/* 按下只加一层主题色淡底，不缩放、不位移。 */
 .rail-btn:active {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-/* 选中项要单独写一条：`.rail-btn.active:hover` 的特异性比上面那条高，
-   不覆盖的话鼠标停在选中项上按下去，底色会变成中性的悬停灰。 */
+/* 覆盖选中项的 hover，按下时保持主题色淡底。 */
 .rail-btn.active:active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
@@ -235,8 +218,7 @@ img {
   font-size: var(--tab-font);
   font-weight: 500;
   white-space: nowrap;
-  /* 不参与收缩：标签条在窄屏上是横向滚动的，允许收缩的话每个按钮会被挤扁、
-     文字溢出边框摞在一起（以前有 logo 撑着还看不出来，换成纯文字就糊成一团）。 */
+  /* 不参与收缩，否则窄屏上标签会被挤扁、文字溢出。 */
   flex: none;
   transition: color var(--dur-fast) var(--ease);
 }
@@ -245,24 +227,20 @@ img {
   color: var(--fg);
 }
 
-/* 选中项：加粗 + 主题色。
-   以前只加粗，五个标签全是黑白灰，只能靠下划线认；换成主题色之后
-   「当前在哪一站」和「这套皮肤什么颜色」是同一件事，一眼就对上了。 */
+/* 选中项：加粗 + 主题色。 */
 .platform-tab.active {
   color: var(--accent);
   font-weight: 600;
 }
 
-/* 标签下方的主题色条。
-   所有标签共用一个绝对定位的元素，切换时靠 transform 滑过去——用每个标签
-   自己的 ::after 做不到过渡：旧的那个直接消失，新的那个凭空出现。 */
+/* 标签下方的主题色条，共用一个绝对定位元素，靠 transform 滑动。 */
 .tab-underline {
   position: absolute;
   left: 0;
   bottom: 0;
   height: var(--tab-underline-h);
   border-radius: var(--tab-underline-radius);
-  /* 跟随强调色，而不是用 --fg：否则除了默认色，其余主题下都是黑白下划线。 */
+  /* 用强调色，不用 --fg。 */
   background: var(--tab-underline-bg);
   transition:
     transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
@@ -300,8 +278,7 @@ img {
   gap: 2px;
 }
 
-/* 首页「刷新推荐」钉在顶栏左上角，和关注页的刷新按钮同一个位置。
-   顶栏本身是居中的标签条，用绝对定位把它挪到左边，不参与居中布局。 */
+/* 首页刷新按钮固定在顶栏左侧，不参与居中布局。 */
 .topbar-refresh {
   position: absolute;
   left: 20px;
@@ -520,9 +497,7 @@ textarea.input {
   cursor: not-allowed;
 }
 
-/* 凡是带 `is-loading` 的按钮，里面的图标都转起来。
-   之前限定 `.icon-btn`，直播间「关注」面板的刷新按钮是 `btn small`，
-   点了完全没反应，看着像没点中。 */
+/* 带 is-loading 的按钮图标旋转。 */
 .is-loading .ico {
   animation: spin 1s linear infinite;
 }
@@ -952,8 +927,7 @@ textarea.input {
 
 /* ------------------------------------------------------------ 悬停提示 */
 
-/* 按钮上的 title 被 js/tooltip.js 接管，由这里画气泡：
-   原生那个白框是系统画的，配色/圆角/阴影都不归皮肤管，浅色皮肤上尤其突兀。 */
+/* 自绘悬停气泡；title 由 js/tooltip.js 接管。 */
 .app-tip {
   position: fixed;
   z-index: 5000;
@@ -998,8 +972,7 @@ textarea.input {
   padding: 24px;
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease);
-  /* 全屏时 `.ui-idle` 会把整页光标藏掉（cursor: none）；弹窗里必须能看见光标，
-     否则点下拉框全靠猜。 */
+  /* 弹窗内恢复光标显示。 */
   cursor: auto;
 }
 
@@ -1090,8 +1063,7 @@ textarea.input {
 .menu {
   position: fixed;
   min-width: 178px;
-  /* 手机横屏下「更多」这类长菜单比屏幕还高：限高 + 内部滚动，
-     否则底部几项既看不见也滑不到（fixed 元素超出视口的部分不会跟着页面滚）。 */
+  /* 菜单限高并内部滚动，避免超出视口无法触达。 */
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1111,8 +1083,7 @@ textarea.input {
   }
 }
 
-/* 关菜单时补个退场：原来 overlay 是直接 remove 的，点一下瞬间消失，
-   和它出场那 120ms 完全不对称。 */
+/* 菜单关闭时的退场动画。 */
 @keyframes menu-out {
   to {
     opacity: 0;
@@ -1189,14 +1160,6 @@ textarea.input {
   background: transparent;
 }
 
-/* ------------------------------------------------------------ 工具类 */
-
-.gap-8 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 @media (max-width: 1280px) {
   :root {
     --rail-width: 78px;
@@ -1233,8 +1196,7 @@ textarea.input {
   align-items: center;
   gap: 10px;
   padding-left: 12px;
-  /* 标题栏是「窗口边框」而不是「页面背景」：给皮肤单独的 token，
-     这样一套皮肤可以做出深色边框 + 浅色页面，而不用被迫整体同色。 */
+  /* 标题栏底色使用独立 token，可与页面背景不同。 */
   background: var(--titlebar-bg);
   border-bottom: 1px solid var(--titlebar-line);
   user-select: none;
@@ -1284,8 +1246,7 @@ textarea.input {
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
-/* 窗口按钮画在 10 单位网格上，线也比正文图标细一档（Windows 的惯例）。
-   图形本身在 icons.js 的 winIcon 里，线宽从这里取，别写回属性。 */
+/* 窗口按钮画在 10 单位网格，图形在 icons.js，线宽取 --icon-stroke-thin。 */
 .titlebar-btn .ico {
   stroke-width: var(--icon-stroke-thin, 1.2);
 }
@@ -1312,9 +1273,7 @@ textarea.input {
 
 /* ------------------------------------------------------------ 红绿灯（macOS 形态） */
 
-/* registry 里给皮肤写 `titlebar: 'traffic'` 时才生效：三颗圆点挪到标题栏左边，
-   视觉顺序是 关闭 / 最小化 / 缩放（DOM 里仍是 最小化/最大化/关闭，靠 order 排）。
-   形态归皮肤，颜色尺寸归 --traffic-*，组件这边只负责摆位置。 */
+/* titlebar: 'traffic' 时红绿灯移到左侧，顺序为 关闭 / 最小化 / 缩放。 */
 html[data-titlebar="traffic"] .titlebar {
   /* 红绿灯贴左边，留出比 Windows 按钮更宽的一道边（macOS 的观感） */
   padding-left: 16px;
@@ -1433,10 +1392,7 @@ body.is-fullscreen .resize-handle,
 
 /* ------------------------------------------------------------ 动效 */
 
-/* 页面入场：路由切换时整页淡入并轻微上移。
-   填充模式一律用 backwards 而不是 both/forwards —— 后者会让 transform 常驻，
-   页面里任何 position: fixed 的后代（控制条、悬浮层）都会改按这个元素定位。
-   backwards 只在动画播放期间生效，结束的一帧回到 none，视觉上没有跳变。 */
+/* 页面入场动画；填充模式用 backwards，避免 transform 常驻影响 fixed 后代。 */
 @keyframes page-in {
   from {
     opacity: 0;
@@ -1468,9 +1424,7 @@ body.is-fullscreen .resize-handle,
   animation-name: page-in-back;
 }
 
-/* 卡片逐张浮起。只给前 10 张排队，后面的本来就在屏幕外，同时出现也看不出来。
-   delay 只作用在 backwards 填充的首帧上，所以第 11 张不会整体往后拖。
-   骨架卡片排除在外：它自己已经有 shimmer 在动，再浮一次会显得页面在抖。 */
+/* 前 10 张卡片依次浮起；骨架卡不参与。 */
 @keyframes card-in {
   from {
     opacity: 0;
@@ -1492,23 +1446,18 @@ body.is-fullscreen .resize-handle,
 .room-grid > .room-card:not(.skeleton-card):nth-child(9) { animation-delay: 0.2s; }
 .room-grid > .room-card:not(.skeleton-card):nth-child(10) { animation-delay: 0.225s; }
 
-/* 关注页自己造卡片容器（网格/列表两种视图），结构跟 room-grid 不一样，
-   只统一做淡入不排队——这两处的卡片数量由用户关注数决定，排到第几十张
-   反而会拖成长龙，一起浮上来更利落。 */
+/* 关注页卡片统一淡入，不排队。 */
 .follow-grid > .follow-card,
 .follow-list-view > .follow-card {
   animation: card-in 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 
-/* 触屏上没有 hover，卡片按下去要有一点「压下去」的回馈，
-   否则点完到跳转之间那两百毫秒完全没反应。 */
+/* 触屏按下回馈。 */
 .room-card:active {
   transform: scale(0.985);
 }
 
-/* 用户开了「减弱动态效果」就把所有装饰性动画关掉。
-   用 0.01ms 而不是 0，是因为部分 WebView 对 animation: none 的元素
-   不会触发 animationend，靠它收尾的逻辑会卡住。 */
+/* 减弱动态效果时关闭装饰动画；用 0.01ms 以保留 animationend。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

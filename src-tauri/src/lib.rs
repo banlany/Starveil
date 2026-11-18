@@ -1,14 +1,6 @@
-//! Tauri 后端：把 `live_core` 的三站取流与弹幕包装成命令，界面全部交给 WebView2。
-//!
-//! 视频不再走 libmpv：前端用 mpegts.js 播 FLV，音频和渲染都由 WebView2 负责。
-//!
-//! 斗鱼比较特殊：清晰度和取流参数需要执行服务端下发的混淆 JS 签名。
-//! 这里用 WebView 的 JS 引擎签名，再把参数回传给 Rust；斗鱼 CDN 还会校验
-//! Referer，浏览器 fetch 不允许设置 Referer，因此额外起一个本机流代理。
-//!
-//! 桌面（Windows）与移动端（Android）共用这一份后端：入口是 [`run()`]，
-//! `main.rs` 与 Tauri 的移动端桥接层都调它。平台差异（WebView2 数据目录、
-//! GPU 沙箱、剪贴板、TLS 后端）都靠 `cfg` 分流，不做第二套实现。
+//! Tauri 后端：把 live_core 的取流与弹幕包装成命令，界面由 WebView2 承载。
+//! 斗鱼签名在 WebView 内计算；其 CDN 校验 Referer，因此额外起一个本机流代理。
+//! 桌面与移动端共用这一份后端，平台差异靠 cfg 分流。
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -124,10 +116,7 @@ struct PlayPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hls_urls: Vec<String>,
     headers: Vec<(String, String)>,
-    /// 直链还有多少秒过期（从地址里的 `expire=` 读出来，读不到就是 None）。
-    ///
-    /// 斗鱼的匿名直链只给 300 秒，到点 CDN 直接断流——前端据此在到期前去换新地址，
-    /// 本机代理会在旧连接结束时自动接上新地址，播放器那边看不出断过。
+    /// 直链剩余有效期秒数（读地址里的 `expire`），读不到为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_in: Option<u64>,
 }
@@ -548,11 +537,7 @@ fn douyu_cookie_value(cookie: &str, key: &str) -> Option<String> {
     })
 }
 
-/// 参与签名的设备号。
-///
-/// 登录 Cookie 里已经带 `acf_did` 时必须沿用它：签名用的 did 与请求头里的 Cookie
-/// 得是同一个身份，否则斗鱼把这单当成「陌生设备 + 匿名」处理，原画会被降码率
-/// （选「原画2K60」实际只给 540P/1080P）。dart 版的 `_deviceDid` 也是这个顺序。
+/// 参与签名的设备号：Cookie 里有 `acf_did` 时必须沿用，保证与请求头身份一致。
 fn douyu_device_id(login: &str) -> String {
     douyu_cookie_value(login, "acf_did")
         .filter(|value| value.len() >= 16)
@@ -659,12 +644,7 @@ fn preview(url: &str) -> String {
 /// 这里加个闸：超了直接 503，让播放器立刻走换线，别把进程拖垮。
 const PROXY_MAX_CONNECTIONS: usize = 32;
 
-/// 上游只建一次客户端。原先每条连接都 `Client::builder().build()`，
-/// 连接池和内部 runtime 全重建一遍，卡死的连接越多浪费越大。
-///
-/// 注意这里**不能**用 `read_timeout`（blocking 版没有），也不能用 `.timeout()`——
-/// 那是整个请求的总超时，会把正常的长连接直播流拦腰砍断。上游真的挂死时
-/// 靠的是前端 stall 检测换线 → 浏览器关掉旧连接 → 我们写 socket 失败退出。
+/// 上游客户端只建一次；不使用 `read_timeout` 或 `.timeout()`，以免截断长连接。
 fn upstream_client() -> Option<reqwest::blocking::Client> {
     static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
     CLIENT
@@ -677,10 +657,7 @@ fn upstream_client() -> Option<reqwest::blocking::Client> {
         .clone()
 }
 
-/// 从直链的 `expire=` 参数读有效期（秒）。
-///
-/// 斗鱼匿名直链给的是 `expire=300`，到点 CDN 直接掐断连接——就是「看五分钟断一下」
-/// 的根源。`expire=0`（不过期）和没有这个参数都返回 None。
+/// 从直链的 `expire` 参数读有效期（秒）；`expire=0` 或缺失返回 None。
 fn url_expire_secs(url: &str) -> Option<u64> {
     let query = url.split_once('?')?.1;
     let mut shortest: Option<u64> = None;
@@ -708,7 +685,7 @@ fn start_proxy() -> (u16, Arc<Mutex<HashMap<String, ProxyTarget>>>) {
     let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
         for stream in listener.incoming() {
-            // 以前用 `incoming().flatten()` 把 accept 错误整个吞掉：句柄耗尽
+            // accept 错误必须显式处理：句柄耗尽
             // 之类的持续错误会让这里满核空转，日志里还一个字都没有。
             let stream = match stream {
                 Ok(stream) => stream,
@@ -848,9 +825,7 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     }
     // 响应头已经发完，后面只写不读，读超时没有意义。
     let _ = socket.set_read_timeout(None);
-    // 手动搬数据而不是 `std::io::copy`：写失败要立刻退出。
-    // 否则浏览器切线路/关房间后，这条线程还会卡在 write 上，
-    // 上游连接也一直挂着，长时间挂机线程数只增不减。
+    // 手动拷贝而非 io::copy：写失败立即退出，避免线程与上游连接堆积。
     let mut buffer = vec![0u8; 32 * 1024];
     let mut current = target.clone();
     // 连续「连上就断、一个字节都没读到」的次数。读到过数据就清零：
@@ -906,13 +881,7 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
         if received > 0 {
             reconnects = 0;
         }
-        // 上游结束了。斗鱼的匿名直链到期（expire=300）时 CDN 就是这样干净地断开，
-        // 以前这里的做法是关掉下游连接 → 播放器报错 → 前端重连，用户看到「断一下」。
-        //
-        // 现在换个做法：前端在到期前会用同一个 token 续一份新地址（`douyu_play`
-        // 覆盖 proxy_targets 里的条目），这里发现地址变了就**原地重连**，
-        // 继续往同一个下游连接写字节——播放器那条 HTTP 流从来没断过，
-        // 只是中间少了几百毫秒的数据。
+        // 上游断开且地址已更新时原地重连，播放器侧的 HTTP 流不中断。
         if reconnects >= 3 {
             break;
         }
@@ -969,11 +938,7 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
 
 // ---------------------------------------------------------------- 基础数据
 
-/// 抖音的列表接口要 `a_bogus` 签名，而签名只能由 WebView 里的脚本算。
-///
-/// 为了不把「查询串怎么拼」写两遍（Rust 拼一次、JS 再拼一次，改一处漏一处就会
-/// 验签失败），这里把**拼串**留在协议层，由 `douyin_query` 命令交给前端：
-/// 前端拿它去签名，再把签名值原样带回来，真正的请求仍按同一串拼。
+/// 抖音列表签名：查询串由 `douyin_query` 拼好交给前端签名，请求按同一串发送。
 #[tauri::command]
 fn douyin_query(
     kind: String,
@@ -1118,11 +1083,7 @@ fn app_platform() -> PlatformInfo {
     }
 }
 
-/// 屏幕方向：`auto` 跟随重力、`portrait` 锁定竖屏、`landscape` 锁定横屏。
-///
-/// Android 靠 `Activity.setRequestedOrientation` 实现；manifest 里已声明
-/// `configChanges` 含 `orientation|screenSize`，所以旋转不会重建 Activity，
-/// WebView 只会收到一次 resize，前端按新尺寸重排即可。
+/// 屏幕方向：auto / portrait / landscape，通过 `Activity.setRequestedOrientation` 设置。
 #[tauri::command]
 fn set_screen_orientation(app: AppHandle, mode: String) -> Result<(), String> {
     let mode = mode.trim().to_ascii_lowercase();
@@ -1134,10 +1095,7 @@ fn set_screen_orientation(app: AppHandle, mode: String) -> Result<(), String> {
 
 #[cfg(target_os = "android")]
 fn apply_screen_orientation(app: &AppHandle, mode: &str) -> Result<(), String> {
-    // android.content.pm.ActivityInfo 的常量：
-    // SCREEN_ORIENTATION_LANDSCAPE = 0、PORTRAIT = 1、UNSPECIFIED = -1。
-    // 用 LANDSCAPE/PORTRAIT 而不是 SENSOR_* 是为了契合「固定」的语义：
-    // 用户选了竖屏就不该因为手机横过来而跟着转。
+    // ActivityInfo 常量：LANDSCAPE = 0、PORTRAIT = 1、UNSPECIFIED = -1。
     let requested = match mode {
         "landscape" => 0i32,
         "portrait" => 1i32,
@@ -1146,10 +1104,7 @@ fn apply_screen_orientation(app: &AppHandle, mode: &str) -> Result<(), String> {
     run_on_main_activity(app, move || call_activity_static("setOrientation", &[requested]).map(|_| ()))
 }
 
-/// 安卓小窗（画中画）。
-///
-/// WebView 里 `video.requestPictureInPicture()` 在 Android WebView 上不生效，
-/// 只能走系统的 Activity 级 PiP：把整个应用缩成小窗浮在别的应用上面。
+/// 安卓小窗：Activity 级 PiP。
 #[tauri::command]
 fn enter_picture_in_picture(app: AppHandle) -> Result<bool, String> {
     #[cfg(target_os = "android")]
@@ -1178,10 +1133,7 @@ fn in_picture_in_picture(app: AppHandle) -> bool {
     }
 }
 
-/// 系统栏配色（安卓）。
-///
-/// 主题资源里写的是固定的深色，浅色主题下状态栏就一直是黑的；
-/// 这里让前端在切换主题时把当前背景色推过来，顺带切换图标明暗。
+/// 系统栏配色与图标明暗（安卓），由前端在切主题时推送。
 #[tauri::command]
 fn set_system_bar(app: AppHandle, color: String, light: bool) -> Result<bool, String> {
     #[cfg(target_os = "android")]
@@ -1197,11 +1149,7 @@ fn set_system_bar(app: AppHandle, color: String, light: bool) -> Result<bool, St
     }
 }
 
-/// 沉浸式全屏（安卓）。
-///
-/// WebView 里 `document.documentElement.requestFullscreen()` 在 Android WebView 上
-/// 不会真的把界面铺满（没有实现 WebChromeClient 的全屏回调），
-/// 所以「全屏」在安卓上分两半：CSS 把视频铺满、系统栏交给这里藏起来。
+/// 沉浸式全屏（安卓）：CSS 铺满画面，系统栏由这里隐藏。
 #[tauri::command]
 fn set_immersive(app: AppHandle, enabled: bool) -> Result<bool, String> {
     #[cfg(target_os = "android")]
@@ -1231,10 +1179,7 @@ fn exit_app(app: AppHandle) -> Result<bool, String> {
     }
 }
 
-/// 把一段 Android 调用投递到主线程执行并等结果。
-///
-/// `setRequestedOrientation` / `enterPictureInPictureMode` 都要求在主线程上跑，
-/// 而 tauri 命令本身在 tokio 线程；超时兜底避免前端一直转圈。
+/// 在主线程执行 Android 调用并等待结果，带超时兜底。
 #[cfg(target_os = "android")]
 fn run_on_main_activity<T, F>(app: &AppHandle, task: F) -> Result<T, String>
 where
@@ -1256,14 +1201,8 @@ where
         .map_err(|_| "等待主线程执行超时".to_string())?
 }
 
-/// 在主线程上调用 `MainActivity` 的静态桥接方法（见 `android/app/src/main/java/.../MainActivity.kt`）。
-///
-/// 这里有个坑：`ndk_context::android_context().context()` 拿到的是 **Application**，
-/// 不是 Activity——直接对它调 `setRequestedOrientation` 会抛 NoSuchMethodError，
-/// 而 jni crate 在有待处理异常时再取 class 会 panic，表现就是「设置横屏后应用直接消失」。
-/// 所以要从 Application 的 ClassLoader 里捞出 MainActivity，再调它自己的静态方法。
-///
-/// 方法名与签名和 Kotlin 侧一一对应，改一处必须改另一处。
+/// 在主线程调用 `MainActivity` 的静态桥接方法。
+/// 方法名与签名须与 MainActivity.kt 一致，改一处必须改另一处。
 #[cfg(target_os = "android")]
 fn call_activity_static(name: &str, args: &[i32]) -> Result<bool, String> {
     with_jvm(|env| {
@@ -1595,9 +1534,7 @@ async fn douyu_play(
                         rtmp_url.trim_end_matches('/'),
                         unescape_html(rtmp_live)
                     );
-                    // 直链的过期时间写在签名里：动一下查询串（哪怕只是追加
-                    // `expire=0`）CDN 会直接判签名无效，连 0.1 MB 都读不到。
-                    // 想续命只能重新签一份新地址，交给代理去续接。
+                    // 过期时间在签名内，改动查询串即失效，只能重新签一份地址。
                     urls.push(url);
                 }
                 Err(error) => last_error = error,
@@ -1643,9 +1580,7 @@ fn proxy_play_urls(
     audio_only: bool,
 ) -> Vec<String> {
     let mut proxied = Vec::with_capacity(urls.len());
-    // 锁中毒（持锁线程 panic）时用 into_inner 继续：这里如果直接跳过，
-    // 所有平台的播放都会返回空地址列表，界面只显示「没有可用的播放地址」，
-    // 真实原因（代理表不可用）完全看不到。
+    // 锁中毒时继续取内部值，避免静默返回空地址列表。
     let mut targets = match state.proxy_targets.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -1773,10 +1708,7 @@ async fn send_danmaku(
     blocking(move || core.send_danmaku(&detail, &text)).await
 }
 
-/// 启动弹幕会话。
-///
-/// `signature` / `user_id` 只有抖音用：它的 WebSocket 握手要带 webmssdk 生成的
-/// 签名，而那个脚本只能在 JS 引擎里跑，所以由 WebView 算好后传进来。
+/// 启动弹幕会话；`signature` / `user_id` 仅抖音使用。
 #[tauri::command]
 async fn start_danmaku(
     app: AppHandle,
@@ -1819,9 +1751,7 @@ async fn start_danmaku(
             for status in session.drain_status() {
                 let _ = app.emit("danmaku-status", &status);
             }
-            // 一次轮询收到的弹幕合并成一个数组发出去，不再逐条 emit。
-            // 每条 emit 都要过一次 evaluateJavascript（安卓上还要跨到 WebView 主线程），
-            // 热门直播间一秒几十条时，光这一层就够把界面拖卡；合并之后每 100ms 只有一次。
+            // 每 100ms 合并成数组发送，减少 evaluateJavascript 次数。
             let messages = session.drain();
             for chunk in messages.chunks(120) {
                 let _ = app.emit("danmaku-batch", chunk);
@@ -1852,10 +1782,7 @@ fn stop_danmaku_inner(state: &State<'_, AppState>) {
 
 // ---------------------------------------------------------------- 剪贴板 / 浏览器
 
-/// 复制文本到系统剪贴板。
-///
-/// 走 Win32 剪贴板 API（见 `win32` 模块），不再 fork `cmd /C clip`，
-/// 所以不会闪终端窗口，也不会因为等待子进程退出而卡住界面。
+/// 复制文本到系统剪贴板（Win32 API，见 `win32` 模块）。
 #[tauri::command]
 fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
@@ -1874,10 +1801,7 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
     }
 }
 
-/// 用系统默认浏览器打开链接。
-///
-/// 桌面走 `ShellExecuteW`（不再用 `cmd /C start`：会弹终端，且对带引号的 URL 不可靠）；
-/// 安卓没有 Win32，转给 MainActivity 用 `Intent.ACTION_VIEW` 拉起外部浏览器。
+/// 用系统默认浏览器打开链接；安卓转由 MainActivity 处理。
 #[tauri::command]
 fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     let url = url.trim().to_string();
@@ -1938,10 +1862,8 @@ async fn clear_cookie(state: State<'_, AppState>, platform: String) -> Result<()
 
 // ---------------------------------------------------------------- 网页登录
 
-/// 各平台的网页登录入口：(打开地址, 窗口标题, 读取 Cookie 的地址)。
-///
-/// Cookie 是按 URL 取的，第三个值必须和登录页同域，否则 WebView2 的
-/// CookieManager 会把真正的登录凭据过滤掉（尤其是 `.douyin.com` 这类父域 Cookie）。
+/// 各平台登录入口：(打开地址, 窗口标题, 读取 Cookie 的地址)。
+/// 第三个值须与登录页同域，否则父域 Cookie 会被过滤。
 fn login_page(platform: Platform) -> Option<(&'static str, &'static str, &'static str)> {
     match platform {
         Platform::Bilibili => Some((
@@ -1968,20 +1890,12 @@ fn login_window_label(platform: Platform) -> String {
     format!("login-{}", platform.id())
 }
 
-/// 新窗口的 WebView2 environment 参数必须和主窗口**完全一致**。
-///
-/// WebView2 文档里写明：浏览器进程在多个 WebView 之间共享，若这次创建时给的
-/// environment options 与已在运行的 WebView 不同，会直接返回
-/// `HRESULT_FROM_WIN32(ERROR_INVALID_STATE)`（0x8007139F，"组或资源的状态不是
-/// 执行请求操作的正确状态"）。主窗口的参数在 `tauri.conf.json` 的
-/// `app.windows[0].additionalBrowserArgs` —— **改一处必须同步改另一处**。
+/// 新窗口的 WebView2 environment 参数须与主窗口完全一致，否则创建失败。
+/// 主窗口参数见 tauri.conf.json 的 `additionalBrowserArgs`，改一处须同步另一处。
 #[cfg(desktop)]
 const LOGIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
 
-/// 打开一个独立的登录窗口。
-///
-/// 它和主窗口共用同一个 WebView2 用户数据目录，所以 cookie 是共享的：
-/// 用户在窗口里扫码或账号登录完，主窗口这边直接就能读到，不需要复制粘贴。
+/// 打开独立登录窗口，与主窗口共享 WebView2 用户数据目录与 Cookie。
 #[tauri::command]
 async fn open_login_window(app: AppHandle, platform: String) -> Result<(), String> {
     let platform = parse_platform(&platform)?;
@@ -2078,9 +1992,7 @@ fn web_login_user(platform: Platform, cookie: &str) -> LoginUser {
     }
 }
 
-/// 从登录窗口（没开就用主窗口）读出该平台的 Cookie。
-///
-/// 两个窗口共享同一份 cookie 存储，所以即使用户已经关掉登录窗口也读得到。
+/// 从登录窗口（未开则主窗口）读取该平台 Cookie。
 #[tauri::command]
 async fn capture_login(app: AppHandle, platform: String) -> Result<LoginCapture, String> {
     let platform = parse_platform(&platform)?;
@@ -2100,7 +2012,7 @@ async fn capture_login(app: AppHandle, platform: String) -> Result<LoginCapture,
     let cookie = cookies
         .iter()
         .map(|item| format!("{}={}", item.name(), item.value()))
-        // Cookie 值里理论上不该有换行；有的话会破坏 HTTP 头，直接剔除。
+        // 剔除 Cookie 值里的换行：它会破坏 HTTP 头。
         .filter(|pair| !pair.contains(['\r', '\n']))
         .collect::<Vec<_>>()
         .join("; ");
@@ -2427,9 +2339,7 @@ async fn bili_qr_poll(key: String) -> Result<QrPollResult, String> {
 
 // ---------------------------------------------------------------- 窗口与托盘
 
-/// WebView2 用户数据目录：放到 `%LOCALAPPDATA%\Starveil\WebView2`，
-/// 不跟着 identifier 走（`com.banlany.starveil` 默认会落在 `com.banlany.starveil\EBWebView`，
-/// 更早的版本还用过 `top.june6699.starveil`；两处都不该用来存用户数据）。
+/// WebView2 用户数据目录：`%LOCALAPPDATA%\Starveil\WebView2`。
 #[cfg(windows)]
 fn webview_data_dir() -> PathBuf {
     match std::env::var("LOCALAPPDATA") {
@@ -2439,11 +2349,7 @@ fn webview_data_dir() -> PathBuf {
     }
 }
 
-/// 运行时日志目录，启动时确定一次（见 `setup`）。
-///
-/// Windows 沿用 `%LOCALAPPDATA%\Starveil`（老用户手上已经有这个路径的日志）；
-/// 安卓用应用私有目录下的 `logs/`，通过 FileProvider 分享出去——
-/// 手机上没有「打开日志目录」这回事，直接分享文件才是用户真能拿到的形式。
+/// 运行时日志目录：Windows 为 `%LOCALAPPDATA%\Starveil`，安卓为私有目录下的 `logs/`。
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 fn log_dir() -> Option<&'static Path> {
@@ -2497,12 +2403,7 @@ fn frontend_log(message: String) {
     log_line(&format!("[web] {message}"));
 }
 
-/// 打开运行日志。
-///
-/// - Windows：用资源管理器打开日志目录，用户可以直接把 `starveil.log` 拖出来发过来。
-/// - Android：没有「打开目录」这回事（应用私有目录连文件管理器都看不到），
-///   改成把日志文件走系统分享面板发出去——微信、邮件、存到文件都行，
-///   这比给一个用户根本进不去的路径有用。
+/// 打开运行日志：Windows 打开目录，Android 通过系统分享导出文件。
 #[tauri::command]
 fn open_log_dir(app: AppHandle) -> Result<String, String> {
     let dir = log_dir().ok_or_else(|| "当前平台没有日志目录".to_string())?;
@@ -2691,11 +2592,7 @@ async fn lan_sync_probe(address: String, port: u16) -> Result<lan_sync::Peer, St
         .map_err(|error| format!("同步任务异常：{error}"))?
 }
 
-/// 准备 WebView2 的数据目录，并把目录通过环境变量交给 WebView2。
-///
-/// 这里不用 `WebviewWindowBuilder::data_directory`——实践里由 Rust 手动建窗时
-/// WebView2 环境会创建失败（窗口在但没有 webview 进程、页面空白），
-/// 而配置建窗 + `WEBVIEW2_USER_DATA_FOLDER` 这条路上表现正常。
+/// 准备 WebView2 数据目录，并经 `WEBVIEW2_USER_DATA_FOLDER` 交给 WebView2。
 #[cfg(windows)]
 fn prepare_webview_data() {
     let data_dir = webview_data_dir();
@@ -2711,21 +2608,7 @@ fn prepare_webview_data() {
 #[cfg(not(windows))]
 fn prepare_webview_data() {}
 
-/// WebView2 的 GPU 进程沙箱在部分环境下初始化会失败：
-/// GPU 进程连续 `exit_code=7` 崩溃后，浏览器主进程会 FATAL 退出
-/// （`GPU process isn't usable. Goodbye.`），窗口最终全黑。
-///
-/// 根因（已实测确认）：Chromium 的 GPU 沙箱要给自己的子进程创建
-/// 「受限令牌 + 嵌套 Job Object」。**当父进程本身已经被放进某个 Job 时**
-/// （Windows 桌面 Job、WorkBuddy 的 sandbox-cli、CI 容器等），
-/// 嵌套 Job 的创建会被拒绝 → GPU 进程起不来。
-///
-/// 实测对照（同一台机器、同一份二进制）：
-///   - 由 explorer.exe 启动（进程在 Windows 桌面 Job 里）→ GPU 崩溃 3/3
-///   - 由 WmiPrvSE 启动（进程不在任何 Job 里）→ GPU 正常 3/3
-///
-/// 所以这里直接检测「本进程是否在 Job 中」，据此决定是否关闭 GPU 沙箱。
-/// 结果缓存进标记文件，之后的启动直接复用。
+/// GPU 沙箱不可用的标记文件路径。
 #[cfg(windows)]
 fn gpu_sandbox_broken_marker() -> PathBuf {
     starveil_data_dir().join("gpu-sandbox-broken.flag")
@@ -2739,12 +2622,7 @@ fn starveil_data_dir() -> PathBuf {
     }
 }
 
-/// 当前进程是否被放进了一个 Job Object。
-///
-/// Windows 上 `IsProcessInJob(NULL, ...)` 表示「查询进程所属的任意 Job」。
-/// 返回 true 就说明父进程链上有 Job，Chromium 的 GPU 沙箱很可能起不来。
-///
-/// 直接调 kernel32，不引入 `windows` crate（避免多一个依赖和版本耦合）。
+/// 当前进程是否位于 Job Object 中（`IsProcessInJob(NULL, ...)`）。
 #[cfg(windows)]
 fn current_process_in_job() -> Option<bool> {
     use std::ffi::c_void;
@@ -2774,10 +2652,7 @@ fn current_process_in_job() -> Option<bool> {
     }
 }
 
-/// 按需给 WebView2 追加 `--disable-gpu-sandbox`。
-///
-/// 环境变量里的参数是**追加**到 `additionalBrowserArgs` 之后的，
-/// 所以这里不会覆盖配置里的静态参数。
+/// 按需追加 `--disable-gpu-sandbox`。
 #[cfg(windows)]
 fn apply_gpu_sandbox_workaround() {
     // 用户显式要求保留沙箱时不动。
@@ -2821,18 +2696,8 @@ fn apply_gpu_sandbox_workaround() {
 #[cfg(not(windows))]
 fn apply_gpu_sandbox_workaround() {}
 
-/// 往 WebView2 的浏览器参数末尾追加一段。
-///
-/// 环境变量 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 里的参数是**追加**到
-/// `tauri.conf.json` 的 `additionalBrowserArgs` **之后**的，不会覆盖它，
-/// 所以这里用来做「运行时才决定」的参数（目前只有 GPU 沙箱降级）。
-///
-/// 顺带记一条坑：wry 源码 `webview2/mod.rs` 里默认参数是
-/// `unwrap_or_else` 提供的（`--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`），
-/// 一旦配置里显式写了 `additionalBrowserArgs`，wry 的默认就**整份失效**——
-/// 所以配置里必须自己把这三个 feature 写全。
-/// 其中 `CalculateNativeWinOcclusion` 用来关掉 Windows 原生的遮挡检测：
-/// 无边框窗口经常被系统误判为「被遮挡」而停止渲染与计时器。
+/// 往 WebView2 浏览器参数末尾追加内容（环境变量为追加语义，不覆盖配置）。
+/// 配置里显式写 `additionalBrowserArgs` 会使 wry 的默认参数整份失效，须自行写全。
 #[cfg(windows)]
 fn append_browser_args(extra: &str) {
     let key = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
@@ -2848,21 +2713,16 @@ fn append_browser_args(extra: &str) {
     unsafe { std::env::set_var(key, merged) };
 }
 
-/// 桌面 `main()` 与移动端（Android/iOS）桥接层共用的唯一入口。
-///
-/// `mobile_entry_point` 会由 Tauri 生成的原生工程在 Activity 启动时回调，
-/// 桌面侧则由 `main.rs` 直接调用。
+/// 桌面与移动端共用的唯一入口。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     log_line("==== 启动 ====");
     // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
     prepare_webview_data();
-    // GPU 沙箱探测要在建窗之前做完，否则首启就会黑屏一次。
+    // GPU 沙箱探测须在建窗之前完成，否则首启黑屏一次。
     apply_gpu_sandbox_workaround();
     let (proxy_port, proxy_targets) = start_proxy();
-    // 在进入 async 运行时之前创建 blocking HTTP client。
-    // 必须按 Platform::ALL 建：漏掉哪个平台，取核心时就会 panic，
-    // 而 panic 在 async 任务里不会变成前端可见的 reject，界面会一直卡在加载中。
+    // 进入 async 运行时前创建 blocking client，须按 Platform::ALL 建。
     let mut cores = HashMap::new();
     for platform in Platform::ALL {
         cores.insert(platform, Arc::new(LiveCore::new()));

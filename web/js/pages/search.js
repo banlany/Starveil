@@ -169,15 +169,14 @@ export function renderSearch(ctx, params = {}) {
       return;
     }
     if (isRoomId(value) && value.length < 10 && !/[\u4e00-\u9fa5]/.test(value) && /^[A-Za-z]+\d+$|^\d+[A-Za-z]+$/.test(value)) {
-      // 形如 abc123 / 123abc 的更可能是房间号
+      // `abc123` / `123abc` 视为房间号
       ctx.openRoom(state.platform, value);
       return;
     }
     runSearch(value);
   }
 
-  // 请求序号：连续回车、切平台、切「房间/主播」都会并发多个请求，
-  // 慢的那个回来不能把新结果盖掉（以前只判路由，同一个路由判不出来）。
+  // 请求序号：仅采用最后一次请求的结果。
   let searchSeq = 0;
 
   async function runSearch(keyword) {
@@ -324,7 +323,6 @@ export function renderSearch(ctx, params = {}) {
 function tabHtml(platform) {
   const active = state.platform === platform;
   const meta = PLATFORM_META[platform];
-  // 和顶栏同一套文案、同样不放 logo：用全名（「哔哩哔哩直播」）时，
-  // 五个标签在手机上会直接顶出屏幕。
+  // 标签只放文字，与顶栏一致。
   return `<button class="platform-tab${active ? ' active' : ''}" data-platform="${platform}"><span>${escapeHtml(meta.tab || meta.name)}</span></button>`;
 }

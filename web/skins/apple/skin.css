@@ -1,23 +1,13 @@
 /* ============================================================
-   Starveil · 苹果 · Apple-style
-   ------------------------------------------------------------
-   这套皮肤按一份固定的风格参考实现，核心不是元素而是比例：
-   页面是偏冷的浅灰画布，卡片比它白一档浮起来，颜色只留一支系统蓝，
-   圆角只有三档（胶囊按钮 / 24px 卡片 / 12px 输入），动效慢到刚好。
-
-   与「星幕」不同，这套**只提供浅色**（参考文档本身定的就是 light）：
-   registry 里写 `modes: ['light']`，store.js 会把明暗档锁在浅色，
-   设置页的明暗选项自动收窄成一档，侧栏主题按钮会给出提示。
-
-   因为只有一套配色，两个作用域写在一起——data-theme 是深是浅都落同一块，
-   不会出现「首帧按深色渲染一下再翻成浅色」的闪动。
+   Starveil · 苹果皮肤
+   浅灰画布、白卡片、系统蓝；圆角三档（胶囊 / 24px / 12px）。
+   只提供浅色（registry 里 modes: ['light']），因此两个作用域写在一起。
    ============================================================ */
 
 html[data-skin="apple"],
 html[data-skin="apple"][data-theme="light"] {
   /* -------------------------------------------------- 主题色
-     风格参考只允许一支系统蓝，所以这套皮肤的主题色清单只有一项；
-     用户仍然可以在设置里自己挑一个色（那时 accentSource 变成 user）。 */
+     只提供系统蓝；用户仍可在设置里换成自定义色。 */
   --accent: #0071e3;
   /* 浅色档的 soft 透明度要和 store.js 算出来的一致（浅色 0.18） */
   --accent-soft: rgba(0, 113, 227, 0.18);
@@ -61,9 +51,7 @@ html[data-skin="apple"][data-theme="light"] {
   --danger-line: rgba(255, 59, 48, 0.28);
   --info: #0071e3;
 
-  /* -------------------------------------------------- 按钮
-     胶囊是全圆角，没有描边，字重 500：参考文档里的 Pill Button。
-     高度比星幕略高一点，内距更宽，按钮看起来才「敢留白」。 */
+  /* -------------------------------------------------- 按钮：全圆角胶囊、无描边 */
   --btn-h: 36px;
   --btn-pad-x: 20px;
   --btn-radius: var(--radius-pill);
@@ -75,9 +63,7 @@ html[data-skin="apple"][data-theme="light"] {
   --btn-small-radius: var(--radius-pill);
   --btn-small-font: 13px;
 
-  /* 分段按钮：iOS 原生分段控件——灰槽 + 白色滑块 + 轻投影。
-     `--seg-on-*` 留给 SC 面板那种「直接填充」的段（系统蓝底白字），
-     `--seg-pick-*` 是「记录 / 统计」「按状态 / 按平台」那种滑块式的选中块。 */
+  /* 分段按钮：--seg-on-* 为填充式选中，--seg-pick-* 为滑块式选中块。 */
   --seg-h: 28px;
   --seg-pad-x: 14px;
   --seg-radius: 9px;
@@ -120,9 +106,7 @@ html[data-skin="apple"][data-theme="light"] {
   --tab-underline-radius: var(--radius-pill);
   --platform-logo-radius: 50%;
 
-  /* -------------------------------------------------- 开关
-     照 iOS/macOS 的比例：轨道比星幕略宽一格，滑块更大，开是系统蓝。
-     关态轨道 #e9e9eb 是系统灰，滑块纯白配一层很轻的投影。 */
+  /* -------------------------------------------------- 开关：iOS 比例，开态系统蓝 */
   --switch-w: 45px;
   --switch-h: 27px;
   --switch-pad: 2px;
@@ -180,9 +164,7 @@ html[data-skin="apple"][data-theme="light"] {
   --tip-font: 12px;
   --tip-max-w: 280px;
 
-  /* -------------------------------------------------- 阴影 / 遮罩
-     三级阴影都比星幕淡而散：4% / 10% / 14%，扩散半径拉大，
-     这样白卡片浮在灰底上「刚刚好」，不会像重投影。 */
+  /* -------------------------------------------------- 阴影 / 遮罩：4% / 10% / 14%，扩散较大 */
   --shadow-1: 0 4px 12px rgba(0, 0, 0, 0.04);
   --shadow-2: 0 10px 36px rgba(0, 0, 0, 0.13);
   --shadow-3: 0 20px 44px rgba(0, 0, 0, 0.16);
@@ -192,10 +174,7 @@ html[data-skin="apple"][data-theme="light"] {
   /* 20px 是这套风格的 vibrancy 取值：浮层要能透出背后的颜色轮廓 */
   --panel-blur: blur(20px);
 
-  /* -------------------------------------------------- 媒体层
-     压在画面上的那一层默认白字 + 半透明黑底，不随明暗反色。
-     这套皮肤把胶囊做得更圆、模糊更重（20px），像系统播放器。
-     顶栏与控制条保持渐隐，不做不透明条。 */
+  /* -------------------------------------------------- 媒体层：白字 + 半透明黑底，模糊 20px */
   --media-bg: #000000;
   --media-fg: #ffffff;
   --media-fg-muted: rgba(255, 255, 255, 0.82);
@@ -278,9 +257,7 @@ html[data-skin="apple"][data-theme="light"] {
   --scrollbar-thumb: #c7c7cc;
   --scrollbar-thumb-hover: #b0b0b5;
 
-  /* -------------------------------------------------- 自绘标题栏
-     和画布同色：Windows 上看起来就像一条系统工具条。
-     首帧靠引用变量，别把 hex 抄一遍，否则改 --bg 时这里会漏色。 */
+  /* -------------------------------------------------- 自绘标题栏：与画布同色（引用变量） */
   --titlebar-bg: var(--bg);
   --titlebar-fg: var(--fg);
   --titlebar-line: var(--line);
@@ -294,9 +271,7 @@ html[data-skin="apple"][data-theme="light"] {
   --window-close-active: #f1707a;
   --window-close-fg: #ffffff;
 
-  /* -------------------------------------------------- 红绿灯
-     这套皮肤在 registry 里写了 `titlebar: 'traffic'`：三个圆点挪到标题栏左边，
-     颜色就是 macOS 那三颗（关 / 最小化 / 缩放），符号平时透明、悬停才浮出来。 */
+  /* -------------------------------------------------- 红绿灯：关闭 / 最小化 / 缩放，符号悬停显示 */
   --traffic-size: 12px;
   --traffic-gap: 8px;
   --traffic-close: #ff5f57;
@@ -307,9 +282,7 @@ html[data-skin="apple"][data-theme="light"] {
   --traffic-glyph-size: 8px;
   --traffic-glyph-stroke: 1.35;
 
-  /* -------------------------------------------------- 容器形态
-     白卡片 + 24px 圆角 + 4% 阴影，**不要描边**：
-     这套风格的层次来自阴影，描一圈线就变成普通网页的边框卡片了。 */
+  /* -------------------------------------------------- 容器形态：白卡片 + 24px 圆角 + 阴影，无描边 */
   --card-bg: #ffffff;
   --card-border: none;
   --card-radius: var(--radius-xl);
@@ -332,9 +305,7 @@ html[data-skin="apple"][data-theme="light"] {
   --tile-radius: var(--radius-lg);
   --tile-shadow: none;
 
-  /* -------------------------------------------------- 圆角阶梯
-     风格参考只允许三档：胶囊（按钮）、24px（卡片）、12px（输入与浮层）。
-     中间的档位往这三档上靠，避免整页出现五花八门的圆角。 */
+  /* -------------------------------------------------- 圆角阶梯：胶囊 / 24px / 12px 三档 */
   --radius-2xs: 6px;
   --radius-xs: 8px;
   --radius-sm: 10px;
@@ -344,9 +315,7 @@ html[data-skin="apple"][data-theme="light"] {
   --radius-xl: 24px;
   --radius-pill: 999px;
 
-  /* -------------------------------------------------- 字体
-     SF Pro 在 Windows 上不存在，退到 Segoe UI Variable / Segoe UI；
-     中文按 PingFang → 微软雅黑 UI 的顺序退。 */
+  /* -------------------------------------------------- 字体：SF Pro → Segoe UI，中文 PingFang → 微软雅黑 */
   /* 苹方/SF 只存在于苹果系统；后面的「HarmonyOS Sans SC」是内置字体（见 fonts.css），
      安卓和 Windows 靠它兜底，否则会掉到 Roboto 或雅黑，和苹果的观感差一截。 */
   --font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -360,9 +329,7 @@ html[data-skin="apple"][data-theme="light"] {
   --icon-join: round;
   --icon-stroke-thin: 1.1;
 
-  /* -------------------------------------------------- 动效
-     参考文档的签名：500ms 上浮与阴影扩散，缓入缓出。
-     fast 档留给 hover 这类高频反馈，不至于每次摸一下都等半秒。 */
+  /* -------------------------------------------------- 动效：500ms 上浮与阴影扩散，fast 用于 hover */
   --dur-fast: 0.22s;
   --dur-base: 0.32s;
   --dur-slow: 0.5s;

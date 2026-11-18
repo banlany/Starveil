@@ -6,13 +6,7 @@ import { importData } from '../importer.js';
 import { IS_MOBILE } from '../platform.js';
 import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
-/// 「进入页面自动刷新」的防循环标记。
-///
-/// 刷新结束会 `ctx.go('follow')` 重进本页，如果只看开关，就会变成
-/// 刷新 → 重进 → 再刷新 的死循环。原来靠「5 分钟内只自动刷一次」压这个循环，
-/// 副作用是 5 分钟内**再次真正进入关注页也不刷了**，看起来就是「只会刷新一次」。
-/// 现在改成显式标记：只有本页自己触发的重建（刷新完成、改标签、取关）才跳过，
-/// 用户从别处进来的每一次都照常自动刷。
+/// 自动刷新防循环标记：仅本页触发的重建跳过自动刷新。
 let skipAutoRefreshOnce = false;
 
 export function renderFollow(ctx) {
@@ -128,16 +122,13 @@ export function renderFollow(ctx) {
         renderAll();
       });
       clear.classList.add('follow-search-chip');
-      // icon() 返回的是 HTML 字符串，不是 DOM 节点，
-      // 直接 appendChild 会抛 TypeError，进而让整页渲染失败。
+      // icon() 返回 HTML 字符串，需用 innerHTML 写入。
       clear.insertAdjacentHTML('beforeend', icon('close', 12));
       filtersBox.appendChild(clear);
     }
   }
 
-  /// 排序用的「热度」：默认取近 N 天的进房次数（设置 → 关注设置 → 排序）。
-  /// 关注页一次可能排几百条，而聚合统计是 O(房间×天数)，每次 compare 都读一遍
-  /// 会让翻页明显发顿，所以整页只算一次；`0` 表示用 follow 上的累计次数。
+  /// 排序热度：近 N 天进房次数，整页只计算一次；0 表示用累计次数。
   let heatCache;
   let heatIsTotal = false;
   function heatFor(item) {
@@ -172,8 +163,7 @@ export function renderFollow(ctx) {
       } else if (state.followFilter.platform !== 'all' && item.platform !== state.followFilter.platform) {
         return false;
       }
-      // 搜索也走同一条筛选链，这样右上角计数永远等于最终结果数。
-      // 主播名、房间标题、房间号都能搜到。
+      // 搜索走同一条筛选链，计数与最终结果一致。
       if (keyword) {
         const haystack = `${item.user_name || ''} ${item.title || ''} ${item.room_id || ''}`.toLowerCase();
         if (!haystack.includes(keyword)) return false;
@@ -331,8 +321,7 @@ export function renderFollow(ctx) {
   });
   page.querySelector('#follow-view').innerHTML = icon(state.followView === 'grid' ? 'gridView' : 'list', 18);
 
-  /// 执行一次搜索：把输入框内容写进筛选条件，重新渲染列表，然后清空输入框。
-  /// 输入框是一次性入口，所以搜完就清空——下次直接输新词，不用先把上一次的删掉。
+  /// 执行搜索：写入筛选条件并重渲染，然后清空输入框。
   function submitSearch() {
     const keyword = String(searchInput.value || '').trim();
     state.followFilter.keyword = keyword;
@@ -381,9 +370,7 @@ export function renderFollow(ctx) {
     const button = page.querySelector('#follow-refresh');
     button?.classList.add('is-loading');
     let cursor = 0;
-    // 结果先攒在内存里，全部拉完再落一次盘：原先每个主播都走一次
-    // updateFollow（load + 解析 + 序列化 + 写盘），200 个关注就是几百次同步 IO，
-    // 刷新期间界面会明显发顿。
+    // 结果攒齐后一次落盘，避免逐条写盘卡顿。
     const patches = new Map();
     const worker = async () => {
       while (cursor < list.length) {
@@ -426,8 +413,7 @@ export function renderFollow(ctx) {
   // 下拉刷新与顶栏那个刷新按钮是同一件事：重新拉一遍主播的直播状态。
   ctx.setPullRefresh(refreshFollowStatus);
 
-  // 顶栏吸顶：哨兵滚出可视区域就说明顶栏已经贴在顶部，这时才补分隔阴影，
-  // 否则没滚动时也会有一条多余的横线。
+  // 顶栏吸顶：哨兵离开视口时补分隔阴影。
   const sticky = page.querySelector('#follow-sticky');
   const sentinel = page.querySelector('#follow-sentinel');
   let stickyObserver = null;
@@ -443,8 +429,7 @@ export function renderFollow(ctx) {
 
   document.getElementById('view').appendChild(page);
   renderAll();
-  // 设置里打开「进入页面自动刷新」才自动拉一次；默认关闭，手动刷是主路径。
-  // 每次真正进入本页都会刷（以前被 5 分钟冷却压成「只刷一次」）。
+  // 开启「进入页面自动刷新」时自动拉一次，默认关闭。
   const skipAutoRefresh = skipAutoRefreshOnce;
   skipAutoRefreshOnce = false;
   if (state.settings.follow?.autoRefresh && follows.length && !skipAutoRefresh) {
@@ -486,19 +471,13 @@ function importFollow(after) {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      // 本页导出的文件把关键词屏蔽单独放在 `shield` 里（沿用 dart 的命名），
-      // importData 只认 settings.danmaku.blockKeywords，这里先搬过去。
-      // `shield.users`（按用户屏蔽）0.7.4 起已删除，老文件里带着也只当没看见。
+      // 导出时关键词屏蔽放在 `shield` 里，导入侧会搬到 settings.danmaku.blockKeywords。
       if (data.shield) {
         data.settings = data.settings || {};
         data.settings.danmaku = data.settings.danmaku || {};
         if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
       }
-      // 走和「设置 → 数据同步 → 导入」同一条路（importData），不再自己往
-      // localStorage 里塞原文：旧写法既不合并、也不刷新内存里的 state，
-      // 还不把 Cookie 注回后端，导入完设置页显示的还是旧值、登录看着成功却是游客。
-      // importData 认得本页导出的文件（follows/history/accounts）和
-      // 设置页导出的包（follow/history/stats），两种都能吃。
+      // 走 importData，与设置页导入同一条路；两种导出格式都支持。
       const summary = importData(data);
       for (const platform of summary.accounts || []) {
         const login = loadLogin(platform);

@@ -1,58 +1,43 @@
-// 苹果皮肤自己的图标表。
-//
-// 只写要换的名字，没写的沿用 js/icons.js 的基础图形（那边的名字是全集，
-// 这里多写一个不存在的名字 check-skin 会报错）。
-//
-// 和基础表的差别不是「换个角度」而是**按 SF Symbols 的画法重画**：
-//   - 轮廓更闭合、拐角更大方，线条盘在 24 网格的内侧 2 单位里；
-//   - 关注是心形，不是四角星（星在苹果那套里另有含义：收藏/评分）；
-//   - 返回只留一个 chevron，不加横线（SF 的 chevron.left 就是光的一条折线）；
-//   - 更多是横排三个圆点，分享是「方块 + 向上箭头」，刷新是顺时针的缺口圆弧；
-//   - 设置齿轮收成 8 齿，齿更粗更圆（基础表那版是 12 齿细齿）。
-//
-// 线宽、端点、拐角**不写在这里**：`.ico` 读皮肤变量 --icon-stroke / --icon-cap /
-// --icon-join，所以这套图标照样能被 --icon-stroke 调粗细。
+// 苹果皮肤图标表：只列要替换的图标名，其余沿用 js/icons.js。
+// 图形按 SF Symbols 重画；线宽、端点、拐角仍由 skin.css 的 --icon-* 控制。
 
 export const ICON_PATHS = {
   // ---------------------------------------------------------------- 主导航
-  // 房子：闭合五边形（屋顶两坡 + 墙体 + 底边）＋一道门。
-  // 门做成「贴着底边开口的拱形」，不是浮在墙中间的一块方块——22px 下才认得出是门。
+  // 房子：闭合轮廓 + 贴底的拱形门。
   home:
     '<path d="M4 10.4 12 3.6l8 6.8v8.9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19.3Z"/><path d="M9.7 20.8v-4.3a2.3 2.3 0 0 1 4.6 0v4.3"/>',
-  // 实心版：屋脊尖用二次曲线抹圆、底角半径 2，和实心格子的圆角对得上；
-  // 门画进外轮廓（evenodd 挖洞会让探出房底的那截被反填成实心，多一条横杠）。
+  // 实心版：门画进外轮廓，不用 evenodd 挖洞。
   homeFilled:
     '<path fill="currentColor" stroke="none" d="M10.9 4.35q1.1-.9 2.2 0l6.55 5.55c.34.29.55.72.55 1.16v8.14a2 2 0 0 1-2 2H14.3v-2.6a2.3 2.3 0 0 0-4.6 0v2.6H5.8a2 2 0 0 1-2-2v-8.14c0-.44.21-.87.55-1.16Z"/>',
-  // 关注：心形。苹果那套里「关注/喜欢」就是心，四角星留给收藏。
+  // 关注：心形。
   follow:
     '<path d="M12 20.2c-1.4-1-8.4-5.5-8.4-10.6a4.6 4.6 0 0 1 4.6-4.6c1.6 0 3 .8 3.8 2.1.8-1.3 2.2-2.1 3.8-2.1a4.6 4.6 0 0 1 4.6 4.6c0 5.1-7 9.6-8.4 10.6Z"/>',
   followFilled:
     '<path fill="currentColor" stroke="none" d="M12 20.2c-1.4-1-8.4-5.5-8.4-10.6a4.6 4.6 0 0 1 4.6-4.6c1.6 0 3 .8 3.8 2.1.8-1.3 2.2-2.1 3.8-2.1a4.6 4.6 0 0 1 4.6 4.6c0 5.1-7 9.6-8.4 10.6Z"/>',
-  // 分类：2×2 的圆角方块，圆角比基础表大（SF square.grid.2x2）。
+  // 分类：圆角方块（SF square.grid.2x2）。
   grid: '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.4"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.4"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.4"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.4"/>',
   gridFilled:
     '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/>',
   gridView:
     '<rect x="3.4" y="3.4" width="7.2" height="7.2" rx="2.2"/><rect x="13.4" y="3.4" width="7.2" height="7.2" rx="2.2"/><rect x="3.4" y="13.4" width="7.2" height="7.2" rx="2.2"/><rect x="13.4" y="13.4" width="7.2" height="7.2" rx="2.2"/>',
-  // 设置：8 齿方齿轮 + 中心孔（SF gearshape）。齿顶是平的，不是基础表那种尖齿星芒。
+  // 设置：8 齿方齿轮 + 中心孔（SF gearshape）。
   settings:
     '<path d="M10.4 2.8h3.2l.3 2.2 1.7.8 1.7-1.4 2.3 2.3-1.4 1.7.8 1.7 2.2.3v3.2l-2.2.3-.8 1.7 1.4 1.7-2.3 2.3-1.7-1.4-1.7.8-.3 2.2h-3.2l-.3-2.2-1.7-.8-1.7 1.4-2.3-2.3 1.4-1.7-.8-1.7-2.2-.3v-3.2l2.2-.3.8-1.7-1.4-1.7 2.3-2.3 1.7 1.4 1.7-.8Z"/><circle cx="12" cy="12" r="3.4"/>',
 
   // ---------------------------------------------------------------- 通用控件
   search: '<circle cx="10.7" cy="10.7" r="6.4"/><path d="m15.5 15.5 4.3 4.3"/>',
-  // 返回：只有一条折线（SF chevron.left），没有基础表那条横杠。
+  // 返回：单条折线（SF chevron.left）。
   back: '<path d="M14.6 4.8 7.4 12l7.2 7.2"/>',
   chevron: '<path d="m9.4 4.8 7.2 7.2-7.2 7.2"/>',
   chevronDown: '<path d="m4.8 9.4 7.2 7.2 7.2-7.2"/>',
   chevronUp: '<path d="m4.8 14.6 7.2-7.2 7.2 7.2"/>',
-  // 刷新：顺时针缺口圆弧 + 箭头（SF arrow.clockwise）。
+  // 刷新：缺口圆弧 + 箭头（SF arrow.clockwise）。
   refresh: '<path d="M20.2 12a8.2 8.2 0 1 1-2.8-6.2"/><path d="M20.4 4.2v5.2h-5.2"/>',
   more: '<circle cx="5.4" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="18.6" cy="12" r="1.7" fill="currentColor" stroke="none"/>',
   close: '<path d="m5.6 5.6 12.8 12.8M18.4 5.6 5.6 18.4"/>',
   check: '<path d="m4.8 12.9 4.6 4.6L19.2 7"/>',
   plus: '<path d="M12 5.2v13.6M5.2 12h13.6"/>',
   minus: '<path d="M5.2 12h13.6"/>',
-  dot: '<circle cx="12" cy="12" r="4.2" fill="currentColor" stroke="none"/>',
 
   // ---------------------------------------------------------------- 播放控制
   play:
@@ -61,7 +46,7 @@ export const ICON_PATHS = {
   volume:
     '<path d="M4.4 9.4h3.2L12.2 5.4v13.2L7.6 14.6H4.4Z"/><path d="M15.8 9.6a3.6 3.6 0 0 1 0 4.8"/><path d="M18.2 7.2a7 7 0 0 1 0 9.6"/>',
   mute: '<path d="M4.4 9.4h3.2L12.2 5.4v13.2L7.6 14.6H4.4Z"/><path d="m15.8 9.8 4.8 4.4M20.6 9.8l-4.8 4.4"/>',
-  // 全屏：两个朝外的箭头（SF arrow.up.left.and.arrow.down.right）。
+  // 全屏：两个朝外的箭头。
   fullscreen:
     '<path d="M9.6 4.2H4.2v5.4M4.6 4.6 10 10"/><path d="M14.4 19.8h5.4v-5.4M19.4 19.4 14 14"/>',
   fullscreenExit:
@@ -71,7 +56,7 @@ export const ICON_PATHS = {
   // 同屏：两块并排的圆角屏（SF rectangle.split.2x1）。
   dual:
     '<rect x="2.9" y="5.6" width="8.2" height="12.8" rx="2.6"/><rect x="12.9" y="5.6" width="8.2" height="12.8" rx="2.6"/>',
-  // 延迟：沙漏（SF hourglass），上下托盘 + 两道收腰。
+  // 延迟：沙漏（SF hourglass）。
   delay:
     '<path d="M6.8 3.4h10.4M6.8 20.6h10.4"/><path d="M8.2 3.4v3.4c0 2.4 3.8 3 3.8 5.2s-3.8 2.8-3.8 5.2v3.4"/><path d="M15.8 3.4v3.4c0 2.4-3.8 3-3.8 5.2s3.8 2.8 3.8 5.2v3.4"/>',
   danmaku:
@@ -92,41 +77,33 @@ export const ICON_PATHS = {
   upload: '<path d="M12 15.4V4"/><path d="M7.4 8.6 12 4l4.6 4.6"/><path d="M4.6 20.2h14.8"/>',
   filter: '<path d="M3.6 6.6h16.8M6.6 11.6h10.8M9.6 16.6h4.8"/>',
   list: '<path d="M8.6 5.8h11.8M8.6 12h11.8M8.6 18.2h11.8"/><circle cx="4.6" cy="5.8" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.6" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.6" cy="18.2" r="1.2" fill="currentColor" stroke="none"/>',
-  logout:
-    '<path d="M13.4 3.6H6.6a2 2 0 0 0-2 2v12.8a2 2 0 0 0 2 2h6.8"/><path d="M16.4 8.4 20 12l-3.6 3.6M10.4 12H20"/>',
 
   // ---------------------------------------------------------------- 状态与提示
   info: '<circle cx="12" cy="12" r="8.6"/><path d="M12 11.2v5.2M12 7.9v.2"/>',
   shield: '<path d="M12 3.2 4.8 6.1v5.6c0 4.4 3 7.4 7.2 9.1 4.2-1.7 7.2-4.7 7.2-9.1V6.1Z"/><path d="m9 11.9 2.2 2.2 4-4.4"/>',
   live: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M8 8a5.7 5.7 0 0 0 0 8M16 8a5.7 5.7 0 0 1 0 8"/><path d="M5.1 5.1a9.8 9.8 0 0 0 0 13.8M18.9 5.1a9.8 9.8 0 0 1 0 13.8"/>',
   timer: '<circle cx="12" cy="13.4" r="7.6"/><path d="M12 10v3.4l2.6 1.6M9.2 2.6h5.6"/>',
-  // 人像（SF person.crop.circle）：肩线两端收在圆**里面**。
-  // 原来那条肩弧从 (6,19.3) 拉到 (18,19.3)，两点离圆心 9.4，比半径 8.6 还远——
-  // 描边直接拉出圆圈外，看着像随手画的一道线。
+  // 人像（SF person.crop.circle）：肩弧端点收在圆内。
   account: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="9.6" r="2.9"/><path d="M8 18a4.7 4.7 0 0 1 8 0"/>',
-  // 实心版是 SF person.crop.circle.fill：实心圆，人像用 evenodd 挖空（露出底栏底色），
-  // 不另画一块浅色，皮肤换底色也不会露馅。
-  // 肩膀画成「上拱 + 下拱」的一整块，下边界是弧不是直线：原来那条水平底边横在圆里，
-  // 两头又几乎顶到圆边，看着就像有条线横穿出圆圈。
+  // 实心版（SF person.crop.circle.fill）：人像用 evenodd 挖空，肩部为双拱形。
   accountFilled:
     '<path fill="currentColor" stroke="none" fill-rule="evenodd" d="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 6.5a2.9 2.9 0 1 1 0 5.8 2.9 2.9 0 0 1 0-5.8ZM7.4 18.9a4.61 4.61 0 0 1 9.2 0 9.42 9.42 0 0 1-9.2 0Z"/>',
   users: '<circle cx="9.2" cy="8.2" r="3.4"/><path d="M3.2 19.6a6 6 0 0 1 12 0"/><path d="M15.8 5.2a3.4 3.4 0 0 1 0 6.2M17.4 13.9a6 6 0 0 1 3.4 5.7"/>',
   userMinus: '<circle cx="9.2" cy="8.2" r="3.4"/><path d="M3.2 19.6a6 6 0 0 1 12 0"/><path d="M16.4 11.4h5.2"/>',
   sync: '<path d="M4.6 9.6a7.8 7.8 0 0 1 13-2.4"/><path d="M18.4 3.4v4.4h-4.4"/><path d="M19.4 14.4a7.8 7.8 0 0 1-13 2.4"/><path d="M5.6 20.6v-4.4h4.4"/>',
-  // 线路：一个源点分叉到两个终点。和 sync 那对循环箭头完全不同——
-  // 那个说的是「两边对齐」，这个说的是「有多条可选」。
+  // 线路：一个源点分叉到两个终点。
   route:
     '<circle cx="4.9" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="19.1" cy="6.3" r="2" fill="currentColor" stroke="none"/><circle cx="19.1" cy="17.7" r="2" fill="currentColor" stroke="none"/><path d="M6.9 12h2.4c3.4 0 2.9-5.7 8-5.7"/><path d="M6.9 12h2.4c3.4 0 2.9 5.7 8 5.7"/>',
-  // 播放统计：SF chart.bar 那种「柱 + 轴」，柱更短更圆。
+  // 播放统计：柱 + 轴（SF chart.bar）。
   stats:
     '<path d="M4 20.2h16"/><path d="M7.7 20.2v-6.4M12 20.2V8.8M16.3 20.2v-3.6"/>',
-  // 清晰度：大圆角屏幕 + 实心四角星（SF sparkle 的一颗）。
+  // 清晰度：屏幕 + 实心四角星。
   quality:
     '<rect x="3" y="4.8" width="18" height="13" rx="3.2"/><path fill="currentColor" stroke="none" d="M12 7.7c.38 2.1 1.92 3.64 4 4.02-2.08.38-3.62 1.92-4 4.02-.38-2.1-1.92-3.64-4-4.02 2.08-.38 3.62-1.92 4-4.02Z"/>',
-  // 其他设置：滑杆（SF slider.horizontal.2），旋钮比基础表再大一点。
+  // 其他设置：两条滑杆（SF slider.horizontal.2）。
   other:
     '<path d="M3.2 8h4.4M12.4 8h8.4M3.2 16h8.6M16.2 16h4.6"/><circle cx="10.2" cy="8" r="2.6"/><circle cx="14.4" cy="16" r="2.6"/>',
-  // 链接解析：链环 + 放大镜，放大镜压在右下角不碰链环。
+  // 链接解析：链环 + 放大镜。
   parse:
     '<path d="M9.4 8.2a3.8 3.8 0 0 1 5.4 5.4l-1.7 1.7"/><path d="M12.6 14.8a3.8 3.8 0 0 1-5.4-5.4l1.7-1.7"/><circle cx="16.6" cy="16.6" r="3.4"/><path d="m19 19 1.9 1.9"/>',
   // 网络：三弧 + 点（SF wifi）。

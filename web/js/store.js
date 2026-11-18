@@ -11,8 +11,7 @@ const SEARCH_KEY = 'simple-live.search.v2';
 const STATS_KEY = 'simple-live.stats.v2';
 const LOGIN_PREFIX = 'simple-live.login.v1.';
 
-/// 观看记录上限。导入 dart 的 profile 时单机历史常常超过一千条，
-/// 上限太小会静默截掉一大半。
+/// 观看记录上限；导入 dart profile 时历史可能超过一千条。
 export const HISTORY_LIMIT = 2000;
 
 export function loadLogin(platform) {
@@ -27,11 +26,7 @@ export function saveLogin(platform, data) {
   localStorage.setItem(LOGIN_PREFIX + platform, JSON.stringify(data));
 }
 
-/// 参与备份/同步的登录平台。
-///
-/// 这份清单必须和设置页「账号登录」里 `canLogin: true` 的四个平台一一对应：
-/// 少一个，那个平台的 Cookie 就不会进备份、重启后也不会注回后端，
-/// 用户会看到「页面显示已登录，一取流还是游客」。虎牙目前不支持登录，不在其中。
+/// 参与备份/同步的登录平台，须与设置页 canLogin 的平台一致。
 export const ACCOUNT_PLATFORMS = ['bilibili', 'douyu', 'douyin', 'kuaishou'];
 
 /// 收集本机已登录的平台，供“导出备份”使用。
@@ -66,8 +61,7 @@ export const DEFAULT_SETTINGS = {
     theme: 'dark',
     // 主题色：默认取皮肤 accents 的第一个（皮肤不绑死某个品牌色）。
     accent: skinAccent(DEFAULT_SKIN_ID),
-    // 主题色是「跟着皮肤走」还是「用户自己挑的」。
-    // 用户没动过时切皮肤会一起换；动过之后就不再覆盖。
+    // 主题色是否跟随皮肤；用户自选后不再被皮肤覆盖。
     accentSource: 'skin',
     density: 'comfortable',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
@@ -76,8 +70,7 @@ export const DEFAULT_SETTINGS = {
   player: {
     autoFullscreen: false,
     rememberQuality: true,
-    // 没记住清晰度时用哪一档：auto 跟随平台、highest 最高、也可按 1080/720/480/流畅 优先。
-    // 「记住清晰度」开着时以记住的为准（那才是用户上一次的真实选择）。
+    // 默认清晰度：auto / highest / 1080 / 720 / 480 / smooth；开启「记住清晰度」时以记住的为准。
     defaultQuality: 'auto',
     hardwareDecode: true,
     muteOnStart: false,
@@ -90,19 +83,15 @@ export const DEFAULT_SETTINGS = {
     forceHttps: true,
     superChatOverlay: false,
     superChatAutoRemove: true,
-    // 悬浮层新卡的**默认状态**：开 → 进来先折成一行，关 → 进来直接展开正文。
-    // 两种状态下每张卡都能点头部来回切换（这里只决定第一眼看到的样子）。
+    // 悬浮层新卡的初始折叠状态。
     superChatFold: true,
-    // 浮动卡停留时长是否「均衡化」：开 → 按金额压进 [5s, superChatMax]；
-    // 关 → 完全按平台给的到期时间（B 站 30 元的 SC 也能挂一分钟）。
+    // 浮动卡停留时长是否按金额均衡化到 [5s, superChatMax]。
     superChatBalance: true,
     // 均衡化时的上限（秒）。只有 15 / 20 两档。
     superChatMax: 20,
   },
   live: {
-    // 「进入直播间自动全屏」只有一份：`player.autoFullscreen`。
-    // 0.6.1 之前这里还有一份 `live.autoFullscreen`，两处各改各的互不影响，
-    // 用户改了哪一处都像是「设置没生效」——0.6.2 把这份删掉了。
+    // 进入直播间自动全屏。
     autoSwitchNext: false,
     allowBackground: true,
     gesture: true,
@@ -118,16 +107,12 @@ export const DEFAULT_SETTINGS = {
     opacity: 95,
     stroke: true,
     strokeWidth: 2,
-    // 帧率上限：0 = 跟随屏幕（默认）。高刷屏上弹幕跟着刷新率走最顺；
-    // 觉得费电或有卡顿再降到 60/30——抽帧是按 vsync 计数做的，降下来也是均匀的。
+    // 弹幕帧率上限，0 表示跟随屏幕。
     fps: 0,
     emoji: true,
-    // 大表情（B 站收藏集那类只能单独发送的）占几行：1~5，1 行 = 一个弹幕轨道高。
-    // 行数既决定画多大，也决定轨道算法给它留几条轨道（弹幕层会按它抬高 maxGrade），
-    // 所以设成 2 行就真的会空出上下两条轨道，不会盖住旁边的弹幕。
+    // 大表情占几行（1~5），同时决定绘制高度与占用的轨道数。
     bigEmojiLines: 2,
-    // 默认**关**：按内容去重会把「666」「哈哈哈哈」这类不同人发的一模一样的话
-    // 整段吞掉，这是实打实的「能显示却被丢掉」。真有刷屏再让用户自己开。
+    // 按内容去重，默认关闭。
     dedupe: false,
     dedupeMode: 'content',
     dedupeWindow: 10,
@@ -139,13 +124,11 @@ export const DEFAULT_SETTINGS = {
     perf: 'balanced',
     // 发送弹幕默认关闭：写操作会用账号 Cookie，让用户主动开启。
     sendEnabled: false,
-    // 发送弹幕的入口默认**连设置项都不显示**，要在「关于」页连点版本号 7 次
-    // 才会解锁（见 docs/hidden-features.md）。这里只存解锁结果。
+    // 发送弹幕的解锁结果；设置项在解锁前不显示。
     sendUnlocked: false,
   },
   follow: {
-    // 进入关注页时是否自动刷新直播状态。默认关闭：关注几百个主播时
-    // 一进页面就打几百个请求，用户没要求就别替他决定。
+    // 进入关注页时是否自动刷新直播状态，默认关闭。
     autoRefresh: false,
     threads: 0,
     pageSize: 200,
@@ -155,17 +138,14 @@ export const DEFAULT_SETTINGS = {
   timer: {
     enabled: false,
     minutes: 60,
-    // 到点退出后是否顺手把定时关闭关掉。
-    // 关着 = 每次启动应用都会重新计时（老行为），开着 = 只生效一次。
+    // 定时关闭到点后是否自动关闭该功能。
     once: false,
   },
   sync: {
-    // 同步包里要不要带这两类数据。默认：观看记录跟着走，登录信息不跟——
-    // Cookie 一进包，就跟着 WebDAV 的远端文件和局域网里的 HTTP 服务一起裸奔。
+    // 同步包是否包含观看记录与登录信息（Cookie）。
     includeHistory: true,
     includeAccounts: false,
-    // WebDAV 局域网同步。密码明文存在本机 localStorage（设置页有风险提示），
-    // 只在本机使用、不上传任何第三方。
+    // WebDAV 配置；密码明文存于本机 localStorage。
     webdav: {
       url: '',
       path: 'starveil-sync.json',
@@ -193,8 +173,7 @@ export const state = {
   categoryRooms: { items: [], page: 0, loading: false, done: false, title: '', parentId: '', subId: '', error: '' },
   search: { keyword: '', mode: 'room', results: [], anchors: [], loading: false, error: '', recent: loadSearch() },
   room: null,
-  // followFilter 统一描述关注页的全部筛选条件：
-  // 标签 + 状态/平台 + 搜索关键词。右上角计数永远等于这三条同时生效后的结果数。
+  // 关注页筛选条件：标签 + 状态/平台 + 关键词。
   followFilter: { mode: 'status', status: 'all', platform: 'all', tag: 'all', keyword: '' },
   followView: 'grid',
   history: loadHistory(),
@@ -204,17 +183,11 @@ export const state = {
 };
 
 /// 深合并：对象逐层递归，其它类型（含数组、null）直接覆盖。
-///
-/// 导出的目的是给导入/同步用——浅展开会让「只带部分字段」的包把整段默认值顶掉，
-/// 例如 `{"danmaku": null}` 会让 `settings.danmaku` 变成 null，进房时读
-/// `danmaku.enabled` 直接抛 TypeError，整页渲染失败。
 export function merge(base, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return base;
   const output = { ...base };
   for (const [key, value] of Object.entries(patch)) {
-    // null 不覆盖已有的对象段。localStorage 里某段是 null（旧版本写的、手工改的、
-    // 写入被打断）时，如果照直覆盖，后面读 `danmaku.enabled` 就是 TypeError，
-    // 整页渲染失败且坏数据会一直留在盘上。
+    // null 不覆盖已有的对象段，避免读字段时抛 TypeError。
     if (value === null && base[key] && typeof base[key] === 'object') continue;
     if (value && typeof value === 'object' && !Array.isArray(value) && base[key] && typeof base[key] === 'object') {
       output[key] = merge(base[key], value);
@@ -237,16 +210,14 @@ function loadSettings() {
     stored = {};
   }
   const settings = merge(clone(DEFAULT_SETTINGS), stored);
-  // 早期版本把 theme/accent 放在顶层。只在 `appearance` 缺这一项时才回退，
-  // 否则落盘的镜像值会把用户刚改好的主题又盖回去。
+  // 兼容顶层的 theme/accent，仅在 appearance 缺该项时回退。
   if (stored.theme && !stored.appearance?.theme) {
     settings.appearance.theme = stored.theme;
   }
   if (stored.accent && !stored.appearance?.accent) {
     settings.appearance.accent = stored.accent;
   }
-  // 0.7.0 之前没有皮肤概念：老用户一律落到默认皮肤上。
-  // 强调色如果早就不是默认粉（自己挑过），标记成用户自定义，切皮肤时别覆盖。
+  // 旧数据落到默认皮肤；非默认强调色标记为用户自选。
   if (!stored.appearance?.skin) {
     settings.appearance.skin = DEFAULT_SKIN_ID;
   }
@@ -255,18 +226,15 @@ function loadSettings() {
   if (!settings.appearance.accentSource) {
     settings.appearance.accentSource = settings.appearance.accent === bakedAccent ? 'skin' : 'user';
   }
-  // 0.6.2 删掉的设置项，从落盘数据里清掉，避免导出备份时又把这些死字段带出去。
+  // 清掉已删除的设置项，避免随备份导出。
   delete settings.dynamicColor;
   delete settings.appearance?.dynamicColor;
-  // 「进入直播间自动全屏」原先在 live 段里也有一份，从没被读过。老版本改过它的人
-  // 升级后会看到开关自己关了，这里把那一次选择补到唯一生效的 player 段上。
+  // 兼容 live.autoFullscreen，迁移到 player 段。
   if (stored.live?.autoFullscreen === true && stored.player?.autoFullscreen === undefined) {
     settings.player.autoFullscreen = true;
   }
   delete settings.live?.autoFullscreen;
-  // 0.7.4 删掉了「按用户屏蔽」（昵称可重名、可随时改，按昵称匹配误伤又绕得过）。
-  // 老用户落盘里还留着这串名单：不清理的话它会一直跟着备份和同步包一起走，
-  // 对方导入后还是一份改了也没用的死数据。
+  // 清理已移除的 danmaku.blockUsers。
   delete settings.danmaku?.blockUsers;
   return settings;
 }
@@ -304,9 +272,7 @@ export function setSetting(path, value) {
     state.settings.appearance.accentSource = 'user';
   }
   saveSettings();
-  // 只有外观类设置需要重算样式（applyTheme 会改 CSS 变量并广播事件，
-  // 侧边栏主题按钮也会跟着重建）。拖弹幕不透明度这种滑块时每移动一格都重算，
-  // 主线程会被这些无关的 DOM 操作占住，手感明显发涩。
+  // 只有外观类设置触发 applyTheme 重算样式。
   if (path.startsWith('appearance.')) applyTheme();
   return value;
 }
@@ -320,10 +286,7 @@ export function resetSettings() {
 /// 皮肤清单：设置页只读，不要在别处再维护一份。
 export { SKINS };
 
-/// 主题色：预设色来自当前皮肤（registry 的 accents），这里只负责写入。
-///
-/// `followSkin` 为真表示「选的正好是皮肤默认色」，仍按跟随皮肤处理 ——
-/// 否则用户点回默认色之后，下次换皮肤主题色不会跟着变，看着像「换皮肤没生效」。
+/// 写入主题色；`followSkin` 为真表示跟随皮肤默认色。
 export function setAccent(color, followSkin = false) {
   const appearance = state.settings.appearance;
   appearance.accent = color;
@@ -343,10 +306,7 @@ export function skinLockedMode() {
   return modes.length === 1 ? modes[0] : '';
 }
 
-/// 切皮肤。
-///
-/// 只做四件事：换 `<link>`、换图标表、按需继承皮肤的默认主题色、把不支持的明暗档收回来。
-/// 真正把变量写到 DOM 上的是 applyTheme，保证「切皮肤」和「切明暗」走同一条路径。
+/// 切皮肤：换样式表与图标表、继承默认主题色、收回不支持的明暗档，最后交给 applyTheme。
 export async function applySkin(id) {
   const skin = getSkin(id);
   const appearance = state.settings.appearance;
@@ -367,11 +327,7 @@ export async function applySkin(id) {
   return skin;
 }
 
-/// 皮肤的图标覆盖表（可选能力）。
-///
-/// `skins/<id>/icons.js` 导出 `ICON_PATHS`，只写要替换的图形；registry 里没标
-/// `icons: true` 的皮肤直接沿用基础表，连一次请求都不会发出去。
-/// 任何失败都退回基础表 —— 图标画得不好看是可以接受的，整页渲染不出来不行。
+/// 加载皮肤图标覆盖表；失败时退回基础表。
 export async function loadSkinIcons(id = currentSkin().id) {
   const skin = getSkin(id);
   if (!skin.icons) {
@@ -387,10 +343,7 @@ export async function loadSkinIcons(id = currentSkin().id) {
   }
 }
 
-/// 皮肤样式表：`skins/<id>/skin.css`。
-///
-/// index.html 里已经静态引入了默认皮肤（首帧不能等 JS），
-/// 这里只是把 href 换掉——换完之后浏览器解析新文件、重新计算变量。
+/// 换皮肤样式表 href。
 function ensureSkinStyle(id) {
   const href = skinHref(id);
   let link = document.getElementById('skin-css');
@@ -420,22 +373,18 @@ export function applyTheme() {
   root.dataset.theme = effective;
   root.dataset.themeMode = mode;
 
-  // 主题色：用户挑过的用用户的，否则用这套皮肤的默认色
-  // （首帧是 skin.css 里的静态值，必须和 registry 的第一个色一致）。
+  // 主题色：用户自选优先，否则取皮肤默认色。
   const rawAccent = appearance.accentSource === 'user' && appearance.accent
     ? appearance.accent
     : skinAccent(skin.id);
-  // 存的是原值，落到 DOM 上的按当前明暗档换算：白色这类「只在一档成立」的颜色
-  // 在浅色模式下会换成深灰（见 registry 的 `light`）。
+  // 存原值，落到 DOM 时按当前明暗档换算。
   const accent = accentForMode(rawAccent, effective);
   root.style.setProperty('--accent', accent);
   root.style.setProperty('--accent-soft', hexToAlpha(accent, effective === 'light' ? 0.18 : 0.16));
-  // 压在强调色上的文字：浅色主题色（雪白）必须配深字，否则白底白字。
-  // 每次 applyTheme 都重算，换成深色主题时又回到白字，不留上一轮的残留。
+  // 压在强调色上的文字颜色，每次 applyTheme 重算。
   root.style.setProperty('--accent-on', isLightColor(accent) ? '#15151b' : '#ffffff');
 
-  // 标题栏底色、安卓系统栏都跟着 `--bg` 走：以前这里写死了两套 hex，
-  // 换皮肤就会在状态栏露出一条对不上的边。取不到值时宁可不设，也不猜一个颜色。
+  // 标题栏底色与安卓系统栏跟随 --bg；取不到值时不设置。
   const bg = readVar('--bg');
   const meta = document.querySelector('meta[name="theme-color"]');
   if (bg && meta) meta.setAttribute('content', bg);
@@ -450,8 +399,7 @@ function readVar(name) {
   return value || '';
 }
 
-/// 安卓系统栏跟着主题走：用 `--bg` 的实际值，和页面背景严丝合缝。
-/// 只在移动端调，桌面窗口没有系统栏。
+/// 安卓系统栏跟随 --bg；仅移动端调用。
 let lastSystemBar = '';
 
 function syncSystemBar(effective, color) {
@@ -462,9 +410,7 @@ function syncSystemBar(effective, color) {
   api.setSystemBar(color, effective === 'light').catch(() => {});
 }
 
-/// 首帧预涂：下次启动时 index.html 的内联脚本读这个键，
-/// 直接把 `data-theme` / `data-skin` 定下来，就不会先闪一帧默认配色。
-/// 单独存一个键而不是塞进 settings：它是渲染缓存，不该跟着备份/同步走。
+/// 首帧预涂缓存（theme / skin），供 index.html 内联脚本读取，不参与备份与同步。
 const BOOT_KEY = 'starveil.boot.v1';
 
 function rememberBootPaint(theme, skin) {
@@ -498,11 +444,7 @@ function hexToAlpha(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/// 这个颜色亮到需要配深色文字吗？
-///
-/// 用相对亮度（WCAG 那套 gamma 校正），不是简单取 RGB 平均值——
-/// 平均值会把「琥珀」判断成暗色，实际它配白字根本看不清。
-/// 阈值 0.40：琥珀 0.52、青碧 0.46 都落到「配深字」，雾蓝 0.28、樱粉 0.35 仍是白字。
+/// 是否需要用深色文字：按 WCAG 相对亮度判断，阈值 0.40。
 function isLightColor(hex) {
   const normalized = String(hex).replace('#', '');
   const full =
@@ -639,10 +581,7 @@ export function clearHistory() {
 }
 
 // ---------------------------------------------------------------- 观看统计
-//
-// 与 history 分开存：history 是「最近看过谁」的列表（会被去重、有上限），
-// 统计要的是「每个主播累计看了多久、点进几次」，写的是累加值，
-// 混在一起会互相踩。底层粒度只存「按天」，周/月/年由展示层聚合，避免多份冗余。
+// 与 history 分开存；底层只记按天的累加值，周/月/年由展示层聚合。
 
 const STATS_DAY_LIMIT = 400; // 每个主播保留最近 400 天
 const STATS_ROOM_LIMIT = 300; // 最多统计 300 个主播
@@ -832,11 +771,7 @@ export function aggregateStats(range = 'all', now = Date.now()) {
   return { range, start, totalMs, totalVisits, activeDays: activeDays.size, rooms };
 }
 
-/// 最近 `days` 天每个房间的进房次数，关注页排序用。
-///
-/// 数据源是统计里的按天 `visits`（`bumpStatsVisit` 每次进房都会记），
-/// 不是 follow 上的累计 `clicks`：累计值不随时间衰减，半年前刷过的房间会一直
-/// 压在近期常看的前面。返回 `Map<platform:roomId, 次数>`。
+/// 最近 `days` 天每个房间的进房次数，返回 `Map<platform:roomId, 次数>`。
 export function recentVisitCounts(days = 7, now = Date.now()) {
   const windowDays = Math.max(1, Math.floor(Number(days) || 7));
   const cutoff = now - windowDays * 86400000;
@@ -846,7 +781,7 @@ export function recentVisitCounts(days = 7, now = Date.now()) {
     let visits = 0;
     for (const [day, bucket] of Object.entries(entry.daily || {})) {
       const timestamp = Date.parse(`${day}T00:00:00`);
-      // 按「日」存的数据，跨过 cutoff 那天的白天也算进来，不然近 7 天会少一天。
+      // 按「日」存的数据：cutoff 当天整天计入，否则近 7 天会少一天。
       if (Number.isNaN(timestamp) || timestamp + 86400000 <= cutoff) continue;
       visits += Number(bucket?.visits) || 0;
     }
@@ -896,17 +831,8 @@ export function replaceSearchHistory(list) {
   return cleaned.length;
 }
 
-/// 导入/同步观看统计：**按房间、按天合并**，不是整段替换。
-///
-/// 以前这里是「整段替换」，于是和观看记录的行为对不上：记录是按 key 合并的
-/// （本机新增的还在），统计却被对方的包顶掉，同步一次就少一批主播的时长。
-/// 两边的口径统一成「只增不减」：
-/// - 房间取并集；
-/// - 同一天有冲突时 `ms` / `visits` 取较大值（同一天两台设备各看一会，
-///   相加会把时间翻倍，取大值只会少算不会虚增）；
-/// - `last_at` / `total_ms` / `visits` 同样取较大值。
-/// 只认结构对的包：`{v:1, rooms:{...}}`，别的当空包，避免坏包把统计写成读不出来的东西。
-/// 写之前仍走 `saveStats` 的裁剪与体积保护。
+/// 导入/同步观看统计：按房间、按天合并，冲突字段取较大值。
+/// 只接受 `{v:1, rooms:{...}}` 结构，写入前走 saveStats 的裁剪与体积保护。
 export function mergeStats(stats) {
   if (!stats || typeof stats !== 'object' || !stats.rooms || typeof stats.rooms !== 'object') {
     return 0;

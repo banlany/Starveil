@@ -1,12 +1,5 @@
-//! 极简 WebDAV 客户端：只做同步需要的四件事——探测、探测元信息、上传、下载。
-//!
-//! 为什么不用专门的 WebDAV crate：同步单元就是一个整包 JSON 文件，
-//! `PUT` / `GET` / `PROPFIND(Depth: 0)` 三条请求足够，`reqwest` 本来就支持自定义方法，
-//! 引入 crate 反而多一层抽象和编译时间。
-//!
-//! 认证统一走 Basic Auth（群晖、坚果云、Nextcloud 都支持）。
-//! 局域网 NAS 常见自签证书，因此提供 `allow_insecure_tls` 开关，
-//! 只在用户明确要求时放行，不做静默降级。
+//! 极简 WebDAV 客户端：PROPFIND 探测、PUT 上传、GET 下载，统一 Basic Auth。
+//! `allow_insecure_tls` 用于自签证书的局域网 NAS。
 
 use std::time::Duration;
 

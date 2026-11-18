@@ -236,9 +236,7 @@ pub(crate) const RECONNECT_MIN: Duration = Duration::from_secs(3);
 /// 连续失败时的退避上限。
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
-/// 0.4.5 之前是「整个会话累计 3 次就退出」，挂机时间一长（睡眠唤醒、切网、
-/// CDN 踢线）弹幕线程就直接结束，界面既不报错也没有重连按钮，只能重进房。
-/// 现在改成无限重连：连上过一次就把退避拉回最短，连续失败逐次翻倍封顶。
+/// 断线重连退避：连上过一次就回到最短间隔，连续失败逐次翻倍。
 pub(crate) fn next_backoff(current: Duration) -> Duration {
     (current * 2).min(RECONNECT_MAX)
 }
@@ -248,11 +246,10 @@ pub(crate) fn should_report(failures: u32) -> bool {
     failures <= 2 || failures % 10 == 0
 }
 
-/// 给 WebSocket 底层 TCP 设读超时。房间安静时没有它 `read()` 会永久阻塞，
+/// 给 WebSocket 底层 TCP 设读超时：房间安静时 `read()` 会永久阻塞，
 /// 切房后线程退不出去，socket 与缓冲区一起泄漏。
 ///
-/// 目前三站都用 rustls（B 站/虎牙 wss，斗鱼自己包 native-tls），所以正常路径
-/// 一定命中 `Rustls`。剩下的分支打个日志，免得哪天换 TLS 后端后静默失效。
+/// 三站都走 rustls（斗鱼另包 native-tls），正常路径命中 `Rustls`，其余分支只打日志。
 pub(crate) fn set_read_timeout(
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
 ) {
@@ -799,11 +796,9 @@ fn bilibili_extract_color(info: &[serde_json::Value]) -> Option<u32> {
 const DOUYU_HOST: &str = "danmuproxy.douyu.com";
 /// 明文 STT 端口。
 ///
-/// 为什么优先走它：斗鱼的 wss **只支持静态 RSA 密钥交换**
-/// （`TLS_RSA_WITH_AES_256_GCM_SHA384`，实测只给 ECDHE 套件时服务端直接
-/// `handshake failure`），而 rustls 从设计上不实现静态 RSA（只做 ECDHE），
-/// 于是 Android / iOS 用 rustls 时握手必失败。桌面之所以一直能用，只是因为
-/// Windows 的 SChannel 支持静态 RSA。8601 是裸 TCP，三端一致，绕开这个死结。
+/// 斗鱼的 wss 只支持静态 RSA 密钥交换（`TLS_RSA_WITH_AES_256_GCM_SHA384`），
+/// rustls 不实现静态 RSA，握手必失败；桌面端能用是因为 SChannel 支持它。
+/// 8601 是裸 TCP，三端一致。
 const DOUYU_PLAIN_PORT: u16 = 8601;
 /// 单个 STT 帧的上限。帧头是 4 字节长度，脏数据能声明到 4GB，
 /// 不设上限的话一个坏包就能把内存吃穿。

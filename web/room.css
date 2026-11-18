@@ -27,9 +27,7 @@
   overflow: hidden;
 }
 
-/* 双击画面切全屏时，浏览器会顺手把被双击的元素选中：video 被选中后整块盖上
-   一层蓝色选区，看着像画面落了色。舞台里没有需要选中的文字，直接关掉。
-   （mousedown 的第二下也 preventDefault 了，见 room.js，两道保险。） */
+/* 舞台内禁用文字选中，避免双击时出现蓝色选区。 */
 .stage,
 #player,
 #player-b {
@@ -74,13 +72,11 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  /* 压在加载/错误提示卡（z-index 5）之上：直播流断了、还没开播时，
-     正中间那张提示卡会把正在滚的弹幕挡掉一半，而弹幕这时候本来该照常跑。
-     仍然低于顶部浮层与控制条（8），不至于盖住按钮。 */
+  /* 弹幕层位于提示卡（5）之上、浮层与控制条（8）之下。 */
   z-index: 6;
 }
 
-/* fly-barrage 会把容器改成 position: relative，所以这里用显式宽高撑满弹幕层 */
+/* 弹幕层：显式宽高撑满，库会把容器改成 position: relative */
 .danmaku-canvas-host {
   position: relative;
   width: 100%;
@@ -154,8 +150,7 @@
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  /* 默认透明，只靠胶囊；做不透明浮层的皮肤给 --media-topbar-bg 上色，
-     底边那道线走 --media-bar-line（inset 阴影，不占布局高度）。 */
+  /* 顶栏默认透明，由 --media-topbar-bg 与 --media-bar-line 控制。 */
   background: var(--media-topbar-bg);
   box-shadow: inset 0 -1px 0 var(--media-bar-line);
   transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
@@ -323,8 +318,7 @@
   flex: none;
 }
 
-/* 三段式布局：音量钉左、全屏钉右，中间 `.pc-mid` 自己收。
-   中间这段允许被压缩（min-width:0），所以画质档位再长也顶不动两端的按钮。 */
+/* 三段式布局：音量居左、全屏居右，中段可压缩（min-width: 0）。 */
 .player-controls .pc-side {
   display: flex;
   align-items: center;
@@ -360,8 +354,7 @@
   color: var(--media-fg);
   font-size: 12.5px;
   white-space: nowrap;
-  /* 不参与压缩：压缩会让按钮悄悄变窄，room.js 靠 scrollWidth 判断放不放得下，
-     一旦这里可缩就永远测不出溢出（spacer 之外的元素必须固定宽度）。 */
+  /* 不参与压缩，保证 scrollWidth 能测出溢出。 */
   flex: none;
 }
 
@@ -370,8 +363,7 @@
   color: var(--media-fg);
 }
 
-/* 档位名单独一层：文字才做得出省略号（按钮本身是 inline-flex，直接截断没用）。
-   宽度上限在 mobile.css 里给，桌面空间够，不设限。 */
+/* 档位文字单独一层，便于省略号截断；宽度上限见 mobile.css。 */
 .player-controls .ctrl-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -393,8 +385,7 @@
   gap: 4px;
 }
 
-/* 音量条的容器：桌面是内联的（hover 时按钮右侧展开），
-   手机上整体改成按钮上方的浮层，见 mobile.css。 */
+/* 音量容器：桌面内联展开，移动端改为浮层。 */
 .volume-pop {
   display: flex;
   align-items: center;
@@ -450,8 +441,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ------------------------------------------------------------ 全屏 */
 
-/* 全屏只看画面：聊天栏、底部动作栏、折叠按钮全部隐藏。
-   顶部返回/标题栏和播放控制条仍由 ui-idle 在 2.8 秒后自动隐藏。 */
+/* 全屏时隐藏聊天栏、动作栏与折叠按钮；上下浮层由 ui-idle 控制。 */
 .room-page.is-fullscreen .room-chat,
 .room-page.is-fullscreen .room-footer,
 .room-page.is-fullscreen .chat-expand,
@@ -463,9 +453,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ------------------------------------------------------------ 空闲隐藏 */
 
-/* 0.7.4 起窗口/竖屏里也一样自动收起（以前只在全屏或「聊天没折叠且在播」时收），
-   所以光标不能整页藏掉：聊天栏里还得看得见指针。全屏才整页藏，
-   窗口模式只藏画面上的那一块。 */
+/* 窗口模式只隐藏画面区域的光标，全屏才整页隐藏。 */
 .room-page.ui-idle.is-fullscreen,
 .room-page:fullscreen.ui-idle,
 html.is-theater .room-page.ui-idle {
@@ -499,8 +487,7 @@ html.is-theater .room-page.ui-idle {
   transform: none;
 }
 
-/* 但安卓全屏（剧场模式）例外：暂停/缓冲时这两块也要收起来。
-   全屏里点一下画面就能唤回，没必要为了那颗「继续播放」让顶栏和底栏常驻黑条。 */
+/* 安卓全屏下暂停时同样收起上下浮层。 */
 html.is-theater .room-page.ui-idle .room-topbar,
 html.is-theater .room-page.ui-idle .player-controls {
   opacity: 0;
@@ -604,8 +591,7 @@ body.is-resizing-chat .room-chat {
   font-weight: 400;
   color: var(--fg-subtle);
   white-space: nowrap;
-  /* 放不下时整体换到下一行（见 .chat-head-meta 的 wrap），
-     否则「看过 / 大航海」这两个数字会被裁掉一半。 */
+  /* 空间不足时换行。 */
   flex: 0 1 auto;
 }
 
@@ -625,8 +611,7 @@ body.is-resizing-chat .room-chat {
   display: flex;
   align-items: center;
   gap: 4px 7px;
-  /* B 站这行有「平台 · 直播中 · 12.3万看过 · 456 大航海」四段，
-     聊天栏一窄就全被裁掉。允许换行，最多两行：状态一行、数据一行。 */
+  /* 允许换行，最多两行。 */
   flex-wrap: wrap;
   color: var(--fg-subtle);
   font-size: 11px;
@@ -639,8 +624,7 @@ body.is-resizing-chat .room-chat {
   flex: none;
 }
 
-/* 大航海：自己单独占一行，并且用蓝色（舰长是「付费身份」，和看过人数不是一类信息）。
-   `flex: 1 0 100%` 让它一定换行——聊天栏再宽也不和上一行挤在一起。 */
+/* 大航海单独占一行，使用蓝色（flex: 1 0 100%）。 */
 .chat-head-meta .chat-head-guard {
   flex: 1 0 100%;
   display: inline-flex;
@@ -690,8 +674,7 @@ body.is-resizing-chat .room-chat {
 }
 
 .sc-card {
-  /* 聊天列表是 flex 容器：不写 flex:none，卡片数量一多就会被一起压缩
-     （配合上面的 overflow:hidden，min-height 退化成 0，卡片被压成一条）。 */
+  /* 聊天卡片不参与压缩。 */
   flex: none;
   margin: 8px 10px;
   padding: 0;
@@ -1087,8 +1070,7 @@ body.is-resizing-chat .room-chat {
   font-weight: 600;
 }
 
-/* 主色条由 `.tab-underline` 统一画（styles.css），位置在 room.js 里按
-   当前标签的宽度算，切换标签时滑过去而不是跳过去。 */
+/* 主色条位置由 room.js 计算。 */
 
 .chat-tab em {
   font-style: normal;
@@ -1107,8 +1089,7 @@ body.is-resizing-chat .room-chat {
   scroll-behavior: smooth;
 }
 
-/* 弹幕连接状态条：贴在聊天列表上方，只在没连上/连不上/平台不支持时出现。
-   「连接中」和失败的配色要能一眼区分，所以底色跟着状态走。 */
+/* 弹幕连接状态条，底色随状态变化。 */
 .chat-status {
   flex: none;
   display: flex;
@@ -1264,8 +1245,7 @@ body.is-resizing-chat .room-chat {
   bottom: 62px;
 }
 
-/* 聊天栏「回到底部」：往上翻历史时浮在列表底部，点一下回到最新一条。
-   只在拉开 160px 以上才出现，轻微滚动不会一直闪。 */
+/* 回到底部按钮，上翻超过 160px 时出现。 */
 .chat-to-bottom {
   position: absolute;
   left: 50%;
@@ -1329,10 +1309,7 @@ body.is-resizing-chat .room-chat {
   margin: 0 1px;
 }
 
-/* 大表情（B 站收藏集那类只能单独发送的）：高 = 设置里的「几行」× 聊天行高。
-   行数由 room.js 写进 --big-emoji-lines（见 applyBigEmojiSize），
-   1 行 = 1.55em，正好等于 .chat-line 的 line-height，所以「3 行」就是 3 行文字高。
-   走 CSS 变量而不是内联 height：改档位时屏上已有的表情也会立刻跟着变。 */
+/* 大表情高度 = --big-emoji-lines × 1.55em（1 行等于 .chat-line 的行高）。 */
 .chat-emoji.is-big {
   height: calc(var(--big-emoji-lines, 2) * 1.55em);
   vertical-align: middle;
@@ -1344,14 +1321,12 @@ body.is-resizing-chat .room-chat {
   font-size: 11.5px;
 }
 
-/* 聊天区里的 SC：底色由 room.js 把 SC 档位色写成两个变量（--sc-bg / --sc-bg-strong），
-   深浅主题各挑一档。以前是一层粉红渐变 + 主题紫的用户名，跟 SC 面板对不上。 */
+/* 聊天区 SC 底色取自 --sc-bg / --sc-bg-strong。 */
 .chat-line.sc {
   padding: var(--sc-msg-pad-y) var(--sc-msg-pad-x);
   margin: 4px 0;
   border-radius: var(--sc-msg-radius);
-  /* 底色是平台档位色 + 皮肤的一层遮罩（深色压暗、浅色透明）：
-     这样不用按 data-theme 逐条覆盖，切主题时屏上的 SC 会立刻跟着变。 */
+  /* 档位色叠加皮肤遮罩，切换主题时自动适配。 */
   background-color: var(--sc-bg, var(--surface-2));
   background-image: linear-gradient(var(--sc-shade), var(--sc-shade));
   border: var(--sc-border-w) solid var(--sc-line);
@@ -1359,8 +1334,7 @@ body.is-resizing-chat .room-chat {
   text-shadow: none;
 }
 
-/* 用户名 / 正文 / 价格标签一律跟底色走（深色底时 room.js 会把 color 改成白色），
-   不再用主题色，否则浅金、浅蓝那几档底色上紫字会发灰。 */
+/* SC 内文字颜色由 room.js 按底色写入。 */
 .chat-line.sc .who,
 .chat-line.sc .text,
 .chat-line.sc .sc-tag {
@@ -1426,9 +1400,7 @@ body.is-resizing-chat .room-chat {
   font-weight: 600;
 }
 
-/* 设置页的数值项：按钮 + openMenu 的自绘下拉。
-   原生 <select> 收起态还能靠 CSS 装一下，展开的那一下由 WebView 自己画，
-   深色皮肤下会弹出一块系统白底。尺寸沿用原来的，换成按钮不会变窄。 */
+/* 设置页数值项：按钮 + openMenu 的自绘下拉。 */
 .chat-setting-select {
   flex: 1;
   min-width: 0;
@@ -1501,12 +1473,9 @@ body.is-resizing-chat .room-chat {
   flex: none;
 }
 
-/* 直播间设置面板全部改用下拉框（见 room.js 的 CS_PRESETS）：
-   窄面板里滑块拖不准、数字框在手机上弹键盘顶走面板。
-   这里不再有 range / number / 尾部数值标签，对应样式一并去掉。 */
+/* 直播间设置面板全部使用下拉框（见 room.js 的 CS_PRESETS）。 */
 
-/* 开关的开态色由 `--switch-on` 统一决定（默认就是主题色），
-   这里不再单独覆盖成 --accent，免得换皮肤时两处打架。 */
+/* 开关开态色由 --switch-on 决定。 */
 
 .chat-setting-select:focus,
 .chat-setting-textarea:focus {
@@ -1586,17 +1555,13 @@ body.is-resizing-chat .room-chat {
   backdrop-filter: var(--media-blur);
 }
 
-/* 悬停不能退回 --wash-3：那是「在页面底色上叠一层」的蒙层，
-   这颗按钮压在视频画面上，浅色皮肤里一悬停就会化进黑画面里看不见。
-   底色和字色都由 --room-float-hover-* 给，皮肤保证悬停后仍然有对比。 */
+/* 悬停底色与字色由 --room-float-hover-* 提供。 */
 .chat-expand:hover {
   color: var(--room-float-hover-fg);
   background: var(--room-float-hover-bg);
 }
 
-/* 收起 / 展开聊天的箭头按屏幕方向给两套：桌面与横屏是「向右 / 向左」，
-   手机竖屏是「向下 / 向上」——那边聊天区是在下方，箭头方向得跟得上。
-   两个 span 都渲染出来，由 CSS 挑一个显示，免得旋转屏幕时还要改 innerHTML。 */
+/* 折叠箭头的两套图标由 CSS 按屏幕方向切换。 */
 .dir-landscape {
   display: flex;
   align-items: center;
@@ -1606,8 +1571,7 @@ body.is-resizing-chat .room-chat {
   display: none;
 }
 
-/* 竖屏折叠后那颗按钮才带「聊天」两个字：桌面/横屏是贴在侧边的一条窄栏，
-   加了字反而挡画面；竖屏它是屏幕底部唯一的入口，写清楚更好找。 */
+/* 竖屏折叠按钮带「聊天」文字。 */
 .ce-label {
   display: none;
 }
@@ -1674,10 +1638,8 @@ body.is-resizing-chat .room-chat {
   pointer-events: none;
 }
 
-/* 同屏时两路都可见。以前是「B 盖住 A」，现在改成两路各自定位：
-   主画面铺满，另一路缩成小窗，点小窗就把两者换过来。
-   选择器必须带上两个 class 才能压过上面 `#player` / `#player-b` 的 ID 规则
-   （ID 的优先级更高，光写 .is-pip 盖不掉 #player-b 的 opacity:0）。 */
+/* 同屏时两路可见：主画面铺满，另一路为小窗。
+   需同时挂两个 class 才能压过 #player / #player-b 的 ID 规则。 */
 .room-page.is-dual #player,
 .room-page.is-dual #player-b {
   opacity: 1;
@@ -1698,8 +1660,7 @@ body.is-resizing-chat .room-chat {
   pointer-events: none;
 }
 
-/* 小窗：位置与宽高由 JS 写 inline style（拖动要改），这里只管外观。
-   压在弹幕层（6）之上、控制条与顶部浮层（8）之下。 */
+/* 小窗外观；位置与尺寸由 JS 写入 inline style，层级介于弹幕层与控制条之间。 */
 .room-page.is-dual #player.is-pip,
 .room-page.is-dual #player-b.is-pip {
   position: absolute;
@@ -1890,8 +1851,7 @@ body.is-resizing-chat .room-chat {
 
 /* ------------------------------------------------------------ 只播放音频 */
 
-/* 这一路没有视频轨（代理层丢掉了视频 tag），画面位置是空的。
-   底下留着 stage-bg，中间给一个能点回来的标记。 */
+/* 无视频轨时显示画面占位与退出标记。 */
 .room-page.is-audio-only #player {
   opacity: 0;
 }
@@ -1936,8 +1896,7 @@ body.is-resizing-chat .room-chat {
   opacity: 0.35;
 }
 
-/* 步进控件：-1 / -0.1 / [值] 秒 / +0.1 / +1。
-   「延迟播放」和同屏「时间偏移」共用同一套。窄面板里让它换行，别撑破弹窗。 */
+/* 步进控件，延迟播放与同屏时间偏移共用。 */
 .delay-stepper {
   display: flex;
   align-items: center;

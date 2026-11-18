@@ -1,13 +1,5 @@
-// 外部数据导入与「中立同步包」构建。
-//
-// 目前认三种输入：
-// 1. `simple_live_profile`（dart_simple_live 的导出文件，schemaVersion 3）——
-//    字段是驼峰，时间形如 "2026-10-27 09:53:10.163"（空格分隔的本地时间）；
-// 2. starveil 自己的备份（`settings` / `follows` / `history` / `accounts`）；
-// 3. 中立同步包（`follow` / `history` / `settings`），WebDAV 上传下载用的就是它。
-//
-// 只做「导入到 starveil」这一个方向，不需要反向生成 dart 认得的格式。
-// 字段映射与取舍见 ToDo 第 5 项与 CHANGELOG 的 0.4.4 段。
+// 外部数据导入与同步包构建。
+// 支持的输入：dart_simple_live profile、starveil 备份、中立同步包。
 
 import { canonicalImage, ENABLED_PLATFORMS, normalizePlatform, roomUrl } from './api.js';
 import {
@@ -32,8 +24,7 @@ import {
 } from './store.js';
 
 const DART_SCHEMA = 'simple_live_profile';
-/// 中立包/备份的版本号，改结构时递增，导入侧按版本做兼容。
-/// v2 起补上了搜索历史与观看统计（v1 只有关注 / 记录 / 设置）。
+/// 同步包版本号；v2 起含搜索历史与观看统计。
 const BUNDLE_VERSION = 2;
 /// 清单里显示的平台名，只用于文案。真正决定带谁的是 store 的 ACCOUNT_PLATFORMS。
 const PLATFORM_LABELS = {
@@ -44,20 +35,13 @@ const PLATFORM_LABELS = {
   huya: '虎牙',
 };
 
-/// 同步包里到底有什么、为什么有些东西不在里面。
-///
-/// 这份清单是给设置页直接渲染的**唯一口径**：WebDAV 和局域网两条路打包的
-/// 都是同一个 `buildBundle()`，文案要是各写一份，改了包忘了改说明就会
-/// 变成「界面上说同步了，实际没同步」。加字段时先改这里。
-///
-/// 「观看记录」和「登录 Cookie」受设置页的两个开关控制，清单跟着实时变。
+/// 同步包内容清单，设置页据此渲染说明；增删字段时同步修改。
 export function bundleScope() {
   const { includeHistory, includeAccounts } = bundleOptions();
   const included = ['设置（不含 WebDAV 口令）', '关注列表'];
   if (includeHistory) included.push('观看记录');
   included.push('搜索历史', '观看统计');
-  // 平台名从 ACCOUNT_PLATFORMS 派生：以前这里写死「哔哩哔哩 / 斗鱼」，
-  // 后来抖音、快手也能登录了，清单却还只写两个——用户会以为它们不进包。
+  // 平台名从 ACCOUNT_PLATFORMS 派生。
   const accountNames = ACCOUNT_PLATFORMS.map((platform) => PLATFORM_LABELS[platform] || platform).join(' / ');
   if (includeAccounts) included.push(`登录 Cookie（${accountNames}）`);
 
@@ -83,28 +67,20 @@ function bundleOptions() {
   return {
     // 观看记录默认跟着走，只有显式关掉才不带。
     includeHistory: sync.includeHistory !== false,
-    // Cookie 默认不带，必须用户显式打开——打开后它会进 WebDAV 的远端文件，
-    // 也会被局域网里任何知道本机地址的人 GET 走。
+    // Cookie 默认不带，需用户显式开启。
     includeAccounts: sync.includeAccounts === true,
   };
 }
 
-/// 参与同步与导出的本机数据。
-///
-/// 输出的是「中立格式」（驼峰字段），和 dart 的 toJson 命名对齐，
-/// 这样同一个文件既能喂给自己的导入逻辑，也方便别的工具处理。
-///
-/// 有两段是可选的（`history` / `accounts`），由「设置 → 数据同步 → 同步内容」
-/// 的两个开关决定；关掉时**整段不写**而不是写空值。
+/// 参与同步与导出的本机数据（中立格式，驼峰字段）。
+/// `history` / `accounts` 由同步内容开关决定，关闭时整段不写。
 export function buildBundle() {
-  // 设置里含 WebDAV 账号口令，而这份包本身就是要 PUT 到 WebDAV 上的，
-  // 口令跟着一起传等于把自己的网盘密码写进远端文件。这里先摘掉。
+  // 摘掉 WebDAV 密码，避免随包上传。
   const settings = clone(state.settings ?? {});
   if (settings.sync?.webdav) {
     delete settings.sync.webdav.password;
   }
-  // 「首次运行状态」只对产生它的那台设备有意义：局域网同步可能发给别人的机器，
-  // 不能顺手替对方把免责声明点掉；换机后也该各自确认一次。
+  // 首次运行状态不跨设备传递。
   delete settings.disclaimerAccepted;
   delete settings.firstRun;
 
@@ -127,14 +103,12 @@ export function buildBundle() {
       clicks: Number(item.clicks) || 0,
       lastVisit: Number(item.lastVisit) || 0,
     })),
-    // 搜索历史与观看统计在 0.6.2 之前既不在备份里也不在同步包里，
-    // 换机器/多端同步之后统计面板永远是空的。
+    // 搜索历史与观看统计从 0.6.2 起进入同步包。
     search: loadSearchHistory(),
     stats: loadStats(),
   };
 
-  // 关闭时会**整段不写**，导入侧看到没这个键就保持本机原样——
-  // 写个空数组反而会把对方的记录清空。
+  // 关闭时整段不写，导入侧据此保持本机原样。
   if (includeHistory) {
     bundle.history = loadHistory().map((item) => ({
       platform: item.platform,
@@ -178,7 +152,7 @@ export function importData(data) {
         settings: data.settings,
         follow: data.follows,
         history: data.history,
-        // 0.6.2 之前的备份文件没有这两段，取不到就当没带，不覆盖本机。
+        // 旧备份包没有这两段：取不到就跳过，不覆盖本机。
         search: data.search,
         stats: data.stats,
       },
@@ -190,8 +164,7 @@ export function importData(data) {
 
 // ------------------------------------------------------------ dart profile
 
-/// 时间串统一转成本地时间戳。dart 写的是 `"2024-09-05 19:18:31.557"`，
-/// 空格分隔只有换成 T 才能被 Date.parse 按本地时区解析（直接 parse 会得到 Invalid）。
+/// 时间串转本地时间戳；dart 的格式以空格分隔，需换成 T 才能解析。
 function parseDartTime(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const text = String(value ?? '').trim();
@@ -230,8 +203,7 @@ function importDartProfile(data) {
     skipped[platform] = (skipped[platform] || 0) + 1;
   };
 
-  // 平台不在启用列表里就跳过：目前五站都已接入，这条判断留着防止将来下线某个平台。
-  // 存进去只会在列表里露出来、点开必然报错。
+  // 平台不在启用列表时跳过。
   const takePlatform = (siteId) => {
     const platform = normalizePlatform(siteId);
     if (!platform) return '';
@@ -332,8 +304,7 @@ function importDartProfile(data) {
   }
   if (danmaku('RenderEmoji') !== undefined) apply('danmaku.emoji', Boolean(danmaku('RenderEmoji')));
   if (danmaku('Enable') !== undefined) apply('danmaku.enabled', Boolean(danmaku('Enable')));
-  // 关键词屏蔽在 dart 的导出里是顶层 danmuShield，不是嵌在 settings 里。
-  // 同一段里的 `users`（按用户屏蔽）0.7.4 起不再支持，读到也直接丢掉。
+  // dart 导出里关键词屏蔽是顶层 danmuShield；`users` 已废弃。
   const shield = data.danmuShield || {};
   if (Array.isArray(shield.keywords)) {
     apply('danmaku.blockKeywords', (shield.keywords || []).join('\n'));
@@ -441,9 +412,7 @@ function importBundle(data, options = {}) {
 
   let settingsCount = 0;
   if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
-    // 深合并前先把类型不对的整段剃掉：包里某一段是 null（手工改过、旧版本写的）
-    // 时直接合并会让 `settings.danmaku` 变 null，进房读 `danmaku.enabled`
-    // 就是 TypeError，整页渲染失败，而且坏数据会被写回 localStorage，重启也不自愈。
+    // 合并前剔除类型不对的整段，避免后续读字段抛错。
     const patch = clone(data.settings);
     for (const key of ['home', 'appearance', 'player', 'live', 'danmaku', 'follow', 'timer', 'sync', 'other']) {
       const value = patch[key];
@@ -451,16 +420,14 @@ function importBundle(data, options = {}) {
         delete patch[key];
       }
     }
-    // 0.7.4 删掉了「按用户屏蔽」。旧备份与旧同步包里还带着 blockUsers，
-    // 就这么合并进来会成为一份界面上看不见、却会跟着下次同步继续传的字段。
+    // 剔除已废弃的 danmaku.blockUsers。
     if (patch.danmaku && typeof patch.danmaku === 'object') delete patch.danmaku.blockUsers;
     state.settings = merge(clone(state.settings), patch);
     saveSettings();
     settingsCount = Object.keys(patch).length;
   }
 
-  // 搜索历史与观看统计：只在包里带了这两段时才动本机（v1 的包没有）。
-  // 统计走 mergeStats——按房间按天取大值，和观看记录一样「只增不减」。
+  // 搜索历史与统计仅当包内带这两段时才合并；统计按房间按天取大值。
   let searchCount = 0;
   if (Array.isArray(data.search)) {
     searchCount = replaceSearchHistory(data.search);
@@ -470,8 +437,7 @@ function importBundle(data, options = {}) {
     statsCount = mergeStats(data.stats);
   }
 
-  // 登录信息：本机备份走 options.accounts，同步包（用户开了「同步登录信息」才会有）
-  // 直接带在 `accounts` 字段里。两条路都认，前者优先。
+  // 登录信息：备份走 options.accounts，同步包走 accounts 字段，前者优先。
   const incomingAccounts = options.accounts || data.accounts || {};
   const accounts = [];
   for (const platform of ACCOUNT_PLATFORMS) {

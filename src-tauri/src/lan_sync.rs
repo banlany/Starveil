@@ -1,16 +1,5 @@
-//! 局域网同步：UDP 广播发现 + 本机 HTTP 服务，同一 Wi-Fi 下的 Starveil 互相收发配置包。
-//!
-//! 做法照搬 dart_simple_live：一端广播 `{"type":"hello"}`，收到的设备回一份自己的信息，
-//! 双方各自记下对方的 IP，之后用 HTTP 交换数据。区别只有两点：
-//!
-//! 1. **数据包是谁的就是谁的**：Rust 侧不解析同步包内容，只负责搬运一份 JSON 文本。
-//!    打包（`buildBundle`）与合并（`importData`）都在前端做——数据本来就住在 WebView 的
-//!    localStorage 里，后端如果也去解析一遍，就等于维护两套数据结构。
-//! 2. **端口用 23244/23245**，避开 dart 版（23234/23235）。两边的包格式不兼容，
-//!    端口错开可以避免「连上了但导入失败」这种更难看的状态。
-//!
-//! 传输面只有局域网内的明文本机服务，不做鉴权：它只在用户主动打开「数据同步」页时
-//! 才启动，收到数据也要用户在弹窗里点「应用」才会覆盖本机。
+//! 局域网同步：UDP 23245 广播发现 + 本机 HTTP 23244 交换配置包。
+//! Rust 只搬运 JSON 文本，打包与合并由前端完成。
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -437,10 +426,7 @@ fn port_error(error: &std::io::Error, port: u16, what: &str) -> String {
     }
 }
 
-/// 本机在局域网里的 IPv4 地址。
-///
-/// 用「连一个外网 UDP 地址」的经典技巧拿默认路由的出口 IP：UDP 的 connect 不发包，
-/// 只是让系统选一条路由，因此断网/被墙都不影响（拿不到就返回空，前端提示手动填地址）。
+/// 本机局域网 IPv4 地址（通过 UDP connect 取默认路由出口 IP）。
 fn local_addresses() -> Vec<String> {
     let mut list = Vec::new();
     if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
@@ -690,7 +676,7 @@ mod tests {
         // 取走即清空，下一次轮询不会重复弹窗。
         assert!(sync.take_inbox().is_empty());
 
-        // 本机发布后，别人来拉应该拿到同一份内容。
+        // 本机发布后，对端拉到的应是同一份内容。
         sync.publish(body.to_string()).expect("发布失败");
         let port = serve_once(&sync);
         let text = reqwest::blocking::get(format!("http://127.0.0.1:{port}/sync/bundle"))

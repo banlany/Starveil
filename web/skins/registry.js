@@ -1,33 +1,20 @@
-// 皮肤注册表（唯一的皮肤清单）。
+// 皮肤注册表。一套皮肤 = `web/skins/<id>/skin.css` + 这里的一条记录。
+// skin.css 只声明 CSS 变量（见 docs/skins.md）。
 //
-// 一套皮肤 = `web/skins/<id>/skin.css` + 这里的一条记录。
-// skin.css 只声明 CSS 变量（契约见 docs/skins.md），组件样式不许跟着改；
-// 新增皮肤时把文件夹丢进去、在这里加一行即可，设置页会自动出现这一项。
-//
-// 字段说明：
-//   id      目录名，同时写进 `<html data-skin="<id>">`；只允许小写字母/数字/短横线
-//   name    设置页里显示的名字
-//   desc    一句话说明
-//   accents 这套皮肤提供的主题色，**第一个就是默认色**。设置页的色板只读这里，
-//           别在别处再维护一份；用户自己挑过颜色之后就不再跟随皮肤，
-//           换皮肤会回到新皮肤的第一个色。
-//           可选 `light`：同一项在浅色模式下用的替代色值。只给那些「只在一档好用」的
-//           颜色准备（比如深色下的白，压在浅色底上什么也看不见）。不写就两档同色。
-//   modes   这套皮肤提供的明暗档位。只写一个就等于「锁死明暗」，
-//           设置页的深/浅色选项会自动收窄，侧栏的主题按钮也会跳过不可用的档。
-//   icons   可选。true 表示这套皮肤自带 `skins/<id>/icons.js`（导出 ICON_PATHS，
-//           只写要覆盖的图标名）。不写就沿用 js/icons.js 的基础图形，
-//           线宽/端点仍由 skin.css 的 --icon-* 控制。
-//   titlebar 可选。'traffic' 表示窗口按钮换成 macOS 的左侧红绿灯，
-//           不写就是默认的 Windows 右侧三键；颜色走 skin.css 的 --traffic-*。
+// 字段：
+//   id       目录名，写入 `<html data-skin>`，仅小写字母/数字/短横线
+//   name     设置页显示名
+//   desc     设置页说明
+//   accents  主题色清单，第一项为默认色；可选 `light` 指定浅色档下的替代色值
+//   modes    支持的明暗档位，只有一项时表示锁定该档
+//   icons    为 true 时加载 `skins/<id>/icons.js` 的 ICON_PATHS
+//   titlebar 'traffic' 表示 macOS 红绿灯，缺省为 Windows 右侧三键
 
 export const SKINS = [
   {
     id: 'default',
     name: '星幕',
-    // 默认皮肤不绑定某一个品牌色：中性深灰打底，主题色由用户在这一组里挑。
-    // 皮肤文件里的 `--accent` 只是首帧的静态兜底，必须和这里第一个色一致；
-    // check-skin 会盯着这件事。
+    // skin.css 的 --accent 是首帧兜底，须与第一项一致（check-skin 校验）。
     accents: [
       { id: 'mist', name: '雾蓝', color: '#5b8def' },
       { id: 'sakura', name: '樱粉', color: '#fb7299' },
@@ -35,27 +22,23 @@ export const SKINS = [
       { id: 'teal', name: '青碧', color: '#26c6da' },
       { id: 'jade', name: '森绿', color: '#26a69a' },
       { id: 'amber', name: '琥珀', color: '#ffb020' },
-      // 白色只在深色底上成立；浅色模式换成中深灰，否则图标和文字直接消失。
-      // 两个值都留了一点蓝调，不是纯 #fff / #000，压在大面积底色上不刺眼。
+      // 浅色档改用中深灰，避免白底上看不见。
       { id: 'snow', name: '雪白', color: '#e9eaee', light: '#3a3d45' },
     ],
-    desc: '中性深灰打底，六种主题色可选。深色/浅色都支持，适合长时间挂着看。',
+    desc: '中性深灰打底，七种主题色可选。深色/浅色都支持，适合长时间挂着看。',
     modes: ['dark', 'light'],
   },
   {
     id: 'apple',
     name: '苹果',
-    // 参考文档只允许一支系统蓝（#0071e3），所以这套皮肤只给一个色。
-    // 用户仍然可以在设置里换成自定义色，那属于用户自己的选择，不算皮肤违约。
+    // 这套皮肤只提供系统蓝；用户仍可自行换成自定义色。
     accents: [{ id: 'blue', name: '系统蓝', color: '#0071e3' }],
     desc: '浅灰画布、白卡片、一支系统蓝。全圆角按钮与慢一档的动效，只提供浅色。',
-    // 风格参考本身定的就是 light：只有一套配色，明暗档锁在浅色。
+    // 只有一套配色，明暗档锁定浅色。
     modes: ['light'],
-    // 标题栏形态：'traffic' = 左侧三颗红绿灯（macOS），不写就是 Windows 右侧那三个。
-    // 只决定「长在哪一侧、是圆点还是方框」，颜色仍在 skin.css 的 --traffic-* 里。
+    // 左侧 macOS 红绿灯，颜色由 skin.css 的 --traffic-* 决定。
     titlebar: 'traffic',
-    // 自带图标表 `skins/apple/icons.js`：关注换成心形、返回只留 chevron、
-    // 更多是横排三点……只覆盖要换的名字，其余沿用 js/icons.js。
+    // 自带 `skins/apple/icons.js` 图标表。
     icons: true,
   },
 ];
@@ -64,13 +47,12 @@ export const DEFAULT_SKIN_ID = 'default';
 
 const BY_ID = new Map(SKINS.map((skin) => [skin.id, skin]));
 
-/// 取皮肤定义；id 不认识时退回默认皮肤（比如用户从旧版本备份里导入了别的皮肤名）。
+/// 取皮肤定义，未知 id 退回默认皮肤。
 export function getSkin(id) {
   return BY_ID.get(id) || BY_ID.get(DEFAULT_SKIN_ID);
 }
 
-/// 皮肤文件的固定路径约定：`skins/<id>/skin.css`。
-/// index.html 的首帧内联脚本也按这条约定拼地址，别在这里改成别的结构。
+/// 皮肤样式表路径：`skins/<id>/skin.css`（index.html 的内联脚本按同一约定拼地址）。
 export function skinHref(id) {
   return `skins/${id}/skin.css`;
 }
@@ -81,8 +63,7 @@ export function skinModes(id) {
   return modes.length ? modes : ['dark'];
 }
 
-/// 这套皮肤的主题色清单（至少一项）。
-/// 旧的 `accent` 单值写法当作「只有一个色」兼容掉，免得老皮肤定义直接取不到颜色。
+/// 主题色清单，至少一项；兼容旧的 `accent` 单值写法。
 export function skinAccents(id) {
   const skin = getSkin(id);
   if (Array.isArray(skin.accents) && skin.accents.length) return skin.accents;
@@ -94,11 +75,8 @@ export function skinAccent(id) {
   return skinAccents(id)[0].color;
 }
 
-/// 某个主题色在指定明暗档下**实际**用的色值。
-///
-/// 预设项里写了 `light` 的（例如雪白），浅色模式换成它的浅色替代值；
-/// 其余颜色两档同值。存进设置里的仍然是 `color` 原值 —— 这样用户切回深色时
-/// 还能原样变回白色，不会被浅色模式写坏。
+/// 主题色在指定明暗档下实际使用的色值。
+/// 只影响渲染：设置里存的一直是 `color` 原值。
 export function accentForMode(color, mode) {
   if (mode !== 'light' || !color) return color;
   const target = String(color).toLowerCase();

@@ -34,26 +34,21 @@ import {
 
 const MAX_MESSAGES = 360;
 const QUALITY_KEY = 'simple-live.quality.';
-// 直播间标题 / 人气 / 看过 / 大航海的刷新周期。取 5 分钟：这几个数字变化不慢，
-// 太勤只会白白多打几次平台接口。
+// 标题 / 人气 / 看过 / 大航海的刷新周期。
 const REFRESH_INFO_INTERVAL = 5 * 60 * 1000;
 
-// 进房补「悬挂中的 SC」时，剩余不足这么多毫秒的不补：
-// 刚插进列表就要被定时器删掉，只会闪一下，反而像出错。
+// 补悬挂 SC 时，剩余不足该时长的不补。
 const SC_BACKFILL_MIN_MS = 10_000;
 
-// 浮动卡「时长均衡化」：B 站的 SC 停留时长按金额算，30 元就有一分钟、贵的能挂十几分钟。
-// 打开均衡化后压进 [5s, 上限] 区间——便宜的别赖着不走，贵的也别一屏霸占到底。
-// 只影响左下角悬浮层；SC 页签的「正在显示」仍按平台给的到期时间。
+// 浮动卡「时长均衡化」的最短停留时间。
 const SC_FLOAT_MIN_MS = 5_000;
 // 平台没给 `end_time` 时的兜底停留时间。
 const SC_FLOAT_FALLBACK_MS = 10_000;
-// 均衡化上限只给两档，默认 20 秒（15 秒更利落，20 秒留得下读完一段话）。
+// 均衡化停留上限档位，默认 20 秒。
 const SC_FLOAT_MAX_CHOICES = [[15, '15 秒'], [20, '20 秒']];
 const SC_FLOAT_MAX_DEFAULT = 20;
 
-// 直播间右侧「设置」页签里的数值项都用预设值下拉，档位表来自弹幕层
-// （DANMAKU_PRESETS），和设置页读的是同一份，不会出现两边档位对不上。
+// 直播间「设置」页签的数值项用下拉选择，档位与弹幕层共用 DANMAKU_PRESETS。
 const CS_PRESETS = DANMAKU_PRESETS;
 
 /// 画面尺寸：与设置页「播放 → 画面尺寸」是同一份配置（player.scaleMode）。
@@ -63,8 +58,7 @@ const SCALE_MODES = [
   ['fill', '拉伸'],
 ];
 
-/// 预设值下接的选项表。当前值不在预设里（老版本存下来的非档位值）时补一项，
-/// 否则下拉会自己显示成某个档位，看着像「设置被改了」。
+/// 数值项的选项表；当前值不在预设里时补一项。
 function presetChoices(values, current, format = (value) => String(value)) {
   const list = [...values];
   const value = Number(current);
@@ -118,9 +112,7 @@ export function renderRoom(ctx, params = {}) {
           </div>
         </div>
         <div class="player-controls" id="player-controls">
-          <!-- 三段式：音量钉在最左、全屏钉在最右，中间那截自己收。
-               以前是一整排 flex，画质写着「1080p60」这类长档位时，
-               右边一组会整体被顶出可视区，全屏按钮只剩半个。 -->
+          <!-- 三段式：音量居左、全屏居右，中段按可用宽度收起。 -->
           <div class="pc-side pc-left">
             <div class="volume-wrap" id="volume-wrap">
               <button class="ctrl" id="ctrl-volume" title="静音">${icon('volume', 21)}</button>
@@ -195,11 +187,8 @@ export function renderRoom(ctx, params = {}) {
   const clock = $('player-clock');
   const volumeRange = $('volume-range');
   const volumeWrap = $('volume-wrap');
-  const playerControls = $('player-controls');
-  // 控制条中间那一段（时间/画质/线路/弹幕/设置/小窗）。宽度不够时收的是这里的内容，
-  // 两端的音量与全屏永远不动。
+  // 控制条中段；宽度不足时只压缩这里，两端音量与全屏不动。
   const pcMid = $('pc-mid');
-  const roomTopbar = $('room-topbar');
   const chatList = $('chat-list');
   const chat = $('room-chat');
   const chatToBottom = $('chat-to-bottom');
@@ -218,8 +207,7 @@ export function renderRoom(ctx, params = {}) {
     player: null,
     // 弹幕发送是否正在进行（防连点）。
     sendingDanmaku: false,
-    // 弹幕连接状态：{ state, reason }。聊天栏顶部的状态条就靠它，
-    // 未连接、连不上或被平台限制时把原因直接摆在用户眼前。
+    // 弹幕连接状态 { state, reason }，供聊天栏顶部状态条使用。
     danmakuStatus: null,
     // 当前播放器对应的协议：'flv'（mpegts.js）或 'hls'（hls.js / 原生 HLS）。
     playerProtocol: '',
@@ -237,8 +225,7 @@ export function renderRoom(ctx, params = {}) {
     refreshTimer: 0,
     scMessages: [],
     scHistory: [],
-    // SC 面板的二级视图：当前正在显示 / 历史归档。
-    // 历史条目可能上百条，和当前 SC 同屏会互相挤占，所以一次只渲染一个列表。
+    // SC 面板视图：current = 正在显示，history = 历史归档。
     scView: 'active',
     scTimers: new Map(),
     // 悬浮层撤下的定时器（和上面按平台到期时间删列表的定时器不是一回事）。
@@ -259,13 +246,11 @@ export function renderRoom(ctx, params = {}) {
     lastUiWake: 0,
     lastVolume: 0.8,
     lineFailures: 0,
-    // 直播流「一直没有进展」时连续自动重试的次数。主播下播后画面会永久停住，
-    // 不设上限的话卡顿检测会每隔几秒重取一次流、弹一次 toast，永远停不下来。
+    // 直播流无进展时的连续自动重试上限。
     stallRetries: 0,
     // 自动重连已经放弃（下播/流彻底没了）。用户手动刷新时清掉。
     streamDead: false,
-    // 断流重连：error 与 ended 共用这套计数。斗鱼的 FLV 直链一个多小时就过期，
-    // CDN 也会主动掐长连接，出画后清零，连续失败 3 次才把错误页交给用户。
+    // 断流重连计数：error 与 ended 共用，出画后清零，连续失败 3 次显示错误页。
     errorRetries: 0,
     reconnecting: false,
     // 斗鱼地址续签定时器（见 startStreamRenew）。
@@ -274,20 +259,15 @@ export function renderRoom(ctx, params = {}) {
     stallTimer: 0,
     lastProgressTime: 0,
     lastProgressAt: 0,
-    // 观看时长统计：watchSince 是「这一段从什么时候开始连续播放」，
-    // watchPending 是已经结算但还没落盘的部分，靠心跳定时刷进 localStorage，
-    // 这样关窗/崩溃最多丢一个心跳周期的时长。
+    // 观看时长统计：watchSince 为本段播放起点，watchPending 为待落盘的毫秒数。
     watchSince: 0,
     watchPending: 0,
     watchTimer: 0,
-    // 同屏播放：A 这一路是否只取声音（视频 tag 在代理层就被丢掉）。
-    // 只由用户那个「只播放音频」开关决定；同屏开着但小窗关掉时，为了切回来不用
-    // 重新取流，A 仍然保留视频（用户明确要的取舍：多占一路带宽换切换速度）。
+    // 同屏时 A 是否只取音频，仅由「只播放音频」开关决定。
     audioOnly: false,
     // 齿轮里的「只播放音频」：用户自己按下的那个开关，只对本次进房有效。
     audioOnlyUser: false,
-    // 延迟播放：比直播慢几秒（秒，0 表示关闭），只作用于 A。
-    // 靠「先攒够 N 秒缓冲再开播」实现，见 holdForDelay。
+    // 延迟播放秒数（0 表示关闭），只作用于 A。
     delaySec: 0,
     delayTimer: 0,
     delayHolding: false,
@@ -301,27 +281,19 @@ export function renderRoom(ctx, params = {}) {
     dualOffset: 0,
     // 同屏布局：flip 为 true 表示 A 主画面、B 缩成小窗（点小窗切换）。
     dualFlip: false,
-    // A 的小窗：on 是开关，x/y 是左上角相对舞台的百分比（null 走默认右下角）。
-    // 拖过之后记住位置，关掉再开还在原处。
+    // A 的小窗：on 为开关，x/y 为左上角占舞台的百分比（null 表示默认位置）。
     dualPip: { on: true, x: null, y: null },
-    // 面板上 B 的独立音量（0~1）。默认给一半：两路都满音量混在一起太吵，
-    // 但也不静音——静音会让人以为 B 没声音。
+    // 面板上 B 的独立音量（0~1），默认 0.5。
     dualVolumeB: 0.5,
   };
   state.room = session;
 
-  // B 路播放器。它自己取流、自己播，和 A 的状态机互不干扰；
-  // 面板上的开关只是把参数丢给它。
+  // B 路播放器：独立取流与播放。
   const dual = createDualPlayback(videoB, renderDualState);
   session.dual = dual;
 
-  // 竖屏（手机上竖着拿）控制条放不下全部控件，但不是一刀切全藏起来：
-  // 按「线路 → 画质 → 时间」的优先级逐级收起，后面的越常用、越晚收。
-  // 收起来的项在「更多」菜单里始终有入口（showMoreMenu 无条件显示）。
-  //
-  // 量的是中间那一段（.pc-mid）：两端的音量与全屏是钉死的，中间塞不下只影响中间，
-  // 绝不会像以前那样把全屏顶到屏幕外。画质/线路的文字放在 .ctrl-label 里，
-  // 真的没地方时先允许它缩写（省略号），再由下面的循环整项收起。
+  // 竖屏控制条按 线路 → 画质 → 时间 的顺序逐级收起，收起的项在「更多」菜单里仍有入口。
+  // 只量中段 .pc-mid，两端音量与全屏不动。
   const portraitQuery = window.matchMedia('(orientation: portrait)');
   const CONTROL_FADE = [
     ['ctrl-hide-line', 'ctrl-line'],
@@ -332,8 +304,7 @@ export function renderRoom(ctx, params = {}) {
   function applyControlDensity() {
     for (const [cls] of CONTROL_FADE) page.classList.remove(cls);
     if (!IS_MOBILE || !pcMid.clientWidth) return;
-    // spacer 会先吃掉多余空间，真的塞不下时 scrollWidth 才会超出 clientWidth，
-    // 每收一项就重新量一次，刚好放得下就停手。
+    // 每收一项重新量一次，放得下就停。
     for (const [cls] of CONTROL_FADE) {
       if (pcMid.scrollWidth <= pcMid.clientWidth + 1) break;
       page.classList.add(cls);
@@ -342,9 +313,7 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 基础 UI
 
-  // 从直播间进入另一个直播间时，返回应该回到一级界面，而不是回到上一个直播间。
-  // 全屏（桌面 Fullscreen API / 安卓剧场模式）时先退全屏：这个位置在用户眼里
-  // 就是「退一层」，直接退出直播间太粗暴，也容易误触。
+  // 返回：全屏时先退全屏，再从直播间回到一级界面。
   $('room-back').addEventListener('click', () => {
     if (isPlayerFullscreen()) {
       exitPlayerFullscreen();
@@ -352,8 +321,7 @@ export function renderRoom(ctx, params = {}) {
     }
     ctx.exitRoom();
   });
-  // 音量：桌面是「点=静音、悬停展开滑条」；手机没有 hover，点一下在按钮**上方**
-  // 弹出竖直滑条（再点收起），拖动时不再像以前那样把右边的控件挤出去。
+  // 音量：桌面点击静音、悬停展开滑条；触屏点击在按钮上方弹出竖直滑条。
   $('ctrl-volume').addEventListener('click', () => {
     if (IS_MOBILE) {
       setVolumePop(!volumeWrap.classList.contains('is-open'));
@@ -370,8 +338,7 @@ export function renderRoom(ctx, params = {}) {
     updateVolumeIcon();
     wake();
   });
-  // 注意：这两个函数带默认参数（anchor = 控制条按钮），直接当监听器用会把 Event
-  // 当成 anchor 传进去，`anchor.getBoundingClientRect` 抛 TypeError，表现就是「点了没反应」。
+  // 这两个函数带默认参数，直接作监听器会把 Event 当成 anchor 传入，需包一层。
   $('ctrl-quality').addEventListener('click', () => showQualityMenu());
   $('ctrl-line').addEventListener('click', () => showLineMenu());
   $('ctrl-danmaku').addEventListener('click', () => setDanmakuEnabled(!session.danmakuEnabled));
@@ -388,8 +355,7 @@ export function renderRoom(ctx, params = {}) {
     pipObserver.observe(stage);
     session.pipObserver = pipObserver;
   }
-  // 「只播放音频」时画面是黑的，标记本身就是退出这个模式的入口。
-  // 必须 stopPropagation：画面上的点击会唤出控制条/暂停，别让标记顺带触发一次。
+  // 「只播放音频」标记本身是退出入口；阻止冒泡以免触发画面的点击行为。
   audioOnlyBadge.addEventListener('click', (event) => {
     event.stopPropagation();
     setAudioOnlyByUser(false);
@@ -412,8 +378,7 @@ export function renderRoom(ctx, params = {}) {
     setChatTab(tab);
   });
   chatList.addEventListener('scroll', updateChatToBottom, { passive: true });
-  // 聊天栏左右滑动切标签：聊天 → SC → 关注 → 设置。只在移动端，
-  // 桌面端鼠标拖拽容易误触，而且标签本来就好点。
+  // 聊天栏左右滑动切标签，仅移动端。
   if (IS_MOBILE) {
     const swipeTabs = ['chat', 'sc', 'follow', 'settings'];
     bindHorizontalSwipe(chat, (direction) => {
@@ -432,30 +397,17 @@ export function renderRoom(ctx, params = {}) {
   updateComposer();
   const IDLE_DELAY = 2800;
 
-  /// 这一轮空闲到底该不该把顶部浮层和底部控制条收起来。
-  ///
-  /// 只问「有没有东西挡着」，跟横竖屏、聊天区折不折叠无关。
-  /// 0.7.3 里这里挂着 `!session.chatCollapsed`：手机竖屏向下折叠后 chatCollapsed
-  /// 恒为 true，画面明明已经独占了整屏，上下两条黑边却再也收不起来。
-  ///
-  /// 暂停时窗口/竖屏里仍然留着——那颗「继续播放」就在控制条上，收掉就找不着了；
-  /// 全屏（桌面 Fullscreen API / 安卓剧场）里点一下画面就能唤回，照收不误，
-  /// 免得暂停在广告画面上时两块黑条常驻。
+  /// 当前是否允许收起顶部浮层与底部控制条：有浮层或弹窗挡着、或窗口态暂停时不收。
   function canAutoHide() {
     if (volumeWrap.classList.contains('is-open')) return false;
-    // 菜单或弹窗开着时不收：全屏下「弹幕与 SC 设置」是弹窗形式，
-    // 收起后 `ui-idle` 会把光标一起藏掉（cursor: none），看着像点不动。
+    // 菜单/弹窗开着时不收：ui-idle 会连光标一起隐藏。
     if (document.querySelector('.menu-overlay:not(.closing)')) return false;
     if (document.querySelector('.modal-overlay')) return false;
     if (video.paused && !isPlayerFullscreen()) return false;
     return true;
   }
 
-  /// 记一次「有操作」：立刻恢复上下控件，再排一次空闲检查。
-  ///
-  /// 折叠/展开、重新出画这些状态变化也必须走这里。只靠鼠标/触摸事件触发的话，
-  /// 上一次排的定时器早在「不该收」的时候空转掉了，之后不碰屏幕就一直不收。
-  /// 注意别把 Event 当参数传进来（`addEventListener` 会塞一个），签名保持无参。
+  /// 记一次操作：立刻恢复上下控件，并重排空闲定时器。
   function wake() {
     page.classList.remove('ui-idle');
     clearTimeout(session.idleTimer);
@@ -465,15 +417,14 @@ export function renderRoom(ctx, params = {}) {
     }, IDLE_DELAY);
   }
 
-  // 事件对象不能直接喂给 wake()：它会被当成定时器参数，等于立刻判空闲。
+  // wake 无参，事件对象会被当成定时器参数，所以包一层。
   const onActivity = () => wake();
   const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
   for (const name of stageEvents) page.addEventListener(name, onActivity, { passive: true });
 
   // ------------------------------------------------------------ 弹幕渲染
 
-  // 弹幕交给 fly-barrage（canvas + 虚拟轨道避让），这里只负责开关、屏蔽和转交。
-  // 注意：渲染器要等页面插进 DOM、容器量到真实宽高后再建，否则 canvas 会是 0×0。
+  // 弹幕渲染交给 fly-barrage；需在容器有尺寸后再创建。
   let danmaku = null;
 
   function initDanmaku() {
@@ -485,19 +436,14 @@ export function renderRoom(ctx, params = {}) {
 
   function applyDanmakuStyle() {
     const config = state.settings.danmaku;
-    // 顶部/底部安全边距交给容器留白，库只负责在剩余区域内排轨道。
-    // 弹幕「顶部安全边距」是相对播放器画面顶端的真实边距，0 就是贴着画面顶端——
-    // 房间标题浮层会自动隐藏，不需要为它预留空间（早期这里强制钳到 64px，
-    // 导致设置里 0~60 的滑块怎么调都不生效）。
+    // 安全边距由容器留白，库只在剩余区域内排轨道。
     layer.style.top = `${Math.max(0, Number(config.safeTop) || 0)}px`;
     layer.style.bottom = `${Math.max(0, Number(config.safeBottom) || 0)}px`;
     applyBigEmojiSize(config.bigEmojiLines);
     danmaku?.update(config);
   }
 
-  /// 聊天栏大表情的高度用 CSS 变量推下去（而不是写到每个 `<img>` 的内联样式里）：
-  /// 改档位时屏上已有的那些表情会立刻跟着变，不用等聊天栏重渲染。
-  /// 1 行 = `.chat-line` 的 line-height（1.55），和弹幕层「1 行 = 一个轨道高」是同一个口径。
+  /// 大表情高度通过 CSS 变量 --big-emoji-lines 下发，改档位后已渲染的表情同步变化。
   function applyBigEmojiSize(lines) {
     const value = Math.max(1, Number(lines) || 2);
     document.documentElement.style.setProperty('--big-emoji-lines', String(value));
@@ -509,23 +455,20 @@ export function renderRoom(ctx, params = {}) {
     state.settings.danmaku.enabled = session.danmakuEnabled;
     saveSettings();
     $('ctrl-danmaku').classList.toggle('active', session.danmakuEnabled);
-    // 开回来时必须显式 setEnabled(true)：库的 switch(false) 会停掉渲染循环，
-    // 只改配置不调它，弹幕就再也回不来了（设置面板开关「关得掉、开不回来」就是这个原因）。
+    // 重新开启必须调用 setEnabled(true)，否则渲染循环不会恢复。
     danmaku?.setEnabled(session.danmakuEnabled);
     syncEnabledSwitches();
     if (session.tab === 'chat' || session.tab === 'sc') renderChatTab();
   }
 
-  /// 设置面板里的开关是另一份 DOM（侧栏一份、全屏弹窗又能再开一份），
-  /// 状态要跟着底部控件的真实开关走，两边不能各说各话。
+  /// 设置面板的开关与底部控件共用同一份状态。
   function syncEnabledSwitches() {
     for (const button of document.querySelectorAll('.chat-settings #cs-enabled')) {
       button.setAttribute('aria-checked', String(session.danmakuEnabled));
     }
   }
 
-  /// 只按关键词屏蔽。0.7.4 删掉了「按用户屏蔽」：昵称允许重复、也常改，
-  /// 同名会误伤别人，改个名就能绕过，留着只会让人以为屏蔽坏了。
+  /// 只按关键词屏蔽。
   function blocked(message) {
     const config = state.settings.danmaku;
     if (!config.block) return false;
@@ -553,9 +496,7 @@ export function renderRoom(ctx, params = {}) {
     if (!session.danmakuEnabled || message.system || message.sc) return false;
     if (blocked(message) || deduped(message)) return false;
     if (!danmaku) return false;
-    // 库不回收已下屏的实例（数组只增不减，每帧渲染都要遍历一遍），长时间观看必须清理。
-    // 这里用 prune() 就地摘掉已经滚出去的，屏上正在滚的保持原位——
-    // 以前用 reset() 重建渲染器，代价是整层弹幕瞬间被清空，看起来像「弹幕重新刷了一次」。
+    // 用 prune() 摘掉已下屏的弹幕，避免数组无限增长。
     if (danmaku.sent > danmaku.limit) danmaku.prune();
     danmaku.send(message);
     return true;
@@ -576,13 +517,7 @@ export function renderRoom(ctx, params = {}) {
     };
   }
 
-  /// 聊天区里的 SC 行：底色直接取 SC 面板那张卡片的档位色（同一套 palette），
-  /// 平铺一个颜色、不铺渐变。
-  ///
-  /// 这里只把两个档位色写成 CSS 变量，深浅主题各用哪一档、配什么字色交给 room.css：
-  /// 深色主题用深一档的底色 + 白字，浅色主题用浅一档 + 深字。
-  /// 走 CSS 的另一个好处是切换主题时，屏上已经画好的 SC 行会立刻跟着变，
-  /// 不像 inline style 那样必须重新渲染聊天栏。
+  /// 聊天区 SC 行：把两个档位色写成 CSS 变量，深浅主题的配色由 room.css 决定。
   function paintScChatLine(line, sc) {
     const { top, bottom } = scTierColors(sc);
     line.style.setProperty('--sc-bg', top);
@@ -629,20 +564,14 @@ export function renderRoom(ctx, params = {}) {
     session.scFloatTimers.delete(entry);
   }
 
-  /// 悬浮层上的 ×：**只撤这一张浮动卡**。
-  ///
-  /// 不动 `session.scMessages`、也不进历史 —— 那条 SC 仍留在 SC 页签的「正在显示」里，
-  /// 想真正结束它得去 SC 页签点那条的 ×。两种情况（均衡化开 / 关）行为一致：
-  /// 关掉均衡化后卡会一直挂在左下角到平台到期，那时想让它别挡画面又不能提前归档，
-  /// 就靠这个「只撤悬浮」的入口。
+  /// 悬浮层的 ×：只撤这一张浮动卡，SC 列表与历史不受影响。
   function dismissScFloat(entry) {
     clearScFloatTimer(entry);
     entry.floatDismissed = true;
     renderScOverlay();
   }
 
-  /// 一张浮动卡该挂多久（毫秒）。关掉均衡化就返回 `0`（不额外限制，交给
-  /// 平台的到期时间与「到期自动消失」开关），打开则压进 [5s, 上限]。
+  /// 浮动卡停留时长（毫秒）。关闭均衡化返回 0；开启时限制在 [5s, 上限]。
   function scFloatLifetime(sc, now) {
     if (state.settings.player.superChatBalance === false) return 0;
     const end = Number(sc?.end_time) || 0;
@@ -651,24 +580,20 @@ export function renderRoom(ctx, params = {}) {
     return Math.min(Math.max(raw, SC_FLOAT_MIN_MS), max * 1000);
   }
 
-  /// 排上「从悬浮层撤下」的时间点。只动悬浮层：SC 页签的「正在显示」
-  /// 仍按 `scheduleScRemoval` 的平台到期时间走，缩短后也不会从列表里消失。
+  /// 安排浮动卡撤下时间；只影响悬浮层，SC 页签仍按平台到期时间。
   function scheduleScFloatHide(entry) {
     clearScFloatTimer(entry);
-    // 手动撤下过的卡（点了浮动卡上的 ×）：改设置、改档位都别再把它翻出来。
+    // 手动关闭过的卡不再恢复。
     if (entry.floatDismissed) return;
     const lifetime = entry.sc && !entry.historical ? scFloatLifetime(entry.sc, Date.now()) : 0;
     if (!lifetime) {
-      // 均衡化关掉 / 不是 SC / 进房快照：不额外限制，回到平台的到期时间。
-      // 但已经过了平台到期时间的（只有「到期自动消失」关着时才会还留在列表里）
-      // 保持撤下，别因为一次切换把一屏旧卡全翻出来。
+      // 不做额外限制时回到平台到期时间；已过期的保持撤下。
       const end = Number(entry.sc?.end_time) || 0;
       if (end > 0 && end * 1000 <= Date.now()) return;
       entry.floatUntil = 0;
       return;
     }
-    // 已经撤下的别因为改设置又冒出来：`floatUntil` 到期后仍留着过去的时间，
-    // 这里遇到就跳过；清 0 反而等于「不限制」，下一次重画又会把它画回来。
+    // 已撤下的卡不因设置变化重新出现。
     if (entry.floatUntil && entry.floatUntil <= Date.now()) return;
     const until = Date.now() + lifetime;
     entry.floatUntil = until;
@@ -690,15 +615,8 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 左下角的 SC 悬浮层：**折叠堆叠**。
-  ///
-  /// 「SC 设置 → 浮动卡默认折叠」只决定**新卡第一眼的样子**：开着进来先折成一行，
-  /// 关掉进来直接展开正文。两种状态下每张卡都能点头部来回切，状态记在 `entry.scOpen` 上。
-  /// 同时挂着的 SC 都列出来（以前只画最后 3 条），折叠后一条才一行高，占不了多少地方。
-  /// 进房补的历史 SC 不进来（`historical`），否则一进直播间就糊一片。
-  /// 均衡化开启时每条只挂 `floatUntil` 那么久（见 scheduleScFloatHide），
-  /// 到点后这里就把它漏掉——条目本身还留在 SC 页签的「正在显示」里；
-  /// 手动点过 × 的（`floatDismissed`）同理，只是不再浮在视频上，不是归档。
+  /// SC 悬浮层：按时间堆叠，展开状态记在 `entry.scOpen`。
+  /// 历史 SC 与手动关闭的卡不进入。
   function renderScOverlay() {
     const layer = $('sc-float-layer');
     if (!layer) return;
@@ -767,9 +685,7 @@ export function renderRoom(ctx, params = {}) {
       system: Boolean(message.system),
       position: Number(message.position) || 0,
       sc: message.sc || null,
-      // 表情弹幕的图片信息要一路带到弹幕层与聊天栏，漏掉这里表情就只剩占位文字。
-      // 抖音的普通小表情只有文字、没有图（`rtfContent` 只覆盖互动表情），
-      // 这里按本地表情表补齐；只在抖音补，别的平台有自己的 `[xxx]` 表，别串台。
+      // 表情信息需带到弹幕层与聊天栏；抖音小表情按本地表情表补齐。
       emoticons:
         session.platform === 'douyin'
           ? expandDouyinEmoticons(text, message.emoticons) || undefined
@@ -782,8 +698,7 @@ export function renderRoom(ctx, params = {}) {
     };
     // 同一条 SC 可能既在进房快照里、又被 WS 推一次（两边是同一套 id）。
     if (entry.sc?.id && session.scMessages.some((item) => item.sc?.id === entry.sc.id)) return;
-    // 补进来的历史 SC 不进聊天流：聊天页是进房后的默认页签，一进来就刷出几条旧 SC
-    // 很像"刚有人打钱"。它们只在 SC 页签的「正在显示」里出现。
+    // 补进来的历史 SC 只进 SC 页签，不进聊天流。
     if (!entry.historical) {
       session.messages.push(entry);
       if (session.messages.length > MAX_MESSAGES) session.messages.shift();
@@ -807,14 +722,7 @@ export function renderRoom(ctx, params = {}) {
     if (session.tab === 'chat') queueChatLine(entry);
   }
 
-  /// 进房补「还挂在屏幕上的 SC」。
-  ///
-  /// B 站进房接口（`getInfoByRoom`）顺手带了 `super_chat_info.message_list`，
-  /// 里面是**进房之前发的、此刻还没到期**的 SC —— 现在只有「进房之后」的 SC 能看见，
-  /// 这一份正好补上那段空白。
-  ///
-  /// 只补剩余 10 秒以上的：更短的刚进列表就被到期定时器删掉，白闪一下。
-  /// 补进来的都标 `historical`，只进 SC 标签页列表，不进左下角的悬浮堆叠。
+  /// 进房补齐尚未到期的 SC（B 站 getInfoByRoom），只进 SC 页签列表。
   function backfillSuperChats(list) {
     if (!Array.isArray(list) || !list.length) return;
     const now = Date.now();
@@ -831,10 +739,7 @@ export function renderRoom(ctx, params = {}) {
 
   function chatEmojiImage(key, url, big = false) {
     const image = document.createElement('img');
-    // 大表情（收藏集那类只能单独发送的）按设置里的「几行」画，和弹幕层同一个行数；
-    // 具体高度由 CSS 变量 --big-emoji-lines 决定（见 applyBigEmojiSize），
-    // 所以改档位时屏上已有的表情也会立刻跟着变。
-    // 小表情（`[热]`）仍跟行高走，否则一行字会被顶开。
+    // 大表情按设置的行数绘制，高度由 CSS 变量 --big-emoji-lines 决定；小表情跟行高。
     image.className = big ? 'chat-emoji is-big' : 'chat-emoji';
     image.src = url;
     image.alt = key;
@@ -844,11 +749,7 @@ export function renderRoom(ctx, params = {}) {
     return image;
   }
 
-  /// 聊天行正文：把表情占位符换成小图标。
-  ///
-  /// 用的是和弹幕层同一份 `message.emoticons`，区别只是这里按聊天区字号缩放（CSS 的 `em`）。
-  /// 关掉「显示弹幕表情」时原样显示文字：`[大哭]`、`[热]`、`[下次一定]` 这些占位符照旧看得见，
-  /// 大表情的正文本来就是词，也不动。
+  /// 聊天行正文：把表情占位符换成图标，按聊天区字号缩放。
   function fillChatText(node, message) {
     const text = message.text == null ? '' : String(message.text);
     const list = Array.isArray(message.emoticons) ? message.emoticons : null;
@@ -867,9 +768,7 @@ export function renderRoom(ctx, params = {}) {
       node.textContent = text;
       return;
     }
-    // 整条扫一遍再切片，而不是按 emoticons 逐个 replace 一次：
-    // 同一条弹幕里同一个表情常出现多次（`[大哭][大哭]`），只换第一处会让后面几个留成文字。
-    // 长 key 排在前面，避免 `[热]` 抢走 `[热乎]` 的前半截。
+    // 一次扫描再切片，重复表情全部替换，长 key 优先匹配。
     const keys = [...entryByKey.keys()].sort((a, b) => b.length - a.length);
     const pattern = new RegExp(keys.map(escapeRegExp).join('|'), 'g');
     let cursor = 0;
@@ -910,8 +809,7 @@ export function renderRoom(ctx, params = {}) {
         if (message.color && message.color !== 0xffffff) {
           text.style.color = `#${Number(message.color).toString(16).padStart(6, '0')}`;
         } else {
-          // 白色弹幕在浅色聊天区按正文色显示，避免白字看不清；
-          // 带颜色的弹幕仍保留平台下发的颜色。
+          // 白色弹幕在浅色聊天区改用正文色，其余保留平台下发颜色。
           text.classList.add('text-plain');
         }
         line.append(who, text);
@@ -928,11 +826,7 @@ export function renderRoom(ctx, params = {}) {
   /// 每帧最多上屏多少行（见 flushChatLines）。
   const CHAT_LINES_PER_FRAME = 24;
 
-  /// 待上屏的聊天行。
-  ///
-  /// 一条一条 append 是刷屏时最贵的一段：每条都要读一次 scrollHeight 再改 scrollTop，
-  /// 每一读都是强制同步布局；热门直播间一秒钟几十条，安卓 WebView 上就是肉眼可见的卡顿。
-  /// 这里攒到下一帧一起插进去，插入和滚动每帧只做一次。
+  /// 待上屏的聊天行：攒到下一帧一起插入，插入与滚动每帧只做一次。
   const pendingChatLines = [];
   let chatFlushHandle = 0;
 
@@ -945,15 +839,12 @@ export function renderRoom(ctx, params = {}) {
   function flushChatLines() {
     chatFlushHandle = 0;
     if (!pendingChatLines.length) return;
-    // 切到别的标签页时聊天列表会被清空，这批消息已经在 session.messages 里，
-    // 切回来 renderChatTab() 会整表重画，这里直接丢掉就不会重复上屏。
+    // 切换标签页时列表会重画，这批消息直接丢弃。
     if (session.tab !== 'chat') {
       pendingChatLines.length = 0;
       return;
     }
-    // 一帧最多上屏这么多行：热门房间 100ms 一批能来几十条，一次性建完 DOM
-    // 会在安卓上顶出一个几十毫秒的长任务，视频和弹幕跟着掉帧。
-    // 拆到几帧里插完，肉眼看不出来，主线程不堵。
+    // 每帧最多插入的行数，避免长任务掉帧。
     const batch = pendingChatLines.splice(0, CHAT_LINES_PER_FRAME);
     chatList.querySelector('.chat-placeholder')?.remove();
     // 贴不贴底必须在插入之前量。
@@ -987,9 +878,7 @@ export function renderRoom(ctx, params = {}) {
     return box;
   }
 
-  /// 聊天栏为空时的占位文案，必须跟着弹幕连接状态走。
-  /// 以前只在渲染那一刻读一次状态：连上之后如果一直没人发弹幕，
-  /// 占位就一直停在「正在连接弹幕服务器…」，看起来像卡在连接中。
+  /// 聊天栏空态文案，需随弹幕连接状态更新。
   function chatPlaceholderText() {
     const state_ = session.danmakuStatus?.state;
     if (state_ === 'unsupported') return '本平台暂不支持弹幕';
@@ -1040,8 +929,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function renderChatTab() {
-    // 记下滚动位置：SC 面板在「历史」视图时收到新 SC 也会整体重渲染，
-    // 不还原的话列表会每次跳回顶部。
+    // 记录滚动位置，重渲染后还原。
     const keepScroll = chatList.scrollTop;
     // 从这里开始整表重画，攒着的聊天行也一起作废（消息本身都在 session.messages 里）。
     cancelChatFlush();
@@ -1059,8 +947,7 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     if (session.tab === 'sc') {
-      // SC 分「正在显示 / 历史」两个视图，一次只渲染一个列表。
-      // 历史最多 200 条，和当前 SC 同屏会把当前 SC 挤到渲染不出来。
+      // 一次只渲染一个 SC 列表。
       const nav = document.createElement('div');
       nav.className = 'sc-view-nav';
       nav.innerHTML = `
@@ -1167,13 +1054,7 @@ export function renderRoom(ctx, params = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'chat-settings';
 
-    /// 数值项一律自绘下拉，不再用原生 `<select>`：收起态还能靠 CSS 装一下，
-    /// 展开那一下是 WebView 自己画的 —— 深色皮肤会弹出一块系统白底列表，
-    /// 和这套皮肤没有任何关系。改成按钮 + openMenu（页面里其他菜单都是这一套），
-    /// 展开态的底色/描边/选中色全部走 --surface-menu / --accent。
-    ///
-    /// 模板里调 picker() 时顺手登记一份选项，绑定阶段照着同一份走，
-    /// 避免「模板里加了一项、绑定忘了写」这种只有点开才发现的问题。
+    /// 数值项使用自绘下拉（按钮 + openMenu），选项表在渲染时登记。
     const pickers = [];
     // `scope`：值写回哪一份设置。弹幕项走 `danmaku`，SC 这类播放项走 `player`。
     const picker = (id, key, choices, numeric = true, scope = 'danmaku') => {
@@ -1229,9 +1110,7 @@ export function renderRoom(ctx, params = {}) {
         setConfig(key, value);
       });
     };
-    // 数值项全部自绘：点按钮弹 openMenu，选完把值写回按钮文字 + setConfig。
-    // 按钮上的 data-value 是唯一真相（菜单项只负责显示勾选态），
-    // 这样再次点开时高亮的就是当前值，不用回头读 config。
+    // 点按钮弹菜单，选完写回按钮与 config；按钮的 data-value 为当前值。
     for (const { id, key, choices, numeric, scope } of pickers) {
       const button = wrap.querySelector(`#${id}`);
       const label = button.querySelector('.chat-setting-value');
@@ -1302,22 +1181,17 @@ export function renderRoom(ctx, params = {}) {
   function setConfig(key, value) {
     state.settings.danmaku[key] = value;
     if (key === 'enabled') {
-      // 不要再自己写一套开关逻辑：统一交给 setDanmakuEnabled()，
-      // 否则面板里的开关只关得掉、开不回来，也跟不上底部控件的状态。
+      // 开关统一走 setDanmakuEnabled()，与底部控件保持同步。
       setDanmakuEnabled(value);
       return;
     }
     saveSettings();
-    // 表情开关只影响「后续渲染」，聊天栏里已经画好的行要重画一遍才能立刻看到效果。
-    // 弹幕层不用动：新弹幕在 emit 时会重新读配置，屏上的旧弹幕滚过去就算了。
+    // 表情开关只影响后续渲染，聊天栏需重画才有即时效果。
     if (key === 'emoji' && session.tab === 'chat') renderChatTab();
-    // 大表情大小改的是聊天栏的 CSS 变量（--big-emoji-lines），
-    // 必须在这里单独推一次：聊天栏不在 applyDanmakuStyle 的触发列表里，
-    // 漏了这一步，改成 3 行要退出直播间重进才生效。
+    // 大表情档位改动需单独推一次聊天栏的 CSS 变量。
     if (key === 'bigEmojiLines') applyBigEmojiSize(value);
 
-    // 字号/行数/区域/速度的改动交给弹幕层：库内部会重排轨道并保留现有弹幕，
-    // 只有字号变化才需要重建（弹幕实例的宽高是创建时固定的）。
+    // 其余参数交给弹幕层；仅字号变化需要重建实例。
     danmaku?.update(state.settings.danmaku);
     // 边距变化会改变容器尺寸，弹幕层自己会感知并重排。
     if (['opacity', 'lines', 'area', 'font', 'weight', 'stroke', 'strokeWidth', 'safeTop', 'safeBottom'].includes(key)) {
@@ -1357,14 +1231,13 @@ export function renderRoom(ctx, params = {}) {
     updateComposer();
   }
 
-  // 聊天标签下方的主色条：所有标签共用一个元素，切换时滑过去。
-  // 标签宽度会随 SC 计数变化，所以每次切标签、计数变动都要重新量一次。
+  // 标签下方的主色条，切换标签或计数变化时重新量宽度。
   const chatTabUnderline = page.querySelector('.chat-tab-underline');
   let chatTabUnderlineReady = false;
   function syncChatTabUnderline() {
     const active = page.querySelector('.chat-tab.active');
     if (!chatTabUnderline || !active) return;
-    // 和原来的 ::after 一样左右各缩 22%，条比文字长一点。
+    // 左右各缩 22%，色条略长于文字。
     const inset = active.offsetWidth * 0.22;
     if (!chatTabUnderlineReady) chatTabUnderline.style.transition = 'none';
     chatTabUnderline.style.width = `${Math.max(0, active.offsetWidth - inset * 2)}px`;
@@ -1377,9 +1250,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  // 横竖屏旋转、拖窗口宽度都会改标签的实际宽度（横屏更宽、SC 计数还会撑开一格），
-  // 色条位置是量出来写死的，不重量就停在旧位置。和首页平台标签同一套做法：
-  // ResizeObserver 盯容器 + resize/orientationchange 兜底，debounce 让旋转时的抖动先过去。
+  // 容器尺寸变化时重新定位色条：ResizeObserver + resize/orientationchange，带 debounce。
   const chatTabsBox = page.querySelector('#chat-tabs');
   let chatUnderlineTimer = 0;
   const onChatUnderlineResize = () => {
@@ -1396,16 +1267,14 @@ export function renderRoom(ctx, params = {}) {
     chatTabsObserver.observe(chatTabsBox);
   }
 
-  // 发送弹幕的输入框默认隐藏（设置 → 弹幕与SC设置 → 允许发送弹幕），
-  // 只在「聊天」标签下显示，避免挡住 SC/关注/设置面板。
+  // 发送框仅在「聊天」标签且允许发送时显示。
   function updateComposer() {
     const enabled = Boolean(state.settings.danmaku.sendEnabled);
     const visible = enabled && session.tab === 'chat';
     composer.classList.toggle('hidden', !visible);
   }
 
-  // 发送一条纯文本弹幕。失败原因原样透出（未登录 / 频率限制 / 平台不支持），
-  // 不要吞成一句「发送失败」，否则用户不知道是没登录还是被风控。
+  // 发送纯文本弹幕，失败原因原样提示。
   async function submitDanmaku(event) {
     event?.preventDefault();
     const text = chatInput.value.trim();
@@ -1427,16 +1296,8 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 竖屏画面尺寸
 
-  /// 手机竖屏：舞台高度按**视频真实比例**算，不再用 16:9 死框。
-  ///
-  /// 竖屏直播（9:16）以前被 42vh 卡住，画面只占屏宽的一小条、两侧一大片黑；
-  /// 横屏直播也常在宽框里上下留黑。这里把「按宽度撑满应有的高度」和「可用高度」
-  /// 取小值量给 `.stage`：能贴到边就贴到边，实在放不下才在两侧留一点。
-  /// 两侧露出来的地方铺的是 `.stage-bg`（封面模糊），不是纯黑。
-  ///
-  /// 聊天区没折叠时给它留的高度：常规 220，矮屏按 35% 收着留。
-  /// 只量高度、宽度始终 100%：`.room-main` 的高度由 flex 决定、不随 stage 变，
-  /// 所以不存在「量高度 → 改布局 → 再量」的循环。
+  /// 手机竖屏：舞台高度 = min(按视频比例撑满的高度, 可用高度)，宽度始终 100%。
+  /// 聊天区未折叠时预留 220px（矮屏按 35%）。
   const MOBILE_CHAT_RESERVE = 220;
 
   function applyStageSize() {
@@ -1481,8 +1342,7 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('chat-folded', collapsed);
     $('chat-expand').classList.toggle('hidden', !collapsed);
     if (!collapsed) renderChatTab();
-    // 折叠/展开都算一次操作：重排空闲定时器。折叠后画面独享整屏，在播就该
-    // 2.8 秒后把上下控件一起收掉——这正是 0.7.3 里竖屏折叠后一直不收的原因。
+    // 折叠/展开算一次操作，重排空闲定时器。
     wake();
     // 收起/展开聊天栏会改画面宽度（横屏与平板）或高度（竖屏），重新量一次。
     requestAnimationFrame(relayoutPlayer);
@@ -1594,8 +1454,7 @@ export function renderRoom(ctx, params = {}) {
     // 只改文字，不动按钮里的箭头图标；文字单独一层才做得出省略号。
     $('ctrl-quality-label').textContent = quality || '清晰度';
     $('ctrl-line-label').textContent = `线路 ${session.lineIndex + 1}${suffix}`;
-    // 档位名长短差很多（「原画」→「1080p60」），标签一长就可能把中间那段挤爆。
-    // 换完文字立刻重量一次，够不够放得下按新的宽度判断。
+    // 档位文字变化后重新测量控制条宽度。
     applyControlDensity();
   }
 
@@ -1638,11 +1497,7 @@ export function renderRoom(ctx, params = {}) {
     refreshStream(false);
   }
 
-  /// 设置里的「默认清晰度」落到当前平台的清晰度列表上。
-  ///
-  /// 各平台档位名字不统一（B 站 原画/蓝光/超清/高清/流畅，虎牙 蓝光20M/蓝光4M/超清…），
-  /// 所以按关键词从高到低匹配；匹配不到就退回平台默认档，而不是硬选最低档——
-  /// 用户选了「1080P 优先」，平台没这个叫法时给出平台默认的观感更合理。
+  /// 把「默认清晰度」映射到当前平台的档位：按关键词从高到低匹配，失败时用平台默认档。
   function pickDefaultQuality(platform, huyaDefault) {
     const fallback = platform === 'huya' && huyaDefault >= 0 ? huyaDefault : 0;
     const mode = state.settings.player?.defaultQuality || 'auto';
@@ -1659,8 +1514,7 @@ export function renderRoom(ctx, params = {}) {
       smooth: ['流畅', '极速', '标清'],
     }[mode];
     if (!keywords) return fallback;
-    // 关键词按优先级逐个找：加上分辨率前缀后，「原画 4K」也含「原画」，
-    // 一起 any 匹配会让「1080P 优先」落到 4K 上。
+    // 逐个按关键词匹配，避免「原画 4K」抢占更低优先级。
     for (const word of keywords) {
       const index = list.findIndex((name) => String(name).includes(word));
       if (index >= 0) return index;
@@ -1702,10 +1556,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   // ------------------------------------------------------------ 观看时长统计
-  //
-  // 口径是「真的在播的时间」：暂停、断流、换线、加载中都不计，
-  // 否则把直播间挂着不动也会一直累加。结算出的毫秒先放在 watchPending 里，
-  // 由 30 秒心跳写进 localStorage，关窗最多丢一个周期。
+  // 只累计真正播放的时间；结算值暂存 watchPending，由心跳写入 localStorage。
   function startWatchClock() {
     if (session.destroyed || session.watchSince) return;
     session.watchSince = Date.now();
@@ -1744,13 +1595,9 @@ export function renderRoom(ctx, params = {}) {
   };
   document.addEventListener('visibilitychange', resumeWatchOnShow);
 
-  // 线路播放失败时的统一处理：能自动换线就换，换不了才把提示交给用户。
-  // FLV 与 HLS 走同一套逻辑，避免两条路径给出不一致的行为。
-  /// 自动重连一轮，返回 false 表示已经放弃（调用方去显示错误页）。
-  ///
-  /// 一次断流会连发好几个 ERROR 事件，没有 `reconnecting` 挡着就会同时发起三四个
-  /// `refreshStream()`，最后互相把对方的播放器拆掉，表现是「越重连越黑屏」。
-  /// 退避 700ms × 次数，第三轮失败后把选择权交给用户。
+  // 线路播放失败：先自动重连/换线，放弃后显示错误页（FLV 与 HLS 共用）。
+  /// 自动重连一轮，返回 false 表示已放弃。连发的 ERROR 由 `reconnecting` 去重。
+  /// 退避 700ms × 次数，第三轮失败后交给用户。
   function scheduleReconnect() {
     if (session.reconnecting) return true;
     if (session.errorRetries >= 3) return false;
@@ -1766,19 +1613,10 @@ export function renderRoom(ctx, params = {}) {
     return true;
   }
 
-  /// 斗鱼直链到期前换一份新地址。
-  ///
-  /// 有效期是 CDN 在地址里写死的 `expire=` 参数：高码率档只有 **300 秒**
-  /// （实测到点就是干净的一刀，不是网络抖动），而且不能靠改查询串续命——
-  /// 追加或替换 `expire` 会让签名失效，一个字节都读不到。所以只能在到期前
-  /// 重新签一份新地址。
-  ///
-  /// 续签只更新后端 `proxy_targets` 里同一个 token 的地址，不碰播放器：
-  /// 正在播的上游连接照旧，等它被 CDN 断掉时，本机代理原地接上新地址，
-  /// 并把新一路流的 FLV 头去掉、时间戳接着排（`src-tauri/src/flv.rs`），
-  /// 播放器那条 HTTP 流从头到尾没断过。
+  /// 斗鱼直链在 `expire` 到期前重新签名续期。
+  /// 只更新代理里同一 token 的地址，播放器与 HTTP 流不中断。
   const STREAM_RENEW_FALLBACK_S = 40 * 60;
-  /// 提前量：留出一次请求 + 握手的时间，也避免和 CDN 的时钟差异撞上。
+  /// 提前量：一次请求 + 握手的时间，外加 CDN 时钟误差余量。
   const STREAM_RENEW_LEAD_S = 45;
 
   function startStreamRenew(expiresIn) {
@@ -1792,8 +1630,7 @@ export function renderRoom(ctx, params = {}) {
       if (session.destroyed) return;
       let nextExpires = expiresIn;
       try {
-        // 续签必须带上同一个 audioOnly：代理按 token 区分纯音频条目，
-        // 换成带视频的那一条会让续接后的字节突然多出视频 tag。
+        // 续签需带同一个 audioOnly，保持代理条目一致。
         const payload = await api.play(session.key, session.qualityIndex, {
           audioOnly: session.audioOnly,
         });
@@ -1888,9 +1725,8 @@ export function renderRoom(ctx, params = {}) {
     bindHintActions();
   }
 
-  // 自动播放被拦截时静音兜底，不弹遮挡提示。
-  /// `skipDelay` 给 hls.js 用：它按 `liveSyncDuration` 自己起播，
-  /// 再压一层就等于等两遍。
+  // 自动播放被拦截时静音兜底。
+  /// skipDelay 供 hls.js 使用，避免重复等待起播。
   function resumePlayback(skipDelay = false) {
     if (!skipDelay && Number(session.delaySec) > 0) {
       holdForDelay(Number(session.delaySec));
@@ -1916,12 +1752,10 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     session.lineIndex = index;
-    // 换线路 = 重新开一轮尝试，之前「已放弃自动重连」的结论作废。
+    // 换线路重开一轮尝试，清除「已放弃自动重连」标记。
     session.streamDead = false;
     setQualityLabel();
-    // 这里**不要**再 `danmaku.reset()`。换线 / 重取流跟弹幕没关系，
-    // 但每次清空整层，在下播后自动重连的循环里会表现为「弹幕一直在闪」或者
-    // 「弹幕层不动了」——而聊天栏还在正常刷新，看着就像弹幕流和直播流绑死了。
+    // 换线/重取流时不要 reset() 弹幕层。
     setHint({ spinner: true, text: '正在连接视频流…' });
     destroyPlayer();
     if (line.protocol === 'hls') {
@@ -1942,9 +1776,7 @@ export function renderRoom(ctx, params = {}) {
       player = mpegts.createPlayer(source, {
         enableWorker: false,
         lazyLoad: false,
-        // 缓冲大小按设置里的档位来（定义见 player-buffer.js）。
-        // 开了「延迟播放」就不能追帧：那一档是靠刻意落后实现的，
-        // 库一去追帧就等于把用户设的延迟一秒秒吃掉。
+        // 缓冲参数见 player-buffer.js；延迟播放时不追帧。
         ...flvBufferOptions(Number(session.delaySec) <= 0),
         autoCleanupSourceBuffer: true,
         fixAudioTimestampGap: true,
@@ -1969,8 +1801,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 用户主动刷新：先把「自动重连已放弃」的标记清掉，再重新取流。
-  /// 卡顿检测自己调的 `refreshStream()` 不走这里，否则计数永远清零、重试停不下来。
+  /// 用户主动刷新：先清除「已放弃重连」标记再重取流。
   function manualRefreshStream() {
     session.stallRetries = 0;
     session.streamDead = false;
@@ -1989,8 +1820,7 @@ export function renderRoom(ctx, params = {}) {
     hint.querySelector('#hint-back-home')?.addEventListener('click', () => ctx.go('home'));
   }
 
-  // 后端把 FLV 与 HLS 分开返回：FLV 走本机代理（补 Referer/CORS），
-  // HLS 直连 CDN。FLV 在前，HLS 作为兜底线路排在后面。
+  // FLV 走本机代理，HLS 直连，按此顺序作为线路。
   function buildLines(payload) {
     const lines = [];
     for (const url of payload.urls || []) lines.push({ url, protocol: 'flv' });
@@ -2012,8 +1842,7 @@ export function renderRoom(ctx, params = {}) {
       session.lineIndex = 0;
       session.lineFailures = 0;
       setQualityLabel();
-      // 斗鱼的地址有有效期（`expires_in` 秒），进房就按它排上续签；
-      // 其它平台这个函数直接返回。
+      // 斗鱼地址按 expires_in 排续签，其它平台直接返回。
       startStreamRenew(payload.expires_in);
       if (!session.lines.length) {
         setHint({ text: '这个房间暂时没有可用的播放地址（可能未开播或限制地区）', actions: '<button class="btn" id="hint-retry">重试</button>' });
@@ -2049,7 +1878,7 @@ export function renderRoom(ctx, params = {}) {
     $('ctrl-volume').classList.toggle('active', Boolean(open));
   }
 
-  /// 点浮层外面收起音量条；点按钮自己不算「外面」，否则一次点击会被这里先关掉。
+  /// 点浮层外收起音量条；按钮本身不算外。
   function onVolumeOutside(event) {
     if (!volumeWrap.classList.contains('is-open')) return;
     if (volumeWrap.contains(event.target)) return;
@@ -2060,12 +1889,7 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('is-paused', video.paused);
   }
 
-  /// 当前是不是「铺满画面」的状态。
-  ///
-  /// 桌面上是浏览器 Fullscreen API（document.fullscreenElement），安卓 WebView 不支持它，
-  /// 走的是 CSS 剧场模式（html.is-theater）。这两条路的判断以前散在各处，
-  /// 「全屏里点设置 → 弹幕与SC设置没反应」「全屏按返回直接退出直播间」都是只看
-  /// document.fullscreenElement 造成的——安卓上它永远是 null。
+  /// 是否处于铺满画面状态：桌面看 Fullscreen API，安卓看 html.is-theater。
   function isPlayerFullscreen() {
     return Boolean(document.fullscreenElement) || page.classList.contains('is-theater');
   }
@@ -2079,12 +1903,7 @@ export function renderRoom(ctx, params = {}) {
     if (page.classList.contains('is-theater')) setTheater(false);
   }
 
-  /// 安卓的「全屏」。
-  ///
-  /// Android WebView 不实现 `requestFullscreen()`（没有 WebChromeClient 的全屏回调），
-  /// 点了只会报「全屏失败」。这里改成两半：CSS（`html.is-theater`）把视频铺满并收掉
-  /// 聊天区/底栏/侧栏，系统栏由 `set_immersive` 藏起来；顺手把方向掰到横屏，
-  /// 退出时恢复设置里的方向。
+  /// 安卓全屏：html.is-theater 铺满画面，set_immersive 隐藏系统栏，并切到横屏。
   function setTheater(active) {
     page.classList.toggle('is-theater', active);
     document.documentElement.classList.toggle('is-theater', active);
@@ -2102,11 +1921,7 @@ export function renderRoom(ctx, params = {}) {
     requestAnimationFrame(relayoutPlayer);
   }
 
-  /// 舞台上「双击切全屏」要跳过的区域。
-  ///
-  /// 控制条、顶栏、错误卡、SC 卡片各有自己的点击行为，连点两下（比如把音量
-  /// 按两下）不该顺手把画面全屏掉。小窗（`.is-pip`）也在这里：它的双击由
-  /// bindPipDrag 处理，放过来会先全屏再被自己切一次，等于没切。
+  /// 双击切全屏要跳过的区域：控制条、顶栏、错误卡、SC 卡与小窗。
   const STAGE_NO_DBLCLICK = [
     '.player-controls',
     '.room-topbar',
@@ -2152,8 +1967,7 @@ export function renderRoom(ctx, params = {}) {
 
   async function togglePip() {
     if (IS_MOBILE) {
-      // Android WebView 不实现 HTML5 画中画（requestPictureInPicture 直接 reject），
-      // 只能让系统把小窗浮起来：Activity 级 PiP，整个应用缩成小窗。
+      // Android 使用 Activity 级 PiP。
       try {
         const entered = await api.enterPictureInPicture();
         if (entered) {
@@ -2175,8 +1989,7 @@ export function renderRoom(ctx, params = {}) {
       toast('只播放音频时没有画面，小窗里也是黑的');
       return;
     }
-    // 同屏时台前是主画面（默认 B，互换后是 A）：小窗里要显示的就是铺满的那个，
-    // 而不是缩在角落的那一路，否则拖出来是一张很小的画面。
+    // 小窗显示当前铺满的主画面。
     const pipVideo = page.classList.contains('is-dual')
       ? (session.dualFlip ? video : videoB)
       : video;
@@ -2191,11 +2004,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 小窗（PiP）模式：整个应用被缩成一个小窗口，聊天栏、底栏、控制条统统收起，
-  /// 只留视频铺满——否则 192×108 的窗口里全是零碎的 UI。
-  ///
-  /// 退出小窗时系统不会再通知一次（WebView 一直是「可见」的），所以每秒问一次
-  /// 系统还进不进去；退出后把布局还原，播放不受影响。
+  /// PiP 模式：只保留视频铺满，并每秒轮询系统状态以便退出时还原布局。
   function setPipMode(active) {
     document.documentElement.classList.toggle('is-pip', active);
     page.classList.toggle('is-pip', active);
@@ -2220,18 +2029,16 @@ export function renderRoom(ctx, params = {}) {
   video.addEventListener('playing', () => {
     setHint(null);
     updatePlayIcon();
-    // 暂停时定时器空转过、或者根本没排上：重新出画后重排一次，
-    // 否则「暂停 → 继续」之后上下控件会一直挂在画面上。
+    // 重新出画后重排空闲定时器。
     wake();
     session.failed = false;
-    // 出画 = 这一轮重连成功，计数清零；否则几次小抖动累加满 3 次之后就再也不自动重连了。
+    // 出画即本轮重连成功，计数清零。
     session.errorRetries = 0;
     session.reconnecting = false;
     session.playStartedAt = Date.now();
     session.lastProgressTime = video.currentTime;
     session.lastProgressAt = Date.now();
-    // 第一帧出来才知道真实分辨率：竖屏直播按等比高度撑开（见 applyStageSize），
-    // 横屏仍是 16:9，免得宽画面上下留出两条大黑边。
+    // 首帧后按真实比例调整舞台高度。
     relayoutPlayer();
     // 真正出画了才开始计观看时长。
     startWatchClock();
@@ -2240,8 +2047,7 @@ export function renderRoom(ctx, params = {}) {
     if (session.destroyed) return;
     // 流断了就不该继续累计时长，重连上会由 playing 重新开始计时。
     stopWatchClock();
-    // 有些线路第一次会返回一个只有几百毫秒的失效分片，自动重取一次。
-    // 斗鱼长连接被 CDN 掐掉时也是这条路径（mpegts 正常收尾 → ended）。
+    // 失效分片自动重取一次。
     if (scheduleReconnect()) {
       setHint({ spinner: true, text: '直播流意外结束，正在重新连接…' });
       return;
@@ -2264,16 +2070,9 @@ export function renderRoom(ctx, params = {}) {
     setHint({ text: '视频播放出错，请尝试刷新或换线', actions: '<button class="btn" id="hint-retry">刷新</button>' });
     bindHintActions();
   });
-  // 直播不提供暂停；单击只负责唤出控制条，双击进入/退出全屏。
-  //
-  // 双击挂在舞台上而不是 #player 上：同屏时主画面是 pointer-events:none
-  // （点击要穿透到舞台，否则会把控制条挡住），事件到不了 video。而且画面
-  // 本来就不止 #player 一个——B 的画面、小窗之外的空白、只播放音频时的黑底，
-  // 双击它们都该切全屏。
+  // 直播不提供暂停：单击唤出控制条，双击切全屏。双击挂在舞台上以覆盖所有画面元素。
   video.addEventListener('click', wake);
-  // 双击的第二下按下去时掐掉默认动作：否则浏览器会把被双击的 video 整个选中，
-  // 在上面盖一层蓝色选区（看着像画面蒙了层色），文字也可能被一起框住。
-  // 控件除外——连点两下按钮不该被拦。
+  // 拦截双击默认动作以免选中 video；对控件不生效。
   stage.addEventListener('mousedown', (event) => {
     if (event.detail > 1 && !isStageControl(event.target)) event.preventDefault();
   });
@@ -2284,13 +2083,10 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 房间信息
 
-  // 「观众数据」的口径按平台分：B 站给的是累计观看量（`watched_show`），
-  // 抖音 `user_count` / 快手 `watchingCount` 本身就是实时在看人数。
-  // 同一个位置不能一律写「看过」——数字含义不一样。
+  // 观众数据口径：B 站为累计观看，抖音/快手为实时在看。
   const AUDIENCE_LABEL = { douyin: '在看', kuaishou: '在看' };
 
-  /// 观众数据那一格该画什么：有累计观看量就写「看过」，否则按平台的「在看」。
-  /// 两者都没有（未开播 / 平台不提供）时返回 null，整格不画。
+  /// 观众数据格的文案与数值；无数据返回 null。
   function audienceStat(platform, detail) {
     const viewers = Number(detail?.viewers) || 0;
     if (viewers > 0) return { label: '看过', value: viewers };
@@ -2317,15 +2113,12 @@ export function renderRoom(ctx, params = {}) {
     $('chat-avatar').innerHTML = avatarHtml(detail.user_name, avatar, 42);
     bindImageFallback(page);
     $('chat-name').textContent = detail.user_name || '聊天';
-    // 聊天区第二行：平台 + 开播状态 + 观众数据。
-    // B 站的 viewers 是累计观看量，所以口径写成「看过」；抖音 / 快手给的是
-    // 实时在看人数，同一格写「在看」（见 audienceStat）。
+    // 聊天区第二行：平台、开播状态、观众数据。
     const audience = audienceStat(session.platform, detail);
     const guards = Number(detail.guard_count) || 0;
     const dataBits = [];
     if (audience) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(audience.value)} ${audience.label}</span>`);
-    // 大航海自己占一行（`.chat-head-guard` 的 flex-basis 是 100%）：
-    // 它是「舰长数」，和看过人数挤在一起时窄一点就只剩半截，另起一行反而清爽。
+    // 大航海单独占一行（flex-basis: 100%）。
     const guardBit = guards > 0 ? `<span class="chat-head-guard">${icon('anchor', 11)}${guards} 大航海</span>` : '';
     $('chat-meta').innerHTML =
       `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
@@ -2337,9 +2130,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 定时刷新直播间数据（标题 / 人气 / 看过 / 大航海 / 是否在播）。
-  /// 只重画头部，不碰播放器：`open_room` 用 `平台:房间号` 当 key，
-  /// 重复调用只是把同一个会话的详情刷新一遍，正在播的流地址不受影响。
+  /// 定时刷新直播间数据，只重画头部，不碰播放器。
   async function refreshRoomInfo() {
     if (session.destroyed || document.hidden) return;
     try {
@@ -2434,12 +2225,7 @@ export function renderRoom(ctx, params = {}) {
     copyText(session.detail?.url || roomUrl(session.platform, session.roomId), '直播间链接已复制');
   }
 
-  /// 复制直播流：给的是本机代理地址（`http://127.0.0.1:端口/stream/...`）。
-  /// 它带着当前平台的 Referer / UA，粘回「同屏播放」就能直接播；
-  /// 反过来把原始 CDN 地址交出去，多半会被平台按 Referer 拒掉。
-  ///
-  /// 只播放音频时 `session.lines` 里是代理的 `-a` 那一条（没有视频 tag），
-  /// 复制出去就是个没画面的流，所以这里重新要一份带视频的地址再复制。
+  /// 复制本机代理地址（带 Referer/UA）；只播放音频时重新取一份带视频的地址。
   async function copyStream() {
     const current = session.lines[session.lineIndex]?.url;
     if (!current) {
@@ -2458,8 +2244,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 定时关闭在菜单上的文案：开关状态跟「设置 → 定时关闭」是同一份数据，
-  /// 所以这里读的是 app.js 那套计时器的实时剩余量，不是另存一份。
+  /// 定时关闭菜单文案，读取 app.js 计时器的实时剩余量。
   function sleepTimerItem() {
     const info = ctx.sleepTimer?.() || { enabled: false, minutes: 0, remaining: 0 };
     const minutes = Math.ceil(info.remaining / 60000);
@@ -2506,9 +2291,7 @@ export function renderRoom(ctx, params = {}) {
   function showMoreMenu() {
     const anchor = $('room-more');
     const items = [];
-    // 「更多」在两端都放全量入口：桌面控制条上虽然有画质/线路按钮，
-    // 但手机上横屏/竖屏都可能被自动收起（见 applyControlDensity），
-    // 这里必须始终能找到，不能只在竖屏出现。
+    // 「更多」始终显示全量入口。
     const quality = session.qualities[session.qualityIndex];
     items.push({
       label: '清晰度',
@@ -2540,8 +2323,7 @@ export function renderRoom(ctx, params = {}) {
     openMenu(anchor, items);
   }
 
-  /// 播放统计：清晰度 / 线路 / 分辨率 / 码率 / 帧率、缓冲与播放状态、已解码与丢帧。
-  /// 每秒刷新一次，关闭弹窗或退出直播间都会清掉定时器。
+  /// 播放统计弹窗：每秒刷新，关闭时清除定时器。
   function showPlaybackStats() {
     const body = document.createElement('div');
     body.className = 'stats-body';
@@ -2581,8 +2363,7 @@ export function renderRoom(ctx, params = {}) {
       const decoded = Number(qualityInfo?.totalVideoFrames) || 0;
       const dropped = Number(qualityInfo?.droppedVideoFrames) || 0;
       const intact = decoded > 0 ? `${(((decoded - dropped) / decoded) * 100).toFixed(2)}%` : '—';
-      // mpegts 自己的统计：decodedFrames / droppedFrames 之外还有速度之类，
-      // 字段随版本变化，这里把剩余的标量字段原样列出来。
+      // 输出 mpegts 的其余标量统计字段。
       const stats = session.player?.statisticsInfo || {};
       // statisticsInfo.speed 是 KB/s；一秒采一次样，换算成 Mbps 更直观。
       const speedKb = Number(stats.speed) || 0;
@@ -2642,7 +2423,7 @@ export function renderRoom(ctx, params = {}) {
   function showRoomInfo() {
     const detail = session.detail;
     if (!detail) return;
-    // 竖屏下左下角的直播时长会被收起来，所以这里也补一行，信息不至于找不着。
+    // 竖屏下左下角的时长被收起，这里补一行。
     const startedAt = Number(detail.live_start_time) > 0 ? Number(detail.live_start_time) * 1000 : 0;
     const liveDuration = startedAt ? formatDuration(Date.now() - startedAt) : '未提供';
     // 「热度」这一行同样按平台改口：抖音 / 快手给的数字就是在看人数。
@@ -2682,19 +2463,14 @@ export function renderRoom(ctx, params = {}) {
     renderChatSettings(body);
   }
 
-  /// 控制条上的齿轮：只放**直播间里独有**的设置。
-  /// 刷新直播流 / 复制直播流 / 在浏览器打开 在上方「更多」里已经有入口，
-  /// 弹幕开关就在紧邻的图标按钮上——重复的入口只是让人多找一次，去掉了。
-  /// 「画面尺寸」是原来那个只会弹提示的「播放器设置」换来的：改铺满/适应不必离开直播间。
+  /// 控制条齿轮：只放直播间独有的设置与画面尺寸切换。
   function openQuickSettings() {
     openMenu($('ctrl-settings'), [
       {
         label: '弹幕与SC设置',
         icon: 'danmaku',
         onClick: () => {
-          // 铺满状态（桌面全屏 / 安卓剧场）下聊天栏是隐藏的，切到聊天栏的「设置」标签
-          // 用户什么也看不到——以前判的是 document.fullscreenElement，安卓上恒为 null，
-          // 于是全屏里点这一项就是「没反应」。两种全屏都走弹窗。
+          // 铺满时聊天栏隐藏，两种全屏都改用弹窗展示设置。
           if (isPlayerFullscreen()) {
             openDanmakuSettingsModal();
           } else {
@@ -2712,7 +2488,7 @@ export function renderRoom(ctx, params = {}) {
       {
         label: '只播放音频',
         icon: 'volume',
-        // 同屏时这一项没意义（A 本来就只有声音），但入口照样在，避免菜单随状态变长变短。
+        // 同屏时无意义（A 只有声音），入口保留以免菜单长度随状态变化。
         value: session.audioOnlyUser ? '开启' : '关闭',
         active: session.audioOnlyUser,
         onClick: () => setAudioOnlyByUser(!session.audioOnlyUser),
@@ -2765,11 +2541,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   // ------------------------------------------------------------ 只播放音频
-  //
-  // 这里不是「把画面藏起来继续解码」，而是真的不传视频：`api.play` 带上
-  // audioOnly，代理层（src-tauri/src/flv.rs 的 AudioOnlyFilter）把视频 tag
-  // 丢掉。省一半带宽，也不占解码器；代价是画面位置只剩一块黑，所以留了个
-  // 能点回来的标记。
+  // api.play 带 audioOnly，代理层（src-tauri/src/flv.rs 的 AudioOnlyFilter）丢弃视频 tag。
 
   /// 用户按下的那个开关，只对本次进房有效（退出直播间就恢复画面）。
   function setAudioOnlyByUser(on) {
@@ -2781,10 +2553,7 @@ export function renderRoom(ctx, params = {}) {
     toast(next ? '只播放音频，点画面上的标记可恢复' : '已恢复画面', 'info', 2000);
   }
 
-  /// 合成本次进房「这一路到底要不要视频」，需要换代理分支时重取流。
-  ///
-  /// 只由用户那个开关决定：同屏时 A 也保留视频——小窗随时要出画面，
-  /// 而且关掉小窗再开回来不用等重新取流。多占一路带宽是明确要的取舍。
+  /// 本次进房是否需要视频；切换时换代理分支并重取流。
   function syncAudioOnly() {
     const want = session.audioOnlyUser;
     // 开着「只播放音频」时小窗必然是一块黑，直接收掉。
@@ -2800,11 +2569,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   // ------------------------------------------------------------ 延迟播放
-  //
-  // 直播没有「慢放」，想比直播晚 N 秒看，只能让播放器先攒够 N 秒再开播：
-  // 播放点落在缓冲里、离直播边缘 N 秒，这段就是抗抖动缓冲——网络抖一下只是
-  // 把缓冲吃掉一截，画面不用停下来等。代价是刚打开要等 N 秒（有提示），
-  // 而且画面比直播和弹幕慢。
+  // 靠先攒够 N 秒缓冲再开播实现，代价是起播较慢、画面落后于直播。
 
   const DELAY_MAX = 20;
   // 同屏「时间偏移」的上限（秒），正负都取这个值。
@@ -2815,11 +2580,7 @@ export function renderRoom(ctx, params = {}) {
     return ranges && ranges.length ? ranges.end(ranges.length - 1) : 0;
   }
 
-  /// 当前播放点离「已经收到的最后一点数据」还有多少秒，也就是能扛多久抖动。
-  ///
-  /// 刚起播时 `currentTime` 可能还停在 0，而缓冲是从别的时间点开始的
-  /// （MSE 的时间轴不一定从 0 起），这时按缓冲起点算，否则会算出一个巨大的
-  /// 「已缓冲」而直接开播，延迟一点都攒不上。
+  /// 当前播放点之后已缓冲的秒数；时间轴不从 0 起时按缓冲起点计算。
   function bufferedAhead() {
     const ranges = video.buffered;
     if (!ranges || !ranges.length) return 0;
@@ -2835,10 +2596,7 @@ export function renderRoom(ctx, params = {}) {
     session.delayHolding = false;
   }
 
-  /// 压住播放，等缓冲攒到 `target` 秒再放。
-  ///
-  /// 暂停期间 mpegts 照样往 SourceBuffer 里写，缓冲自己会长；所以这一步不需要
-  /// 额外的缓冲队列，播完的位置天然就比直播晚了攒进去的那一段。
+  /// 压住播放，等缓冲攒到 target 秒再放。
   function holdForDelay(target) {
     stopDelayGate();
     session.delayHolding = true;
@@ -2873,8 +2631,7 @@ export function renderRoom(ctx, params = {}) {
     }, 200);
   }
 
-  /// 延迟是攒出来的，也会被卡顿一点点吃掉：掉到目标的一半就压回去补，
-  /// 否则开着 20 秒、实际只剩 2 秒，用户还以为有缓冲垫着。
+  /// 已缓冲不足目标一半时重新压回缓冲。
   function watchDelay(target) {
     stopDelayGate();
     session.delayTimer = setInterval(() => {
@@ -2993,13 +2750,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   // ------------------------------------------------------------ 同屏播放
-  //
-  // 默认 B 铺满、A 缩成可拖动的小窗（点小窗和 B 换主次），两路各有一个音量。
-  // 小窗可以关掉，只留 B 的画面 + A 的声音。
-  //
-  // A 这一路要不要视频由「只播放音频」那个开关单独决定：小窗开着必然要画面，
-  // 所以开小窗时会把这个开关关掉。关掉小窗后 A 仍然保留视频流——切回来不用
-  // 重新取流，代价是多占一路带宽（这是明确要的取舍）。
+  // 默认 B 铺满、A 为可拖动小窗，两路各有独立音量；小窗可关闭，只留 B 的画面与 A 的声音。
 
   let dualPanelBody = null;
   let lastDualError = '';
@@ -3123,8 +2874,7 @@ export function renderRoom(ctx, params = {}) {
       loadDual();
     });
     body.querySelector('#dual-load')?.addEventListener('click', loadDual);
-    // 音量滑块：A 直接改 video.volume（和底部控制条是同一个值），
-    // B 走 dual.setVolume。拖到 0 就是静音，所以不再单列静音按钮。
+    // 音量滑块：A 直接改 video.volume，B 走 dual.setVolume。
     const volA = body.querySelector('#dual-vol-a');
     volA?.addEventListener('input', () => {
       const value = Number(volA.value) / 100;
@@ -3223,17 +2973,14 @@ export function renderRoom(ctx, params = {}) {
     session.dualOffset = 0;
     session.dualDelayA = 0;
     session.dualDelayB = 0;
-    // 弹幕还在 B 那边时，先把连接交回 A，否则关掉后聊天栏就停住了。
+    // 弹幕还连在 B 上时先交回 A，否则关闭后聊天栏无数据。
     if (session.danmakuSource === 'b') switchDanmakuSource('a');
     // 关掉同屏能不能恢复画面，取决于「只播放音频」那个开关还在不在。
     syncAudioOnly();
     renderDualPanel();
   }
 
-  /// 同屏布局：谁铺满、谁缩成小窗，全由 class 决定。
-  ///
-  /// 两路 video 都不移动 DOM——把正在播 MSE 的元素塞进别的父节点会掉源，
-  /// 只能重新 load。所以「点小窗换主次」是纯样式操作。
+  /// 同屏布局由 class 切换，不移动 DOM（移动会掉源）。
   function applyDualLayout() {
     const active = dual.state.open;
     const pipOn = active && session.dualPip.on;
@@ -3249,8 +2996,7 @@ export function renderRoom(ctx, params = {}) {
     // flip=true 是 A 主 B 小；默认反过来。
     const mainEl = session.dualFlip ? video : videoB;
     const pipEl = session.dualFlip ? videoB : video;
-    // 换主次时上一个「小窗」身上还留着 inline 的宽高和 left/top，
-    // 不清掉它就算挂上 is-main 也还是小尺寸（inline 优先级更高）。
+    // 换主次时清掉小窗残留的 inline 尺寸与位置。
     clearPipStyle();
     mainEl.classList.add('is-main');
     if (pipOn) {
@@ -3261,8 +3007,7 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 小窗的位置与大小。x/y 记的是左上角占舞台的百分比，窗口尺寸一变
-  /// 会按比例落回原处；没拖过就是右下角。
+  /// 小窗位置与大小：x/y 为左上角占舞台的百分比。
   function pipBox() {
     const rect = stage.getBoundingClientRect();
     // 26% 宽在小窗口下会太窄，150px 兜底；上限 45%，别把主画面挡死。
@@ -3336,10 +3081,7 @@ export function renderRoom(ctx, params = {}) {
     toast('A 的小窗需要画面，已关闭「只播放音频」', 'info', 2600);
   }
 
-  /// 拖动 + 点击：位移小于 4px 当点击（换主次），否则记住新位置。
-  ///
-  /// 小窗上双击也是「切全屏」，所以单击互换要压 240ms 再执行：第二击落在
-  /// 这个窗口里就把互换取消、改切全屏，全程不会先闪一下主次对调。
+  /// 拖动 + 点击：位移小于 4px 视为点击；单击互换延迟 240ms 以避让双击全屏。
   function bindPipDrag(el) {
     let drag = null;
     let tapTimer = 0;
@@ -3430,7 +3172,7 @@ export function renderRoom(ctx, params = {}) {
     if (!error) lastDualError = '';
   }
 
-  /// 换一路弹幕看。后端只有一个弹幕槽位，所以是「停掉旧的、连新的」。
+  /// 换一路弹幕：后端只有一个槽位，先停旧的再连新的。
   async function switchDanmakuSource(source) {
     const next = source === 'b' ? 'b' : 'a';
     if (next === session.danmakuSource) return;
@@ -3452,10 +3194,7 @@ export function renderRoom(ctx, params = {}) {
     renderDualPanel();
   }
 
-  /// 时间偏移：正数让 B 慢，负数让 A 慢。
-  ///
-  /// 直播流只能落在已缓冲的范围内，所以按「与上次施加值的差」做相对 seek，
-  /// 并把实际移动量记下来——缓冲不够时下次还能补上，不会越调越错。
+  /// 时间偏移：正数让 B 慢，负数让 A 慢；按差值相对 seek 并记录实际位移。
   function applyDualOffset(next) {
     if (!dual.state.open) {
       toast('先载入 B');
@@ -3488,10 +3227,7 @@ export function renderRoom(ctx, params = {}) {
 
   // ------------------------------------------------------------ 弹幕状态
 
-  /// 把当前弹幕连接状态画成聊天栏顶部的一条横幅。
-  ///
-  /// 只画「未连上/连不上/不支持」这三种：连上之后继续占着一行纯属浪费地方，
-  /// 但会短暂显示「已连接」给个反馈。任何平台都一样，不再只对抖音/快手说话。
+  /// 聊天栏顶部的弹幕连接状态横幅。
   let statusHideTimer = 0;
   function renderDanmakuStatus() {
     const bar = $('chat-status');
@@ -3545,16 +3281,14 @@ export function renderRoom(ctx, params = {}) {
         bar.hidden = true;
       }, 4000);
     }
-    // 横幅会自己收起，占位文案得接住「已连接」这个状态，
-    // 否则没人发弹幕时聊天栏永远写着「正在连接弹幕服务器…」。
+    // 占位文案需接住「已连接」状态。
     refreshChatPlaceholder();
   }
 
   /// 抖音需要先算握手签名，其余平台直接连。
   async function prepareDanmakuSignature(platform, detail) {
     if (platform !== 'douyin') return {};
-    // RoomExtra 是枚举，序列化出来是 `{ Douyin: { room_id } }`；
-    // 顺手兼容一次「已经摊平」的形状，免得两边改来改去对不上。
+    // RoomExtra 序列化为 `{ Douyin: { room_id } }`，同时兼容已摊平的形状。
     const extra = detail?.extra || {};
     const roomInnerId = extra?.Douyin?.room_id || extra?.room_id || '';
     if (!roomInnerId) {
@@ -3565,7 +3299,7 @@ export function renderRoom(ctx, params = {}) {
     return { signature, userId };
   }
 
-  /// 当前弹幕该连哪一路。同屏时 B 也要能连，所以 key / 平台 / 详情都从这里取。
+  /// 当前弹幕该连哪一路：key / 平台 / 详情都由此取。
   function danmakuTarget(source) {
     if (source === 'b') {
       const other = dual.state;
@@ -3576,8 +3310,7 @@ export function renderRoom(ctx, params = {}) {
     return { key: session.key, platform: session.platform, detail: session.detail };
   }
 
-  /// `source` 为 'a' / 'b'：后端只有一个弹幕槽位，同一时刻只连一路，
-  /// 切换就是把上一路停掉、用另一路重连（"只看 A / 只看 B"）。
+  /// source 为 'a' / 'b'；后端只有一个弹幕槽位，切换即重连。
   async function startDanmaku(source = session.danmakuSource) {
     session.danmakuSource = source === 'b' ? 'b' : 'a';
     const target = danmakuTarget(session.danmakuSource);
@@ -3593,8 +3326,7 @@ export function renderRoom(ctx, params = {}) {
     if (typeof state.unlistenDanmakuStatus === 'function') state.unlistenDanmakuStatus();
     state.unlistenDanmaku = null;
     state.unlistenDanmakuStatus = null;
-    // 先挂监听再去连：后端的「不支持 / 连接失败」几乎是立刻推出来的，
-    // 等 startDanmaku 返回再挂就只能看到「正在连接」卡在那儿。
+    // 先挂监听再连接，避免错过立即推送的状态。
     const unlistenStatus = await api.onDanmakuStatus((status) => {
       if (session.destroyed) return;
       session.danmakuStatus = { state: String(status?.state || ''), reason: String(status?.reason || '') };
@@ -3614,8 +3346,7 @@ export function renderRoom(ctx, params = {}) {
       const options = await prepareDanmakuSignature(target.platform, target.detail);
       if (session.destroyed) return;
       await api.startDanmaku(target.key, options);
-      // 状态由后端推事件驱动，这里不再自己往聊天记录里塞「连接正常」——
-      // 那句提示对不支持的平台是假的，会把真实原因挡在后面。
+      // 状态由后端事件驱动，连接成功不写入聊天记录。
     } catch (error) {
       if (session.destroyed) return;
       session.danmakuStatus = { state: 'failed', reason: `弹幕连接失败：${error}` };
@@ -3636,8 +3367,7 @@ export function renderRoom(ctx, params = {}) {
     applyDanmakuStyle();
     setDanmakuEnabled(session.danmakuEnabled);
     setQualityLabel();
-    // 定时刷新直播间数据（标题 / 人气 / 看过 / 大航海）。
-    // 这些数字在平台侧一直在变，进房时抓一次就再也不动，看久了会明显对不上。
+    // 定时刷新直播间数据。
     session.infoTimer = setInterval(refreshRoomInfo, REFRESH_INFO_INTERVAL);
     try {
       const payload = await api.openRoom(platform, roomId);
@@ -3648,7 +3378,7 @@ export function renderRoom(ctx, params = {}) {
       const detailPlatform = normalizePlatform(payload.detail.platform || platform);
       session.platform = detailPlatform;
       const remembered = Number(localStorage.getItem(`${QUALITY_KEY}${detailPlatform}`));
-      // 虎牙 4K/20M 对带宽要求高，首次进入默认选蓝光4M，避免一上来就频繁缓冲。
+      // 虎牙 4K/20M 带宽要求高，首次进入默认选蓝光4M。
       const huyaDefault = session.qualities.findIndex((name) => name.includes('4M'));
       const defaultQuality = pickDefaultQuality(detailPlatform, huyaDefault);
       session.qualityIndex =
@@ -3671,22 +3401,18 @@ export function renderRoom(ctx, params = {}) {
       renderFollowState();
       recordHistory({ ...payload.detail, platform: detailPlatform });
       touchFollowVisit(detailPlatform, session.roomId);
-      // 进房补「还挂着的 SC」。放在第一个 `setChatTab` 之前，
-      // 这样聊天列表与 SC 标签页的第一帧就是完整的。
+      // 补历史 SC，须在首次 setChatTab 之前完成。
       backfillSuperChats(payload.detail.super_chats);
       setChatTab('chat');
       setQualityLabel();
-      // 弹幕流和直播流是两条独立连接：**先连弹幕，再去取流**。
-      // 以前弹幕挂在取流成功之后，于是没开播 / 没取到流源的房间永远不连弹幕——
-      // 明明有人发弹幕，聊天栏却一直空着。这里不等它返回，两件事并行做。
+      // 弹幕与直播流是两条独立连接：先连弹幕再取流，互不等待。
       startDanmaku();
       if (!payload.detail.live || !session.qualities.length) {
         // 未开播也要保留房间头、关注/取关和主播信息，只是不取流。
         $('ctrl-quality').disabled = true;
         $('ctrl-line').disabled = true;
         setHint({
-          // 弹幕有没有连上，聊天栏顶部与占位文案会说得更准（各平台情况不同），
-          // 这里只交代直播流的事，别抢那句话。
+          // 这里只处理直播流状态，弹幕状态由横幅展示。
           text: payload.detail.live ? '当前没有可用的直播流' : '主播当前未开播，开播后可以刷新进入',
           actions: '<button class="btn primary" id="hint-reopen">刷新房间</button>',
         });
@@ -3706,21 +3432,13 @@ export function renderRoom(ctx, params = {}) {
       }
       updateClock();
       session.clockTimer = setInterval(updateClock, 1000);
-      // 不再按固定间隔重取流：那会在地址还没过期时主动销毁播放器，表现为“看一会儿断一下”。
-      // 地址真的过期时画面会停住，下面的卡顿检测会在 6 秒内换线或重取流。
-      // 虎牙部分线路会静默卡住，画面 currentTime 不再推进；
-      // 6 秒没有进展就换线/重取流，而不是等用户手动刷新。
+      // 不按固定间隔重取流；卡顿检测在 6 秒无进展时换线或重取。
       session.lastProgressTime = video.currentTime;
       session.lastProgressAt = Date.now();
       session.stallTimer = setInterval(() => {
         if (session.destroyed || session.streamDead || video.paused || video.readyState < 2) return;
         const now = Date.now();
-        // 延迟兜底。标准/流畅档位关掉了 liveBufferLatencyChasing，任何一次卡顿（窗口被切走、
-        // 网络抖一下、解码跟不上）都会让播放点永久落后：之后收到的数据只会继续
-        // 往后 append，播放点按 1 倍速再也追不回来，延迟和缓冲一起膨胀到几分钟，
-        // 内存与 appendBuffer 压力反过来让小卡更多——就是「越看越卡、最后重连」。
-        // 低延迟档位库自己会追帧，这里只是兜底：只在落后超过 30 秒时跳一次回到最新位置，
-        // 日常小抖动不参与，避免频繁跳帧（也免得把「延迟播放」设的那几秒跳掉）。
+        // 延迟兜底：落后超过 30 秒时跳回最新位置，日常抖动不处理。
         const bufferedEnd = video.buffered.length
           ? video.buffered.end(video.buffered.length - 1)
           : 0;
@@ -3745,9 +3463,7 @@ export function renderRoom(ctx, params = {}) {
           bindHintActions();
           return;
         }
-        // 连续几次重连都没有进展，多半是主播下播了（画面会永久停住）。
-        // 再自动重试下去只会每隔几秒弹一次 toast，停掉循环、把选择权交回用户。
-        // 弹幕是另一条连接，不受影响，这里不碰它。
+        // 连续重连无进展视为已下播，停止自动重试。
         session.stallRetries += 1;
         if (session.stallRetries > 3) {
           session.stallRetries = 0;
@@ -3835,8 +3551,6 @@ export function renderRoom(ctx, params = {}) {
     page.classList.toggle('is-fullscreen', active);
     $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
     $('room-back').title = active ? '退出全屏' : '返回';
-    // 以前这里另外挂了一个 3 秒的 setTimeout 补收一次，现在 wake() 就是唯一入口：
-    // 它会先清掉旧定时器再按 canAutoHide 收，全屏里暂停也照样收。
     wake();
   };
   document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -3845,8 +3559,7 @@ export function renderRoom(ctx, params = {}) {
   applyScaleMode(state.settings.player.scaleMode);
   updateVolumeIcon();
   updatePlayIcon();
-  // 控制条要等真正有了宽度才能量出放不放得下：插进 DOM 后按 rAF 量一次，
-  // 之后横竖屏切换、窗口缩放都重量一次。画面高度也一并跟着重算（竖屏那套）。
+  // 插入 DOM 后按 rAF 测量控制条宽度，窗口变化时重算，并同步舞台高度。
   const onControlResize = () => relayoutPlayer();
   window.addEventListener('resize', onControlResize);
   portraitQuery.addEventListener?.('change', onControlResize);
@@ -3872,7 +3585,7 @@ export function renderRoom(ctx, params = {}) {
     clearInterval(session.watchTimer);
     window.removeEventListener('pagehide', flushWatchOnHide);
     document.removeEventListener('visibilitychange', resumeWatchOnShow);
-    // 聊天标签色条的尺寸监听也要跟着房间一起撤掉，否则每进出一次就叠一对监听。
+    // 聊天标签色条的尺寸监听同样随房间撤掉。
     window.removeEventListener('resize', onChatUnderlineResize);
     window.removeEventListener('orientationchange', onChatUnderlineResize);
     chatTabsObserver?.disconnect();
@@ -3915,13 +3628,12 @@ export function renderRoom(ctx, params = {}) {
     }
     api.stopDanmaku().catch(() => {});
     destroyPlayer();
-    // 同屏的 B 路是另一套播放器，得单独收掉，否则退出直播间后它还在后台拉流。
+    // 同屏的 B 路是独立播放器，需单独收掉。
     dual.destroy();
     session.pipObserver?.disconnect();
     session.pipObserver = null;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    // 安卓的「全屏」是自己拼的，离开直播间必须还原：否则系统栏一直是隐藏的、
-    // 屏幕还锁在横屏，回到列表页会非常别扭。
+    // 离开直播间时还原安卓全屏与屏幕方向。
     if (document.documentElement.classList.contains('is-theater')) {
       document.documentElement.classList.remove('is-theater');
       api.setImmersive(false).catch(() => {});

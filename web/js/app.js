@@ -48,19 +48,16 @@ const PAGES = {
 };
 
 const backStack = [];
-// 进入直播间之前所在的一级页面，用于“从直播间返回一级界面”。
+// 进房前所在的一级页面，即退出直播间后的返回目标。
 let roomRoot = 'home';
 let roomRootParams = {};
-// 进入直播间那一刻返回栈的深度。退出直播间时把栈恢复到这个深度，
-// 而不是整个清空——清空会把“观看记录 → 直播间”这条来路也一起丢掉，
-// 于是回到观看记录后再点返回就没有上一级可退了。
+// 进入直播间时的返回栈深度；退出时恢复到该深度。
 let roomStackDepth = 0;
 let cleanup = null;
 let currentKey = '';
 const scrollPositions = new Map();
 let timerHandle = 0;
-// 定时关闭的到点时刻。房间「更多 → 定时关闭」要显示还剩多少分钟，
-// 只靠 setTimeout 拿不到剩余量，所以单独记一份；只在内存里，重启后重新计时。
+// 定时关闭的到点时刻，供「更多」菜单显示剩余时间。
 let timerDeadline = 0;
 // 首页把「刷新推荐」的动作注册到这里，顶栏那个按钮只负责触发。
 let homeRefreshHandler = null;
@@ -133,10 +130,7 @@ function back() {
 }
 
 function exitRoom() {
-  // 直播间里的返回按钮、Esc 都走这里：直接回进入直播间之前的一级页面。
-  // 这样“关注栏进 A → 再进 B → 返回”不会退回到 A，而是回到列表页。
-  // 返回栈只恢复到进房间时的深度，保留更早的来路（设置 → 观看记录 → 直播间），
-  // 这样回到观看记录后还能继续往上一层退。
+  // 返回：回到进入直播间前的一级页面，并保留更早的来路。
   if (roomStackDepth >= 0 && roomStackDepth < backStack.length) {
     backStack.length = roomStackDepth;
   }
@@ -162,8 +156,7 @@ function openRoom(platform, roomId) {
   state.settings.home.platform = platform;
   saveSettings();
   if (platformChanged) {
-    // 从别的平台点进来（关注页里混着虎牙主播）时要清掉上一平台的列表缓存，
-    // 否则返回首页会看到 tab 已是新平台、卡片还是旧平台的。
+    // 切换平台时清掉上一平台的列表缓存。
     resetPlatformCaches();
     syncPlatformTabs();
   }
@@ -190,8 +183,7 @@ function showPlatformLocked(platform) {
   });
 }
 
-/// 切平台后必须清掉上一平台的列表缓存：首页/分类/搜索都是全局 state，
-/// 不清就会出现「tab 已经切到虎牙、列表还是 B 站卡片」这种错位。
+/// 切平台后清掉上一平台的列表缓存。
 function resetPlatformCaches() {
   state.home = { items: [], page: 0, loading: false, done: false, error: '' };
   state.category = { tree: [], expanded: {}, loading: false, error: '' };
@@ -216,8 +208,7 @@ function selectPlatform(platform, options = {}) {
   return true;
 }
 
-/// 把平台标签下方的主色条摆到当前标签下面。
-/// 用一个共享元素 + transform 过渡，切换平台时它是「滑过去」而不是跳过去。
+/// 把平台标签下方的主色条移到当前标签下。
 let platformUnderlineReady = false;
 function placePlatformUnderline(active) {
   const underline = platformTabs.querySelector('.tab-underline');
@@ -234,14 +225,7 @@ function placePlatformUnderline(active) {
   }
 }
 
-/// 旋转屏幕、拖窗口、改界面密度都会改变标签的宽度与偏移，
-/// 而色条的位置是按 `offsetLeft/offsetWidth` 量出来写死的，不重量就停在旧位置
-/// （横竖屏的标签宽度本来就不一样，看起来就是「转个屏色条跑到隔壁」）。
-///
-/// 用 ResizeObserver 盯标签条本身（容器变宽即触发），再兜底监听 resize /
-/// orientationchange：安卓 WebView 旋转时，resize 事件和布局稳定不是同一帧，
-/// 只靠 resize 会量到中间值。debounce 120ms 让那几帧抖动先过去，
-/// 过渡动画（0.26s）自己会把色条滑到新位置。
+/// 重新测量并移动色条：ResizeObserver 观察标签条，resize/orientationchange 兜底，debounce 120ms。
 function initUnderlineTracking() {
   let timer = 0;
   const sync = () => {
@@ -264,8 +248,7 @@ function syncPlatformTabs() {
     tab.classList.toggle('active', current);
     if (current) active = tab;
   }
-  // 移动端标签条本身可以横向滚动，手指滑到的平台很可能在视野外，
-  // 不滚过去用户就看不出当前在哪一页。
+  // 切页后把当前标签滚入视野（移动端标签条可横向滚动）。
   if (IS_MOBILE) active?.scrollIntoView({ inline: 'center', block: 'nearest' });
   placePlatformUnderline(active);
 }
@@ -276,8 +259,7 @@ function renderPlatformTabs() {
     const active = platform === state.platform;
     const meta = PLATFORM_META[platform];
     const label = meta.tab || meta.name;
-    // 不放 logo：五个平台图标挤在一起，光看缩略图认不出是谁，反而把标签条撑到
-    // 需要横向滚动。纯文字更紧凑，选中态换成主题色时也更干净。
+    // 平台标签只放文字。
     return `<button class="platform-tab${active ? ' active' : ''}${envEnabled ? '' : ' is-disabled'}" data-platform="${platform}" role="tab" aria-selected="${active}" title="${escapeHtml(meta.name)}${envEnabled ? '' : '（即将支持）'}"><span>${escapeHtml(label)}</span></button>`;
   }).join('') + '<span class="tab-underline" aria-hidden="true"></span>';
   for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
@@ -285,8 +267,7 @@ function renderPlatformTabs() {
   }
 }
 
-/// 按已启用的平台顺序翻一页。到两端就停住（不循环），和常见分页手势一致。
-/// 返回是否真的切了——没切的话调用方不必播放过渡。
+/// 按已启用平台顺序翻一页，到两端停住；返回是否发生切换。
 function cyclePlatform(direction) {
   const list = ALL_PLATFORMS.filter((platform) => isPlatformEnabled(platform));
   if (list.length < 2) return false;
@@ -297,8 +278,7 @@ function cyclePlatform(direction) {
   return selectPlatform(next, { silent: true });
 }
 
-/// 左右滑动切平台：只在首页和分类页，这两个页面的顶栏挂的就是平台标签条。
-/// 直播间里对应的手势是切聊天标签，见 room.js。
+/// 左右滑动切平台，仅首页与分类页。
 function initSwipe() {
   if (!IS_MOBILE) return;
   bindHorizontalSwipe(view, (direction) => {
@@ -306,8 +286,7 @@ function initSwipe() {
     // 有浮层时手势归浮层，别在下面偷偷切平台。
     if (document.querySelector('.modal-overlay, .menu-overlay:not(.closing)')) return false;
     if (!cyclePlatform(direction)) return false;
-    // 新页面的入场动画统一由 render() 的 .page-enter 负责，这里不再叠一层
-    // swipe-in：两层 opacity 动画同时跑，滑动切页会比点标签明显更慢。
+    // 入场动画由 render() 负责，这里不再叠加。
     return true;
   });
 }
@@ -366,8 +345,7 @@ function render({ keepScroll = false, dir = 'forward' } = {}) {
       view.scrollTop = target;
     });
   }
-  // 页面入场：整页淡入 + 轻微位移。直播间跳过——它一进来就是视频铺满，
-  // 淡入只会把「点了之后要等一下」的感觉放大，而且播放器自己就有加载态。
+  // 页面入场动画；直播间跳过。
   const pageEl = view.firstElementChild;
   if (pageEl && state.page !== 'room') {
     pageEl.classList.add('page-enter');
@@ -382,10 +360,8 @@ function initRail() {
     refreshButton.innerHTML = icon('refresh', 19);
     refreshButton.addEventListener('click', () => homeRefreshHandler?.());
   }
-  // 每个导航图标备两版：线条（未选中）与实心（选中）。选中态不再垫深色底，
-  // 只换颜色和图形，所以两版同时写进 DOM，由 CSS 按 `.active` 切换——
-  // 路由切换时不用重设 innerHTML，也不会闪一下。
-  // 第四项叫「我的」，但路由名仍是 `settings`（它渲染的就是设置页，只改了叫法）。
+  // 导航图标两版（线框/实心）同时写入 DOM，由 CSS 按 .active 切换。
+  // 第四项显示为「我的」，路由名仍为 settings。
   const icons = {
     home: ['home', 'homeFilled'],
     follow: ['follow', 'followFilled'],
@@ -415,7 +391,7 @@ function initRail() {
     const themeButton = rail.querySelector('[data-action="theme"]');
     themeButton.innerHTML = icon(themeIcon(state.settings.appearance?.theme || 'dark'), 20);
     themeButton.addEventListener('click', () => {
-      // 皮肤只给了一套配色时，明暗切换没有意义：直接说清楚，别让按钮看起来点了没反应。
+      // 皮肤只有一套配色时禁用明暗切换，并给出说明。
       const locked = skinLockedMode();
       if (locked) {
         toast(`当前皮肤只提供${locked === 'light' ? '浅色' : '深色'}主题`);
@@ -430,8 +406,7 @@ function initRail() {
   refreshThemeButton();
 }
 
-/// 主题按钮图标：浅色=太阳、深色=月亮、跟随系统=半太阳半月亮。
-/// 以前跟随系统用的是齿轮，和左侧「设置」图标太像，容易看错。
+/// 主题按钮图标：浅色太阳、深色月亮、跟随系统半亮半暗。
 function themeIcon(mode) {
   if (mode === 'light') return 'sun';
   if (mode === 'system') return 'contrast';
@@ -492,8 +467,7 @@ function restartTimer() {
   timerHandle = setTimeout(() => {
     const once = Boolean(state.settings.timer.once);
     if (once) {
-      // 「只生效一次」：先把开关落盘再退出，否则下次启动又会重新计时，
-      // 表现就是「开了定时关闭以后每次用都被自动关掉」。
+      // 先落盘开关再退出，保证「只生效一次」。
       state.settings.timer.enabled = false;
       saveSettings();
     }
@@ -503,16 +477,14 @@ function restartTimer() {
   }, minutes * 60 * 1000);
 }
 
-/// 定时关闭的实时状态。设置页与直播间「更多」菜单都读这一份，
-/// 两边的开关、分钟数、剩余时间永远是同一个数。
+/// 定时关闭的实时状态，设置页与「更多」菜单共用。
 function sleepTimerState() {
   const minutes = Math.max(1, Number(state.settings.timer.minutes) || 60);
   const remaining = timerDeadline > 0 ? Math.max(0, timerDeadline - Date.now()) : 0;
   return { enabled: Boolean(state.settings.timer.enabled) && remaining > 0, minutes, remaining };
 }
 
-/// 设置/取消定时关闭（分钟；0 表示取消）。写的是同一份 settings，
-/// 所以设置页里的「启用定时关闭 / 自动关闭时间」会跟着变。
+/// 设置/取消定时关闭（分钟，0 取消）。
 function setSleepTimer(minutes) {
   const value = Math.round(Number(minutes) || 0);
   state.settings.timer.enabled = value > 0;
@@ -522,13 +494,7 @@ function setSleepTimer(minutes) {
   return sleepTimerState();
 }
 
-/// 安卓返回键。
-///
-/// Tauri 的 AppPlugin 只有在 JS 监听了 `back-button` 时才把按键事件交过来；
-/// 没人监听时它会自己 `webView.goBack()`（单页应用没有历史记录）然后结束 Activity，
-/// 表现就是「按一下直接退出」。
-///
-/// 顺序：关浮层 → 退全屏 → 出直播间 → 返回栈上一页 → 回首页 → 结束应用。
+/// 安卓返回键：关浮层 → 退全屏 → 出直播间 → 返回栈上一页 → 回首页 → 结束应用。
 function handleAndroidBack() {
   const menu = document.querySelector('.menu-overlay:not(.closing)');
   if (menu) {
@@ -541,8 +507,7 @@ function handleAndroidBack() {
     modal.querySelector('.modal-close')?.click();
     return;
   }
-  // 全屏先退全屏，别一把退出直播间。两处都判：类挂在 <html>（布局用）和
-  // .room-page（room.js 自己判断状态用）上，只认一处时漏一个就退错层。
+  // 全屏时先退全屏；两处标记都要判断。
   if (
     document.documentElement.classList.contains('is-theater') ||
     document.querySelector('.room-page.is-theater')
@@ -579,22 +544,14 @@ function initGlobalShortcuts() {
       back();
     }
     if (event.key === 'Escape' && ['settingsDetail', 'categoryRooms', 'search'].includes(state.page)) {
-      // 有弹窗/下拉菜单开着时，Escape 只关浮层，不要再退一页。
-      // 浮层的 keydown 是后注册的，靠它 stopPropagation 拦不住这里（同节点需要
-      // stopImmediatePropagation 且先注册），所以在源头判一下。
+      // 有浮层开着时 Escape 只关浮层。
       if (document.querySelector('.modal-overlay, .menu-overlay:not(.closing)')) return;
       event.preventDefault();
       back();
     }
   });
   searchButton.addEventListener('click', () => go('search', {}));
-  // 安卓系统返回键：把处理函数挂到 window 上，给原生侧 MainActivity.onBackPressed 调用。
-  //
-  // 不能用 `__TAURI__.event.listen('back-button')`：AppPlugin 判断「有没有人监听」时
-  // 查的是插件自己的 listener 表（只有 `plugin:app|register_listener` 才会往里写），
-  // 而 event.listen 注册在核心事件系统里，那张表永远是空的 → 按键被当成没人处理，
-  // 直接结束 Activity，表现就是「按一下退回桌面」。原生侧改成 evaluateJavascript
-  // 直接调这个函数，见 MainActivity.kt。
+  // 安卓物理返回键：由 MainActivity.onBackPressed 通过 evaluateJavascript 调用。
   if (IS_MOBILE) {
     window.__starveilBack = () => {
       try {
@@ -609,11 +566,7 @@ function initGlobalShortcuts() {
   });
 }
 
-/// 下拉刷新（触摸手势）。
-///
-/// 只在列表已经滚到顶部时生效：手指往下拖，指示器跟着下移，越过阈值松手就调用
-/// 当前页注册的刷新动作（首页 / 关注 / 分类列表各自提供，见 ctx.setPullRefresh）。
-/// 没有触摸的设备不参与，桌面上继续用顶栏的刷新按钮。
+/// 下拉刷新：仅在列表顶部生效，松手超过阈值触发当前页的刷新动作。
 function initPullRefresh() {
   const indicator = document.createElement('div');
   indicator.className = 'pull-refresh';
@@ -692,11 +645,7 @@ const WINDOW_STATE_KEY = 'starveil.window.v1';
 let windowRestoring = false;
 let windowSaveTimer = 0;
 
-// 窗口尺寸的合理下限。Windows 允许窗口被拖到最小（约 39×24），
-// 一旦把这个退化值存下来，下次启动窗口就几乎看不见了，
-// 所以保存与恢复两侧都要钳制。
-// 这两个值必须跟 tauri.conf.json 里的 minWidth / minHeight 一致：
-// 系统会在更小的尺寸上直接拦住，前端存一个更小的值没有意义。
+// 窗口尺寸下限，须与 tauri.conf.json 的 minWidth / minHeight 一致。
 const MIN_WINDOW_WIDTH = 1080;
 const MIN_WINDOW_HEIGHT = 640;
 
@@ -789,8 +738,7 @@ function debounceWindowSave() {
   windowSaveTimer = setTimeout(saveWindowState, 400);
 }
 
-/// 应用设置里的屏幕方向（`auto` / `portrait` / `landscape`）。
-/// 桌面端这个命令是空实现，所以两端共用同一份调用，不必到处判平台。
+/// 应用屏幕方向（auto / portrait / landscape）；桌面端为空实现。
 function applyScreenOrientation() {
   const mode = state.settings.appearance?.orientation || 'auto';
   api.setScreenOrientation(mode).catch((error) => console.warn('设置屏幕方向失败', error));
@@ -811,9 +759,7 @@ async function setupWindowState() {
   }
 }
 
-/// 启动时自动拉取 WebDAV 同步包。
-/// 只在「云端比本机上次同步更新」时才应用，避免每次启动都用旧包覆盖本机改动；
-/// 失败只写控制台，不弹窗打扰（网络不通是常态，手动同步仍然可用）。
+/// 启动时拉取 WebDAV 包：仅当云端比本机上次同步更新时应用，失败只写控制台。
 async function autoPullSync() {
   const config = state.settings.sync?.webdav;
   if (!config?.autoPull || !config.url) return;
@@ -825,9 +771,7 @@ async function autoPullSync() {
     const remoteAt = Date.parse(bundle.exportedAt || '') || 0;
     if (!remoteAt || remoteAt <= (Number(state.settings.sync.lastSyncAt) || 0)) return;
     const summary = importData(bundle);
-    // 包里带了登录信息时要把 Cookie 注回后端。少了这一步，界面显示已登录，
-    // 取流却还是游客 —— 手动导入（settings.js 的 applyImport）做了这件事，
-    // 自动拉取也必须做，否则两条路的登录态不一致。
+    // 包内含登录信息时把 Cookie 注回后端。
     for (const platform of summary.accounts || []) {
       const login = loadLogin(platform);
       if (login?.cookie) await api.setCookie(platform, login.cookie).catch(() => {});
@@ -842,8 +786,7 @@ async function autoPullSync() {
 }
 
 function init() {
-  // 平台标记要在任何渲染之前落定：移动端隐藏自绘标题栏、侧栏改底部 TabBar
-  // 全靠 `<html class="is-mobile">` 这类选择器。
+  // 平台标记须在任何渲染之前写入。
   applyPlatformFlags();
   // 禁用 WebView 默认右键菜单，避免露出浏览器菜单/刷新等开发项。
   document.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -873,9 +816,7 @@ function init() {
   setupWindowState();
   showDisclaimer();
   restartTimer();
-  // 恢复上次登录的平台 Cookie；后端每个平台独立持有 LiveCore。
-  // 遍历 ACCOUNT_PLATFORMS 而不是写死两个：设置页四个平台都能登录，
-  // 写死会让抖音/快手的登录态在重启后静默丢掉（界面还显示已登录）。
+  // 恢复各平台登录 Cookie。
   for (const platform of ACCOUNT_PLATFORMS) {
     const login = loadLogin(platform);
     if (login?.cookie) {
@@ -887,8 +828,7 @@ function init() {
   // 预加载分类树，切换分类页更快
   setTimeout(() => {
     if (!state.category.tree.length && !state.category.loading) {
-      // 记住发起时的平台：启动后 1.2 秒内用户可能已经切到别的平台，
-      // 回来的是上一个平台的分类树，直接塞进去会让分类页显示错内容。
+      // 记录发起时的平台，避免回包写到已切换的平台。
       const platform = state.platform;
       state.category.loading = true;
       api.categories(platform).then((tree) => {
@@ -901,11 +841,7 @@ function init() {
   }, 1200);
 }
 
-/// 启动顺序：先把皮肤的图标表备好，再 init。
-///
-/// 图标是首屏就要画出来的东西（侧栏、标题栏），如果在 init 之后异步补，
-/// 第一屏用的就是基础图形，得等下一次重绘才会变 —— 会看到图标「跳一下」。
-/// 不带自定义图标的皮肤这条路是同步返回的，不会拖慢启动。
+/// 启动顺序：先加载皮肤图标表，再 init。
 loadSkinIcons()
   .catch(() => {})
   .then(init);

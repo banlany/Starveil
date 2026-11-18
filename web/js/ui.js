@@ -1,6 +1,6 @@
 // 通用 UI：卡片、提示、弹窗、空态、骨架屏。
 import { avatarImage, canonicalImage, coverImage, formatOnline } from './api.js';
-import { icon, PLATFORM_META, platformIcon } from './icons.js';
+import { icon, platformIcon } from './icons.js';
 
 export function escapeHtml(value) {
   return String(value ?? '')
@@ -11,21 +11,8 @@ export function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-export function $(selector, root = document) {
-  return root.querySelector(selector);
-}
-
-export function $$(selector, root = document) {
+function $$(selector, root = document) {
   return [...root.querySelectorAll(selector)];
-}
-
-export function on(target, event, handler, options) {
-  target?.addEventListener(event, handler, options);
-}
-
-export function platformBadge(platform, withName = false) {
-  const meta = PLATFORM_META[platform] || PLATFORM_META.bilibili;
-  return `<span class="platform-badge" title="${escapeHtml(meta.name)}">${platformIcon(platform, 18)}${withName ? `<span>${escapeHtml(meta.name)}</span>` : ''}</span>`;
 }
 
 export function avatarHtml(name, image, size = 22, className = '') {
@@ -156,13 +143,7 @@ function portalRoot() {
   return document.getElementById('overlay-root');
 }
 
-/// 菜单的挂载点：有弹窗时挂进最上层那个弹窗（否则才挂到页面里）。
-///
-/// 菜单层 `.menu-overlay` 的 z-index 是 2500、弹窗层是 3000，菜单直接挂到
-/// 页面根节点上就画在弹窗遮罩**后面**——看着像「点了没反应」。
-/// 全屏时聊天栏是隐藏的，「弹幕与 SC 设置」只能从控制条齿轮打开（弹窗形式），
-/// 于是那几个下拉框在 Windows 全屏下全部点不开；窗口模式下从聊天「设置」页签
-/// 打开的是同一份面板、但没有弹窗，所以看着正常。
+/// 菜单挂载点：有弹窗时挂进最上层弹窗，避免被遮罩覆盖。
 function menuRoot() {
   const modals = document.querySelectorAll('.modal-overlay');
   return modals.length ? modals[modals.length - 1] : portalRoot();
@@ -311,8 +292,7 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
     closed = true;
     document.removeEventListener('mousedown', outside, true);
     document.removeEventListener('keydown', onKey);
-    // 先播退场再摘节点。closing 同时把这个 overlay 排除在「有菜单打开」的
-    // 判断之外，否则这 140ms 里按返回键会被当成「先关菜单」白吃一次操作。
+    // 先播退场再摘节点；closing 期间该 overlay 不计入「有菜单打开」。
     overlay.classList.add('closing');
     setTimeout(() => overlay.remove(), 140);
   };
@@ -324,8 +304,7 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
   };
   overlay.appendChild(menu);
   root.appendChild(overlay);
-  // 菜单高度是渲染后才知道的：贴边超出视口时改贴另一边，两边都放不下就顶到
-  // 上边由 max-height 接管。手机横屏（尤其直播间「更多」）主要靠这一步。
+  // 渲染后测高，超出视口时改贴另一边，仍放不下则由 max-height 限制。
   const pad = 8;
   const box = menu.getBoundingClientRect();
   if (box.top < pad) {

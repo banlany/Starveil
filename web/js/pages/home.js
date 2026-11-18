@@ -1,7 +1,4 @@
-// 首页：平台热门推荐，分页加载。
-//
-// 性能注意：追加下一页时只 append 新卡片，不重建整个网格；
-// 卡片本身用 content-visibility 跳过屏外渲染，避免滚动几十张卡片时卡顿。
+// 首页：平台热门推荐，分页加载；追加时只插入新卡片，不重建网格。
 import { api } from '../api.js';
 import { icon, PLATFORM_META } from '../icons.js';
 import { state } from '../store.js';
@@ -77,7 +74,7 @@ export function renderHome(ctx) {
       retry.addEventListener('click', () => load(true));
       error.append(text, retry);
       tail.appendChild(error);
-      // 首屏就失败时骨架屏还挂在上面，看起来像还在加载，这里一并清掉。
+      // 首屏失败时一并清掉骨架屏。
       if (skeleton) {
         skeleton.remove();
         skeleton = null;
@@ -129,8 +126,7 @@ export function renderHome(ctx) {
       state.home.items.push(...fresh);
       state.home.page = nextPage;
       state.home.loadedAt = Date.now();
-      // 只有「这一页一条新的都没有」才算到底：抖音每页只给十几条，
-      // 用固定阈值（比如 <10）会一进首页就判定加载完，把「加载更多」按钮吞掉。
+      // 本页没有新条目才算到底（抖音每页只有十几条）。
       state.home.done =
         state.settings.home.showMore === false || fresh.length === 0 || nextPage >= 12;
     } catch (error) {
@@ -150,8 +146,7 @@ export function renderHome(ctx) {
     }
   }
 
-  // 「刷新推荐」按钮在顶栏左上角（和关注页同一个位置）。
-  // 页面本身只提供动作，按钮本身由 app.js 统一管理。
+  // 刷新动作由页面提供，按钮由 app.js 管理。
   const refreshHome = () => {
     if (state.home.loading) return;
     ctx.setHomeRefreshing(true);
@@ -164,8 +159,7 @@ export function renderHome(ctx) {
 
   view.appendChild(page);
 
-  // 不在滚动过程中自动追加：B 站封面解码 + DOM 插入会让滚动明显掉帧。
-  // 需要更多内容时点底部的「加载更多」，把网络和渲染放到用户主动操作之后。
+  // 不自动追加下一页，由用户点击「加载更多」触发。
   return () => {
     ctx.setHomeRefresh(null);
     ctx.setPullRefresh(null);

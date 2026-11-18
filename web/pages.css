@@ -247,8 +247,7 @@
   overflow: hidden;
 }
 
-/* 头部 + 工具栏整体吸顶，只有下面的关注列表滚动；
-   背景必须不透明，否则内容会从下面透上来。 */
+/* 头部与工具栏吸顶，背景需不透明。 */
 .follow-sticky {
   position: sticky;
   top: 0;
@@ -546,8 +545,7 @@
   margin: 0;
 }
 
-/* 列表模式：头像 | 名字/状态（竖排） | 右侧操作按钮。
-   以前名字和状态是行内并排的两个兄弟节点，窄屏上挤成一行读不出层次。 */
+/* 列表模式：头像 | 名称与状态（竖排） | 右侧操作按钮。 */
 .follow-list-view .follow-text {
   align-items: flex-start;
   flex: 1 1 auto;
@@ -558,9 +556,7 @@
   margin-top: 4px;
 }
 
-/* 列表模式下平台角标会和右侧那颗「取消关注」按钮挤在同一角，
-   而且 `.follow-meta` 里本来就写了平台名（「B站」「斗鱼」），角标纯属重复。
-   卡片模式才需要它，因为那时没有别的地方标平台。 */
+/* 列表模式隐藏平台角标（名称里已含平台），卡片模式保留。 */
 .follow-list-view .follow-card .card-platform {
   display: none;
 }
@@ -631,8 +627,7 @@
   gap: 8px;
 }
 
-/* 一级设置项做成独立的圆角卡片（而不是长列表里的分隔行）：
-   每项自带背景与描边，hover 时圆角不会露出直角底色。 */
+/* 一级设置项为独立圆角卡片。 */
 .settings-item {
   min-height: 57px;
   display: flex;
@@ -718,8 +713,7 @@
   overflow: hidden;
 }
 
-/* 没有标题的分组（比如「定时关闭」页第二块「当前状态」）以前紧贴着上一张卡片：
-   组间距全挂在 .settings-group-label 的 margin 上，label 一空就粘住了。 */
+/* 无标题分组也保持组间距。 */
 .settings-group + .settings-group {
   margin-top: var(--group-gap);
 }
@@ -796,9 +790,7 @@
   flex: none;
 }
 
-/* 皮肤选择
-   卡片里的色点只是皮肤的标识色（来自 skins/registry.js），
-   真正的观感差异由整页体现——不在这里预先画一张假的缩略图。 */
+/* 皮肤选择：色点为皮肤标识色（来自 skins/registry.js）。 */
 
 .skin-picker {
   padding: 14px 16px 16px;
@@ -966,8 +958,7 @@
   transform: scale(1.06);
 }
 
-/* 自定义色：虚线格子 + 加号，选过之后底色就是当前色，和预设一样打勾。
-   active 时要把加号藏掉，否则勾和加号叠在一起。 */
+/* 自定义色：虚线格子 + 加号；选中后显示当前色并隐藏加号。 */
 .swatch-custom {
   background: transparent;
   color: var(--dim);
@@ -1201,8 +1192,7 @@
 
 .search-tabs {
   display: flex;
-  /* 用两侧 auto 外边距居中，而不是 justify-content: center：
-     后者在内容超出容器时会把左边那截裁到滚动不到的地方。 */
+  /* 用两侧 auto 外边距居中，内容超宽时仍可滚动到左侧。 */
   overflow-x: auto;
   scrollbar-width: none;
   padding-top: 6px;
@@ -1365,8 +1355,7 @@
 
 /* ------------------------------------------------------------ 观看统计 */
 
-/* 分段控件切内容时的淡入：记录/统计、时间范围都是整块重建，硬换太突兀。
-   填充用 backwards，动画结束立刻把 transform 还回去，避免影响内部 sticky 元素。 */
+/* 分段切换的淡入；填充用 backwards。 */
 @keyframes pane-in {
   from {
     opacity: 0;
@@ -1797,8 +1786,7 @@
   flex: none;
 }
 
-/* 设备行底色就是 --surface-2，普通按钮默认也是这个色，会「消失」在行里，
-   这里换成 --surface 并补一条描边，让两个按钮都看得出是按钮。 */
+/* 设备行按钮改用 --surface 并加描边，避免与行底色重合。 */
 .lan-peer .btn {
   background: var(--surface);
   border: 1px solid var(--line);

@@ -1,6 +1,6 @@
 //! 哔哩哔哩直播。
 //!
-//! 关键点（均已实测）：
+//! 关键点：
 //! - 房间信息接口必须带 `buvid3/buvid4` Cookie **且** 做 wbi 签名，否则稳定返回 `-352`。
 //! - 取流接口 `getRoomPlayInfo` 反而无需签名，只要房间号。
 //!
@@ -339,7 +339,7 @@ impl BilibiliSite {
         }
     }
 
-    /// 设备指纹。没有它，`getInfoByRoom` 在风控下必然 -352（已实测）。
+    /// 设备指纹。缺了它 `getInfoByRoom` 在风控下返回 -352。
     pub fn buvid(&self, http: &HttpSession) -> Result<(String, String), LiveError> {
         if let Some(cached) = self.buvid.lock().expect("buvid 锁").clone() {
             return Ok(cached);

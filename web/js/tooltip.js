@@ -1,16 +1,5 @@
-// 自绘悬停提示。
-//
-// WebView 的原生 `title` 是系统画的白框，字色、圆角、阴影都不归皮肤管，
-// 在浅色皮肤上尤其突兀。这里把 `title` 接管过来：第一次见到就搬进 `data-tip`，
-// 之后悬停 420ms 由我们自己画一个小气泡（`.app-tip`，配色全在皮肤变量里）。
-//
-// 三个约定：
-//   1. 元素仍然可以用 `title` 写字，也仍然可以随时改 `title` —— MutationObserver
-//      会把新值搬进 `data-tip`。搬走时顺手补一个 `aria-label`（如果它没有），
-//      免得纯图标按钮失去可读名字。
-//   2. 只认指针悬停，触屏不弹（移动端压根没有 hover）。
-//   3. 气泡是 `position: fixed` 的独立层，不参与布局，也不会被父元素的
-//      `overflow: hidden` 裁掉 —— 抽屉、卡片、控制条里的按钮都能用。
+// 自绘悬停提示：把 `title` 搬进 `data-tip`，悬停时画 `.app-tip`。
+// 只响应指针悬停；气泡是 fixed 层，不受父元素 overflow 影响。
 
 const SHOW_DELAY = 420;
 const HIDE_DELAY = 40;
@@ -153,9 +142,4 @@ export function initTooltips() {
   window.addEventListener('blur', hide);
   // 路由切换/重新渲染时元素会被换掉，气泡跟着消失。
   window.addEventListener('simple-live:theme', hide);
-}
-
-/// 给需要临时压住提示的地方用（比如长按拖拽）。
-export function hideTooltips() {
-  hide();
 }

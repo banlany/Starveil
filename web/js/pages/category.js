@@ -34,8 +34,7 @@ export function renderCategory(ctx) {
         })
       );
     } finally {
-      // 早退（平台已切、已换页）也要复位：否则这个标志一直是 true，
-      // 启动时的分类预加载会被永久跳过。
+      // 提前返回时也要复位该标志。
       state.category.loading = false;
     }
   }
@@ -64,8 +63,7 @@ export function renderCategory(ctx) {
         item.className = 'category-item';
         const pic = categoryImage(child.pic);
         const initial = (child.name || '?').slice(0, 1);
-        // 分类名和图标地址都来自平台接口（网络数据），拼进 innerHTML 前必须转义，
-        // 否则名字里一个 `<` 就能破坏结构，地址里一个引号能注入属性。
+        // 分类名与图标地址来自接口，拼进 innerHTML 前必须转义。
         item.innerHTML = `
           <span class="category-icon">${pic ? `<img src="${escapeHtml(pic)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : escapeHtml(initial)}</span>
           <span class="category-name">${escapeHtml(child.name)}</span>`;

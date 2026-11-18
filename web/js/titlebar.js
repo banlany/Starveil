@@ -1,8 +1,4 @@
-// 自绘标题栏：拖拽、最小化 / 最大化 / 关闭、无边框窗口的边缘缩放。
-//
-// 系统原生标题栏在 tauri.conf.json / main.rs 里关掉了（decorations: false），
-// 代价是 Windows 不再给 WS_THICKFRAME，所以四边和四角要自己放缩放热区。
-// 另外无边框窗口拿不到系统的贴边吸附（Aero Snap），需要吸附得自己实现。
+// 自绘标题栏：拖拽、最小化/最大化/关闭、无边框窗口的边缘缩放热区。
 
 import { macIcon, winIcon } from './icons.js';
 import { IS_MOBILE } from './platform.js';
@@ -14,20 +10,12 @@ let appWindow = null;
 let maximized = false;
 let wired = false;
 
-/// 这套皮肤的窗口按钮形态。
-///
-/// registry 里 `titlebar: 'traffic'` = 左侧三颗红绿灯，不写就还是 Windows 右侧那三个。
-/// 形态归皮肤（它跟「整体像不像 macOS」是一件事），颜色仍然走变量：
-/// `--traffic-close/-min/-max`、`--traffic-glyph`、`--traffic-size`。
+/// 这套皮肤的窗口按钮形态：`traffic` 为左侧红绿灯，缺省为 Windows 右侧三键。
 function titlebarMode() {
   return currentSkin()?.titlebar === 'traffic' ? 'traffic' : 'windows';
 }
 
-/// 把窗口按钮的图形画进按钮。
-///
-/// 以前这三块 SVG 是写死在 index.html 里的，线宽 `stroke-width="1.2"` 也跟着写死，
-/// 换皮肤只能改颜色、改不了图形质感。现在图形归 icons.js，HTML 里只留空按钮，
-/// 线宽由 `.titlebar-btn .ico` 读 --icon-stroke-thin。
+/// 把窗口按钮图形画进按钮；线宽由 `.titlebar-btn .ico` 读 --icon-stroke-thin。
 function paintControls(mode) {
   const paint = (id, parts) => {
     const button = document.getElementById(id);
@@ -53,25 +41,20 @@ function paintControls(mode) {
 }
 
 /// 切皮肤时重画窗口按钮并换形态（标题栏属于外壳，不会跟着页面重渲染）。
-export function applyTitlebarSkin() {
+function applyTitlebarSkin() {
   const mode = titlebarMode();
   document.documentElement.dataset.titlebar = mode;
   paintControls(mode);
 }
 
-/// 浏览器演示模式（没有 Tauri）时，保留浏览器自己的窗口，不显示自绘标题栏。
-///
-/// 移动端（Android / iOS）也不注册：那边窗口由系统全屏管理，
-/// 最小化 / 最大化 / 关闭 / 边缘缩放都不存在，标题栏本身由 `<html class="is-mobile">`
-/// 在 CSS 里隐藏，这里提前返回还能省掉八块 resize 热区的事件绑定。
+/// 浏览器演示模式与移动端不注册自绘标题栏。
 export function initTitlebar() {
   if (IS_MOBILE) {
     document.body.classList.add('no-titlebar');
     return;
   }
   applyTitlebarSkin();
-  // 切皮肤会换窗口按钮形态（Windows 右侧 / macOS 左侧红绿灯），
-  // 标题栏不在渲染流程里，得自己跟着主题事件重画。
+  // 切皮肤会改变按钮形态，需跟随主题事件重画。
   window.addEventListener('simple-live:theme', applyTitlebarSkin);
   const api = windowApi();
   if (!api?.getCurrentWindow) {
@@ -97,8 +80,7 @@ export function initTitlebar() {
     appWindow.close().catch((error) => console.warn('关闭失败', error));
   });
 
-  // 拖动区交给 data-tauri-drag-region（由系统接管窗口移动），
-  // 这里只补双击最大化——无边框窗口下系统不一定会替我们处理。
+  // 拖动交给 data-tauri-drag-region，这里只补双击最大化。
   bar.addEventListener('dblclick', (event) => {
     if (event.target.closest('.titlebar-controls')) return;
     toggleMaximize();
