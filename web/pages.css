@@ -1201,8 +1201,23 @@
 
 .search-tabs {
   display: flex;
-  justify-content: center;
+  /* 用两侧 auto 外边距居中，而不是 justify-content: center：
+     后者在内容超出容器时会把左边那截裁到滚动不到的地方。 */
+  overflow-x: auto;
+  scrollbar-width: none;
   padding-top: 6px;
+}
+
+.search-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.search-tabs .platform-tab:first-child {
+  margin-left: auto;
+}
+
+.search-tabs .platform-tab:last-child {
+  margin-right: auto;
 }
 
 .search-tabs .platform-tab {

@@ -1,6 +1,6 @@
 // 应用入口：路由、左侧导航、平台切换、主题与首次启动免责声明。
 import { ALL_PLATFORMS, api, ENABLED_PLATFORMS, isPlatformEnabled } from './api.js';
-import { icon, PLATFORM_META, platformIcon } from './icons.js';
+import { icon, PLATFORM_META } from './icons.js';
 import {
   ACCOUNT_PLATFORMS,
   applyTheme,
@@ -274,7 +274,11 @@ function renderPlatformTabs() {
   platformTabs.innerHTML = ALL_PLATFORMS.map((platform) => {
     const envEnabled = ENABLED_PLATFORMS.includes(platform);
     const active = platform === state.platform;
-    return `<button class="platform-tab${active ? ' active' : ''}${envEnabled ? '' : ' is-disabled'}" data-platform="${platform}" role="tab" aria-selected="${active}" title="${escapeHtml(PLATFORM_META[platform].name)}${envEnabled ? '' : '（即将支持）'}">${platformIcon(platform, 23)}<span>${escapeHtml(PLATFORM_META[platform].name)}</span></button>`;
+    const meta = PLATFORM_META[platform];
+    const label = meta.tab || meta.name;
+    // 不放 logo：五个平台图标挤在一起，光看缩略图认不出是谁，反而把标签条撑到
+    // 需要横向滚动。纯文字更紧凑，选中态换成主题色时也更干净。
+    return `<button class="platform-tab${active ? ' active' : ''}${envEnabled ? '' : ' is-disabled'}" data-platform="${platform}" role="tab" aria-selected="${active}" title="${escapeHtml(meta.name)}${envEnabled ? '' : '（即将支持）'}"><span>${escapeHtml(label)}</span></button>`;
   }).join('') + '<span class="tab-underline" aria-hidden="true"></span>';
   for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
     tab.addEventListener('click', () => selectPlatform(tab.dataset.platform));

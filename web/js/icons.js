@@ -178,14 +178,21 @@ export function macIcon(name, className = '') {
 
 export function platformAsset(platform) {
   return platform === 'bilibili' ? 'bilibili_2' : platform;
-}export function platformIcon(platform, size = 22) {
+}
+
+export function platformIcon(platform, size = 22) {
   return `<img class="platform-img" src="assets/${platformAsset(platform)}.png" width="${size}" height="${size}" alt="" draggable="false" />`;
 }
 
+// 平台元信息。
+//   name  正式名称，弹窗、提示、房间信息里用
+//   short 极短名，关注页的平台筛选 chip 用（那里宽度紧，且上下文已经说明是平台）
+//   tab   顶栏平台标签上的文案：整个 App 就是看直播的，「直播」两个字纯属冗余，
+//         去掉之后五个标签全是两三个字，扫一眼就能选，标签也不会被挤成横向滚动。
 export const PLATFORM_META = {
-  bilibili: { id: 'bilibili', name: '哔哩哔哩', short: 'B站', color: '#fb7299' },
-  douyu: { id: 'douyu', name: '斗鱼直播', short: '斗鱼', color: '#ff7a1a' },
-  huya: { id: 'huya', name: '虎牙直播', short: '虎牙', color: '#ffb020' },
-  douyin: { id: 'douyin', name: '抖音直播', short: '抖音', color: '#25f4ee' },
-  kuaishou: { id: 'kuaishou', name: '快手直播', short: '快手', color: '#ff4d2d' },
+  bilibili: { id: 'bilibili', name: '哔哩哔哩', short: 'B站', tab: '哔哩哔哩', color: '#fb7299' },
+  douyu: { id: 'douyu', name: '斗鱼直播', short: '斗鱼', tab: '斗鱼', color: '#ff7a1a' },
+  huya: { id: 'huya', name: '虎牙直播', short: '虎牙', tab: '虎牙', color: '#ffb020' },
+  douyin: { id: 'douyin', name: '抖音直播', short: '抖音', tab: '抖音', color: '#25f4ee' },
+  kuaishou: { id: 'kuaishou', name: '快手直播', short: '快手', tab: '快手', color: '#ff4d2d' },
 };

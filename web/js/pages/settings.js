@@ -23,7 +23,7 @@ import {
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
-import { SKINS, skinAccents, skinModes } from '../../skins/registry.js';
+import { SKINS, accentForMode, skinAccents, skinModes } from '../../skins/registry.js';
 // 外部数据导入（starveil 备份 / dart profile / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能档位/帧率的选项表由弹幕层提供，直播间弹层共用同一份，
@@ -211,12 +211,27 @@ export function renderSettingsDetail(ctx, params = {}) {
 
   document.getElementById('view').appendChild(page);
   paint();
+  // 深浅切换会改变色板里「雪白」那一项的实际色值（深色是白、浅色是深灰）。
+  // 色块颜色是 inline style 写进去的，不重绘就一直停在上一档。
+  const onTheme = () => {
+    if (key === 'appearance') paint();
+  };
+  window.addEventListener('simple-live:theme', onTheme);
   // 局域网同步的轮询要跟着页面生命周期走：离页必须停，否则定时器会一直
   // 往已经移除的 DOM 上写，还会持续请求后端。
-  return () => stopSyncTimers();
+  return () => {
+    window.removeEventListener('simple-live:theme', onTheme);
+    stopSyncTimers();
+  };
 }
 
 // ---------------------------------------------------------------- 行构建
+
+/// 当前实际生效的明暗档（applyTheme 写在 <html data-theme> 上）。
+/// 皮肤锁死单档时这里已经是唯一可用的那一档，所以直接读 DOM，不再还原设置值。
+function currentMode() {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
 
 function buildRow(config, repaint, ctx) {
   if (config.type === 'skin') {
@@ -236,8 +251,10 @@ function buildRow(config, repaint, ctx) {
       // 这个点必须一起变，否则色板已经换了、皮肤那行还顶着原来的蓝，看着像没生效。
       const modes = skinModes(skin.id);
       const fallback = skinAccents(skin.id)[0]?.color || 'currentColor';
-      const dot =
+      const raw =
         skin.id === active ? String(getSetting('appearance.accent', fallback) || fallback) : fallback;
+      // 色点也按当前明暗档换算：选「雪白」时深色下是白点、浅色下是深灰点。
+      const dot = accentForMode(raw, currentMode());
       card.innerHTML = `
         <span class="skin-dot" style="background:${escapeHtml(dot)}" aria-hidden="true"></span>
         <span class="skin-text">
@@ -371,7 +388,9 @@ function buildRow(config, repaint, ctx) {
       const isDefault = accent.color.toLowerCase() === fallback.toLowerCase();
       const swatch = document.createElement('button');
       swatch.className = `swatch${current === accent.color.toLowerCase() ? ' active' : ''}`;
-      swatch.style.background = accent.color;
+      // 色块显示「这个色在当前的深/浅档下长什么样」：雪白在浅色模式其实是深灰，
+      // 这里跟着换算，不然色板里会画一块浅色模式下根本用不了的白。
+      swatch.style.background = accentForMode(accent.color, currentMode());
       swatch.title = isDefault ? `${accent.name}（这套皮肤的默认色）` : accent.name;
       swatch.setAttribute('aria-label', accent.name);
       swatch.addEventListener('click', () => {

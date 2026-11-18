@@ -1,6 +1,6 @@
 // 搜索：房间链接解析 / 纯房间号直达 / 关键词搜索。
 import { api, ALL_PLATFORMS, formatOnline } from '../api.js';
-import { icon, PLATFORM_META, platformIcon } from '../icons.js';
+import { icon, PLATFORM_META } from '../icons.js';
 import { addSearchHistory, clearSearchHistory, state } from '../store.js';
 import {
   avatarHtml,
@@ -323,5 +323,8 @@ export function renderSearch(ctx, params = {}) {
 
 function tabHtml(platform) {
   const active = state.platform === platform;
-  return `<button class="platform-tab${active ? ' active' : ''}" data-platform="${platform}">${platformIcon(platform, 22)}<span>${escapeHtml(PLATFORM_META[platform].name)}</span></button>`;
+  const meta = PLATFORM_META[platform];
+  // 和顶栏同一套文案、同样不放 logo：用全名（「哔哩哔哩直播」）时，
+  // 五个标签在手机上会直接顶出屏幕。
+  return `<button class="platform-tab${active ? ' active' : ''}" data-platform="${platform}"><span>${escapeHtml(meta.tab || meta.name)}</span></button>`;
 }

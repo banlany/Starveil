@@ -11,6 +11,8 @@
 //   accents 这套皮肤提供的主题色，**第一个就是默认色**。设置页的色板只读这里，
 //           别在别处再维护一份；用户自己挑过颜色之后就不再跟随皮肤，
 //           换皮肤会回到新皮肤的第一个色。
+//           可选 `light`：同一项在浅色模式下用的替代色值。只给那些「只在一档好用」的
+//           颜色准备（比如深色下的白，压在浅色底上什么也看不见）。不写就两档同色。
 //   modes   这套皮肤提供的明暗档位。只写一个就等于「锁死明暗」，
 //           设置页的深/浅色选项会自动收窄，侧栏的主题按钮也会跳过不可用的档。
 //   icons   可选。true 表示这套皮肤自带 `skins/<id>/icons.js`（导出 ICON_PATHS，
@@ -33,6 +35,9 @@ export const SKINS = [
       { id: 'teal', name: '青碧', color: '#26c6da' },
       { id: 'jade', name: '森绿', color: '#26a69a' },
       { id: 'amber', name: '琥珀', color: '#ffb020' },
+      // 白色只在深色底上成立；浅色模式换成中深灰，否则图标和文字直接消失。
+      // 两个值都留了一点蓝调，不是纯 #fff / #000，压在大面积底色上不刺眼。
+      { id: 'snow', name: '雪白', color: '#e9eaee', light: '#3a3d45' },
     ],
     desc: '中性深灰打底，六种主题色可选。深色/浅色都支持，适合长时间挂着看。',
     modes: ['dark', 'light'],
@@ -87,4 +92,20 @@ export function skinAccents(id) {
 /// 皮肤的默认主题色 = accents 的第一项。
 export function skinAccent(id) {
   return skinAccents(id)[0].color;
+}
+
+/// 某个主题色在指定明暗档下**实际**用的色值。
+///
+/// 预设项里写了 `light` 的（例如雪白），浅色模式换成它的浅色替代值；
+/// 其余颜色两档同值。存进设置里的仍然是 `color` 原值 —— 这样用户切回深色时
+/// 还能原样变回白色，不会被浅色模式写坏。
+export function accentForMode(color, mode) {
+  if (mode !== 'light' || !color) return color;
+  const target = String(color).toLowerCase();
+  for (const skin of SKINS) {
+    for (const accent of skinAccents(skin.id)) {
+      if (accent.color.toLowerCase() === target && accent.light) return accent.light;
+    }
+  }
+  return color;
 }

@@ -235,6 +235,9 @@ img {
   font-size: var(--tab-font);
   font-weight: 500;
   white-space: nowrap;
+  /* 不参与收缩：标签条在窄屏上是横向滚动的，允许收缩的话每个按钮会被挤扁、
+     文字溢出边框摞在一起（以前有 logo 撑着还看不出来，换成纯文字就糊成一团）。 */
+  flex: none;
   transition: color var(--dur-fast) var(--ease);
 }
 
@@ -242,8 +245,11 @@ img {
   color: var(--fg);
 }
 
+/* 选中项：加粗 + 主题色。
+   以前只加粗，五个标签全是黑白灰，只能靠下划线认；换成主题色之后
+   「当前在哪一站」和「这套皮肤什么颜色」是同一件事，一眼就对上了。 */
 .platform-tab.active {
-  color: var(--fg);
+  color: var(--accent);
   font-weight: 600;
 }
 

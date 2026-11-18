@@ -2,7 +2,7 @@
 import { api, canonicalImage, roomUrl } from './api.js';
 import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
-import { DEFAULT_SKIN_ID, SKINS, getSkin, skinAccent, skinHref, skinModes } from '../skins/registry.js';
+import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinHref, skinModes } from '../skins/registry.js';
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
@@ -422,11 +422,17 @@ export function applyTheme() {
 
   // 主题色：用户挑过的用用户的，否则用这套皮肤的默认色
   // （首帧是 skin.css 里的静态值，必须和 registry 的第一个色一致）。
-  const accent = appearance.accentSource === 'user' && appearance.accent
+  const rawAccent = appearance.accentSource === 'user' && appearance.accent
     ? appearance.accent
     : skinAccent(skin.id);
+  // 存的是原值，落到 DOM 上的按当前明暗档换算：白色这类「只在一档成立」的颜色
+  // 在浅色模式下会换成深灰（见 registry 的 `light`）。
+  const accent = accentForMode(rawAccent, effective);
   root.style.setProperty('--accent', accent);
   root.style.setProperty('--accent-soft', hexToAlpha(accent, effective === 'light' ? 0.18 : 0.16));
+  // 压在强调色上的文字：浅色主题色（雪白）必须配深字，否则白底白字。
+  // 每次 applyTheme 都重算，换成深色主题时又回到白字，不留上一轮的残留。
+  root.style.setProperty('--accent-on', isLightColor(accent) ? '#15151b' : '#ffffff');
 
   // 标题栏底色、安卓系统栏都跟着 `--bg` 走：以前这里写死了两套 hex，
   // 换皮肤就会在状态栏露出一条对不上的边。取不到值时宁可不设，也不猜一个颜色。
@@ -490,6 +496,28 @@ function hexToAlpha(hex, alpha) {
   const g = parseInt(normalized.slice(2, 4), 16);
   const b = parseInt(normalized.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/// 这个颜色亮到需要配深色文字吗？
+///
+/// 用相对亮度（WCAG 那套 gamma 校正），不是简单取 RGB 平均值——
+/// 平均值会把「琥珀」判断成暗色，实际它配白字根本看不清。
+/// 阈值 0.40：琥珀 0.52、青碧 0.46 都落到「配深字」，雾蓝 0.28、樱粉 0.35 仍是白字。
+function isLightColor(hex) {
+  const normalized = String(hex).replace('#', '');
+  const full =
+    normalized.length === 3
+      ? normalized.split('').map((char) => char + char).join('')
+      : normalized;
+  if (full.length !== 6) return false;
+  const channel = (value) => {
+    const ratio = value / 255;
+    return ratio <= 0.03928 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
+  };
+  const r = channel(parseInt(full.slice(0, 2), 16));
+  const g = channel(parseInt(full.slice(2, 4), 16));
+  const b = channel(parseInt(full.slice(4, 6), 16));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4;
 }
 
 // ---------------------------------------------------------------- 关注

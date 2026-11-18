@@ -158,6 +158,16 @@ html.is-mobile .rail-btn .ico {
   html.is-mobile .menu-item:active {
     background: var(--surface-3);
   }
+
+  /* 触屏点完 `:hover` 会一直粘在刚点的那个标签上：未选中的会一直显示成
+     前景色，跟真正选中的（主题色）混在一起。这里把悬停态按住不动。 */
+  html.is-mobile .platform-tab:hover {
+    color: var(--muted);
+  }
+
+  html.is-mobile .platform-tab.active:hover {
+    color: var(--accent);
+  }
 }
 
 /* ------------------------------------------------------------ 顶栏 */
@@ -182,16 +192,49 @@ html.is-mobile .topbar-refresh {
   left: 10px;
 }
 
+/* 手机顶栏从左到右是「刷新 / 平台标签 / 搜索」三块挨着的东西：
+   刷新是图标、标签是文字、搜索又是图标，中间没有分隔，看上去就是一整条。
+   两条 1px 竖线把它们切成三段——只有首页有刷新按钮，所以左边那条
+   跟着 .has-refresh 出现，分类页只留右边那条（平台 | 搜索）。 */
+html.is-mobile .topbar::before,
+html.is-mobile .topbar::after {
+  content: '';
+  position: absolute;
+  top: calc(50% + var(--safe-top) / 2);
+  transform: translateY(-50%);
+  width: 1px;
+  height: 18px;
+  background: var(--line-strong);
+  pointer-events: none;
+}
+
+html.is-mobile .topbar::before {
+  left: 57px;
+  display: none;
+}
+
+html.is-mobile .topbar.has-refresh::before {
+  display: block;
+}
+
+/* 搜索按钮是 44px 的热区、右侧留 20px，左边缘落在 64px 处；线放在它左边 6px。 */
+html.is-mobile .topbar::after {
+  right: 70px;
+}
+
 html.is-mobile .platform-tabs {
   flex: 0 1 auto;
   min-width: 0;
+  /* 去掉 logo 之后标签只剩文字，标签之间不需要再留 4px：收紧到 2px，
+     窄屏上一屏能多露出半个标签，也是在暗示「这一条还能往左滑」。 */
+  gap: 2px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x proximity;
-  /* 标签左右内边距是 10px，指示条跟着缩进这么多。 */
-  --tab-underline-inset: 10px;
+  /* 标签左右内边距是 9px，指示条跟着缩进这么多。 */
+  --tab-underline-inset: 9px;
   /* 右侧渐隐，避免标签在搜索按钮前面被硬生生切断。 */
   --mask-solid: #000; /* skin:allow 蒙版只取 alpha，不是配色 */
   mask-image: linear-gradient(to right, var(--mask-solid) 0, var(--mask-solid) calc(100% - 16px), transparent 100%);
@@ -202,7 +245,7 @@ html.is-mobile .platform-tabs::-webkit-scrollbar {
 }
 
 html.is-mobile .platform-tab {
-  padding: 0 10px;
+  padding: 0 9px;
   font-size: 14px;
   scroll-snap-align: center;
 }
