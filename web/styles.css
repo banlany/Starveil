@@ -133,14 +133,41 @@ img {
   height: 25px;
 }
 
+/* 线条 / 实心两版图标叠在同一个按钮里，按选中态切。
+   两版都留在 DOM 里，切页时不用重写 innerHTML，也不会先闪一下。 */
+.rail-btn .rail-ico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rail-btn .rail-ico-fill {
+  display: none;
+}
+
+.rail-btn.active .rail-ico-line {
+  display: none;
+}
+
+.rail-btn.active .rail-ico-fill {
+  display: flex;
+}
+
 .rail-btn:hover {
   color: var(--fg);
   background: var(--surface);
 }
 
+/* 选中项：主题色 + 实心图标，不再垫深色块。
+   深色块在底栏上像一块「按下去的按钮」，而且和皮肤的主色毫无关系。 */
 .rail-btn.active {
-  color: var(--fg);
-  background: var(--surface-3);
+  color: var(--accent);
+  background: transparent;
+}
+
+.rail-btn.active:hover {
+  color: var(--accent);
+  background: var(--surface);
 }
 
 .rail-btn:active {

@@ -378,9 +378,21 @@ function initRail() {
     refreshButton.innerHTML = icon('refresh', 19);
     refreshButton.addEventListener('click', () => homeRefreshHandler?.());
   }
-  const icons = { home: 'home', follow: 'follow', category: 'grid', settings: 'settings' };
+  // 每个导航图标备两版：线条（未选中）与实心（选中）。选中态不再垫深色底，
+  // 只换颜色和图形，所以两版同时写进 DOM，由 CSS 按 `.active` 切换——
+  // 路由切换时不用重设 innerHTML，也不会闪一下。
+  // 第四项叫「我的」，但路由名仍是 `settings`（它渲染的就是设置页，只改了叫法）。
+  const icons = {
+    home: ['home', 'homeFilled'],
+    follow: ['follow', 'followFilled'],
+    category: ['grid', 'gridFilled'],
+    settings: ['account', 'accountFilled'],
+  };
   for (const button of rail.querySelectorAll('.rail-btn[data-nav]')) {
-    button.innerHTML = icon(icons[button.dataset.nav], 25);
+    const [line, fill] = icons[button.dataset.nav] || ['info', 'info'];
+    button.innerHTML =
+      `<span class="rail-ico rail-ico-line">${icon(line, 25)}</span>` +
+      `<span class="rail-ico rail-ico-fill">${icon(fill, 25)}</span>`;
     button.addEventListener('click', () => {
       const route = button.dataset.nav;
       if (state.page === route) {

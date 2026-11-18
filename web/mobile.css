@@ -56,7 +56,9 @@ html.is-mobile .main {
 html.is-mobile .rail {
   order: 2;
   width: 100%;
-  height: calc(58px + var(--safe-bottom));
+  /* 0.7.4：58 → 50。底栏每省下 8px 都直接变成内容可视高度，
+     按钮仍是 44px（Android 无障碍下限），只是不再在按钮上下留白。 */
+  height: calc(50px + var(--safe-bottom));
   flex-direction: row;
   align-items: stretch;
   justify-content: space-between;
@@ -78,15 +80,15 @@ html.is-mobile .rail-btn {
   /* 触控热区不小于 44px（Android 无障碍下限），图标本身保持原尺寸。
      flex 均分让四个按钮等宽，不会在右侧空出一截。 */
   width: auto;
-  height: 48px;
+  height: 44px;
   min-width: 44px;
   flex: 1 1 0;
   border-radius: var(--radius);
 }
 
 html.is-mobile .rail-btn .ico {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
 /* 横屏：屏幕够宽，侧栏回到左边（与桌面一致），别横在底部占掉一行高度。 */
@@ -125,6 +127,12 @@ html.is-mobile .rail-btn .ico {
     height: 48px;
     flex: 0 0 auto;
   }
+
+  /* 横屏侧栏按钮没被压扁，图标也不必跟着缩到 22。 */
+  html.is-mobile .rail-btn .ico {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 /* 触屏没有 hover，用 :active 给按下反馈。 */
@@ -134,9 +142,14 @@ html.is-mobile .rail-btn .ico {
     color: var(--muted);
   }
 
+  /* 选中项是主题色 + 实心图标，不垫底色；点下去才给一层主题色的淡底。 */
   html.is-mobile .rail-btn.active:hover {
-    background: var(--surface-3);
-    color: var(--fg);
+    background: transparent;
+    color: var(--accent);
+  }
+
+  html.is-mobile .rail-btn.active:active {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
   }
 
   /* 菜单项按下去先给底色，不用等菜单关掉才知道点中了哪一行。 */
