@@ -125,7 +125,9 @@ img {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  /* 只过渡颜色。以前这里还挂了 transform，配上 `.rail-btn:active` 的缩放，
+     点一下导航图标就跟着缩一下，看着像「点哪动哪」。 */
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .rail-btn .ico {
@@ -170,8 +172,17 @@ img {
   background: var(--surface);
 }
 
+/* 按下只加深一层主题色淡底，不缩放、不位移。
+   导航是常驻的，图标一缩就像在抖；点一次缩一次，连点几下更像没点准。 */
 .rail-btn:active {
-  transform: scale(0.96);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* 选中项要单独写一条：`.rail-btn.active:hover` 的特异性比上面那条高，
+   不覆盖的话鼠标停在选中项上按下去，底色会变成中性的悬停灰。 */
+.rail-btn.active:active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .rail-mini {

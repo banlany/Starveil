@@ -231,10 +231,13 @@ function buildRow(config, repaint, ctx) {
       card.type = 'button';
       card.className = `skin-card${skin.id === active ? ' is-active' : ''}`;
       card.setAttribute('aria-pressed', String(skin.id === active));
-      // 色点取注册表里的 accents 第一项（皮肤的默认主题色），不是配色实现；
-      // 真正的观感差异留给选中后整页去体现。
+      // 色点：别的皮肤展示自己 accents 的第一项（用来看「这套皮肤默认长什么样」），
+      // **当前皮肤跟着 `appearance.accent` 走** —— 用户把主题色换成樱粉或自定义色之后，
+      // 这个点必须一起变，否则色板已经换了、皮肤那行还顶着原来的蓝，看着像没生效。
       const modes = skinModes(skin.id);
-      const dot = skinAccents(skin.id)[0]?.color || 'currentColor';
+      const fallback = skinAccents(skin.id)[0]?.color || 'currentColor';
+      const dot =
+        skin.id === active ? String(getSetting('appearance.accent', fallback) || fallback) : fallback;
       card.innerHTML = `
         <span class="skin-dot" style="background:${escapeHtml(dot)}" aria-hidden="true"></span>
         <span class="skin-text">

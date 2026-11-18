@@ -142,13 +142,15 @@ html.is-mobile .rail-btn .ico {
     color: var(--muted);
   }
 
-  /* 选中项是主题色 + 实心图标，不垫底色；点下去才给一层主题色的淡底。 */
+  /* 选中项是主题色 + 实心图标，不垫底色；按下时才给一层主题色淡底。
+     桌面那条 `.rail-btn:active` 特异性比这里上面的 `:hover` 低，会被压掉，
+     所以触屏这一份得自己写（值保持一致，两边看起来是同一个反馈）。 */
   html.is-mobile .rail-btn.active:hover {
     background: transparent;
     color: var(--accent);
   }
 
-  html.is-mobile .rail-btn.active:active {
+  html.is-mobile .rail-btn:active {
     background: color-mix(in srgb, var(--accent) 16%, transparent);
   }
 
