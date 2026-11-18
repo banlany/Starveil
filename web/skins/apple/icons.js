@@ -15,12 +15,14 @@
 
 export const ICON_PATHS = {
   // ---------------------------------------------------------------- 主导航
-  // 房子：闭合五边形（屋顶两坡 + 墙体 + 底边），SF house 就是这个轮廓，没有门。
+  // 房子：闭合五边形（屋顶两坡 + 墙体 + 底边）＋一道门。
+  // 门做成「贴着底边开口的拱形」，不是浮在墙中间的一块方块——22px 下才认得出是门。
   home:
-    '<path d="M4 10.4 12 3.6l8 6.8v8.9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19.3Z"/>',
-  // 实心版（SF house.fill 的轮廓，但不挖门——上面那版线条也没有门，切选中时轮廓不该变）。
+    '<path d="M4 10.4 12 3.6l8 6.8v8.9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19.3Z"/><path d="M9.7 20.8v-4.3a2.3 2.3 0 0 1 4.6 0v4.3"/>',
+  // 实心版：屋脊尖用二次曲线抹圆、底角半径 2，和实心格子的圆角对得上；
+  // 门画进外轮廓（evenodd 挖洞会让探出房底的那截被反填成实心，多一条横杠）。
   homeFilled:
-    '<path fill="currentColor" stroke="none" d="M12 3.6 4 10.4v8.9a1.5 1.5 0 0 0 1.5 1.5h13a1.5 1.5 0 0 0 1.5-1.5v-8.9Z"/>',
+    '<path fill="currentColor" stroke="none" d="M10.9 4.35q1.1-.9 2.2 0l6.55 5.55c.34.29.55.72.55 1.16v8.14a2 2 0 0 1-2 2H14.3v-2.6a2.3 2.3 0 0 0-4.6 0v2.6H5.8a2 2 0 0 1-2-2v-8.14c0-.44.21-.87.55-1.16Z"/>',
   // 关注：心形。苹果那套里「关注/喜欢」就是心，四角星留给收藏。
   follow:
     '<path d="M12 20.2c-1.4-1-8.4-5.5-8.4-10.6a4.6 4.6 0 0 1 4.6-4.6c1.6 0 3 .8 3.8 2.1.8-1.3 2.2-2.1 3.8-2.1a4.6 4.6 0 0 1 4.6 4.6c0 5.1-7 9.6-8.4 10.6Z"/>',
@@ -29,7 +31,7 @@ export const ICON_PATHS = {
   // 分类：2×2 的圆角方块，圆角比基础表大（SF square.grid.2x2）。
   grid: '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.4"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.4"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.4"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.4"/>',
   gridFilled:
-    '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.4" fill="currentColor" stroke="none"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.4" fill="currentColor" stroke="none"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.4" fill="currentColor" stroke="none"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.4" fill="currentColor" stroke="none"/>',
+    '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/>',
   gridView:
     '<rect x="3.4" y="3.4" width="7.2" height="7.2" rx="2.2"/><rect x="13.4" y="3.4" width="7.2" height="7.2" rx="2.2"/><rect x="3.4" y="13.4" width="7.2" height="7.2" rx="2.2"/><rect x="13.4" y="13.4" width="7.2" height="7.2" rx="2.2"/>',
   // 设置：8 齿方齿轮 + 中心孔（SF gearshape）。齿顶是平的，不是基础表那种尖齿星芒。
@@ -98,11 +100,16 @@ export const ICON_PATHS = {
   shield: '<path d="M12 3.2 4.8 6.1v5.6c0 4.4 3 7.4 7.2 9.1 4.2-1.7 7.2-4.7 7.2-9.1V6.1Z"/><path d="m9 11.9 2.2 2.2 4-4.4"/>',
   live: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M8 8a5.7 5.7 0 0 0 0 8M16 8a5.7 5.7 0 0 1 0 8"/><path d="M5.1 5.1a9.8 9.8 0 0 0 0 13.8M18.9 5.1a9.8 9.8 0 0 1 0 13.8"/>',
   timer: '<circle cx="12" cy="13.4" r="7.6"/><path d="M12 10v3.4l2.6 1.6M9.2 2.6h5.6"/>',
-  account: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="9.9" r="2.9"/><path d="M6 19.3a6.4 6.4 0 0 1 12 0"/>',
+  // 人像（SF person.crop.circle）：肩线两端收在圆**里面**。
+  // 原来那条肩弧从 (6,19.3) 拉到 (18,19.3)，两点离圆心 9.4，比半径 8.6 还远——
+  // 描边直接拉出圆圈外，看着像随手画的一道线。
+  account: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="9.6" r="2.9"/><path d="M8 18a4.7 4.7 0 0 1 8 0"/>',
   // 实心版是 SF person.crop.circle.fill：实心圆，人像用 evenodd 挖空（露出底栏底色），
   // 不另画一块浅色，皮肤换底色也不会露馅。
+  // 肩膀画成「上拱 + 下拱」的一整块，下边界是弧不是直线：原来那条水平底边横在圆里，
+  // 两头又几乎顶到圆边，看着就像有条线横穿出圆圈。
   accountFilled:
-    '<path fill="currentColor" stroke="none" fill-rule="evenodd" d="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 6.9a2.9 2.9 0 1 1 0 5.8 2.9 2.9 0 0 1 0-5.8ZM6.7 18.3a5.5 5.5 0 0 1 10.6 0Z"/>',
+    '<path fill="currentColor" stroke="none" fill-rule="evenodd" d="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 6.5a2.9 2.9 0 1 1 0 5.8 2.9 2.9 0 0 1 0-5.8ZM7.4 18.9a4.61 4.61 0 0 1 9.2 0 9.42 9.42 0 0 1-9.2 0Z"/>',
   users: '<circle cx="9.2" cy="8.2" r="3.4"/><path d="M3.2 19.6a6 6 0 0 1 12 0"/><path d="M15.8 5.2a3.4 3.4 0 0 1 0 6.2M17.4 13.9a6 6 0 0 1 3.4 5.7"/>',
   userMinus: '<circle cx="9.2" cy="8.2" r="3.4"/><path d="M3.2 19.6a6 6 0 0 1 12 0"/><path d="M16.4 11.4h5.2"/>',
   sync: '<path d="M4.6 9.6a7.8 7.8 0 0 1 13-2.4"/><path d="M18.4 3.4v4.4h-4.4"/><path d="M19.4 14.4a7.8 7.8 0 0 1-13 2.4"/><path d="M5.6 20.6v-4.4h4.4"/>',
