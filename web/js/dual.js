@@ -181,7 +181,8 @@ export function createDualPlayback(video, onState) {
     }
     const source = { type: 'flv', url: line.url, isLive: true, cors: true };
     const player = mpegts.createPlayer(source, {
-      enableWorker: false,
+      // 解封装放 Worker；创建失败时库内部回退主线程。
+      enableWorker: true,
       lazyLoad: false,
       // 和主画面共用一份缓冲档位（设置 → 播放缓冲）。
       ...flvBufferOptions(),

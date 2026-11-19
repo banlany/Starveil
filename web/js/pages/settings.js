@@ -524,6 +524,21 @@ function detailSections(key, ctx, repaint) {
           label: '播放器',
           rows: [
             { type: 'switch', key: 'player.hardwareDecode', title: '硬件解码', desc: '由 WebView2 / 系统解码器处理视频；播放异常时可尝试关闭' },
+            ...(IS_MOBILE
+              ? []
+              : [
+                  {
+                    type: 'switch',
+                    key: 'player.highPerformanceGpu',
+                    title: '使用高性能 GPU',
+                    desc: '多显卡设备上让界面与弹幕走独立显卡；重启后生效，会增加耗电',
+                    onChange: (enabled) => {
+                      api.setHighPerformanceGpu(enabled)
+                        .then(() => toast('重启后生效', 'success'))
+                        .catch((error) => toast(String(error), 'error'));
+                    },
+                  },
+                ]),
             { type: 'switch', key: 'player.rememberQuality', title: '记住清晰度', desc: '同一平台下次进入直播间时沿用上次选择' },
             {
               type: 'select',
@@ -727,6 +742,8 @@ function detailSections(key, ctx, repaint) {
                 const ok = await confirmDialog({ title: '重置设置', text: '所有设置将恢复默认值，确定继续吗？', okLabel: '重置', danger: true });
                 if (!ok) return;
                 resetSettings();
+                // GPU 选择存在标记文件里，重置设置时一并清掉。
+                if (!IS_MOBILE) api.setHighPerformanceGpu(false).catch(() => {});
                 applyTheme();
                 repaintInner();
                 toast('已恢复默认设置', 'success');

@@ -295,6 +295,14 @@ export const api = {
   setImmersive(enabled) {
     return call('set_immersive', { enabled });
   },
+  /// 是否已开启高性能 GPU。非 Windows 恒为 false。
+  highPerformanceGpu() {
+    return call('high_performance_gpu');
+  },
+  /// 切换高性能 GPU，重启后生效。非 Windows 空实现。
+  setHighPerformanceGpu(enabled) {
+    return call('set_high_performance_gpu', { enabled });
+  },
   /// 安卓小窗（系统级画中画）。桌面端返回 false，前端会退回 HTML5 画中画。
   enterPictureInPicture() {
     return call('enter_picture_in_picture');

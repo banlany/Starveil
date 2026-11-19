@@ -1784,7 +1784,8 @@ export function renderRoom(ctx, params = {}) {
     let player;
     try {
       player = mpegts.createPlayer(source, {
-        enableWorker: false,
+        // 解封装（FLV → fMP4）放 Worker；创建失败时库内部回退主线程。
+        enableWorker: true,
         lazyLoad: false,
         // 缓冲参数见 player-buffer.js；延迟播放时不追帧。
         ...flvBufferOptions(Number(session.delaySec) <= 0),

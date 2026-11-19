@@ -801,6 +801,16 @@ function init() {
   initTooltips();
   // 尽早应用上次选择的屏幕方向，减少启动时先按系统方向渲染再转过来的观感。
   applyScreenOrientation();
+  // GPU 选择以标记文件为准，本机设置可能与实际启动参数不一致。
+  if (!IS_MOBILE) {
+    api.highPerformanceGpu()
+      .then((enabled) => {
+        if (state.settings.player.highPerformanceGpu === Boolean(enabled)) return;
+        state.settings.player.highPerformanceGpu = Boolean(enabled);
+        saveSettings();
+      })
+      .catch(() => {});
+  }
   // 写一行运行日志，便于确认页面真的执行了（出问题时看 starveil.log）。
   window.__TAURI__?.core
     ?.invoke('frontend_log', { message: '页面已初始化，rail=' + document.querySelectorAll('.rail-btn').length })

@@ -73,6 +73,8 @@ export const DEFAULT_SETTINGS = {
     // 默认清晰度：auto / highest / 1080 / 720 / 480 / smooth；开启「记住清晰度」时以记住的为准。
     defaultQuality: 'auto',
     hardwareDecode: true,
+    // 多显卡设备上强制使用独立显卡渲染；重启后生效，真实状态以标记文件为准。
+    highPerformanceGpu: false,
     muteOnStart: false,
     autoSwitchLine: true,
     autoRefresh: true,
