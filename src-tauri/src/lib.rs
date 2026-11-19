@@ -2696,67 +2696,91 @@ fn apply_gpu_sandbox_workaround() {
 #[cfg(not(windows))]
 fn apply_gpu_sandbox_workaround() {}
 
-/// 高性能 GPU 标记文件路径。
+/// GPU 模式文件：内容为 `auto` / `low` / `high` / `off`。
 #[cfg(windows)]
-fn high_performance_gpu_marker() -> PathBuf {
+fn gpu_mode_path() -> PathBuf {
+    starveil_data_dir().join("gpu-mode")
+}
+
+/// 0.7.5 之前的布尔标记，只在读取时迁移。
+#[cfg(windows)]
+fn legacy_gpu_marker() -> PathBuf {
     starveil_data_dir().join("high-performance-gpu.flag")
 }
 
-/// 按标记追加 `--force_high_performance_gpu`：多显卡设备上改用独立显卡。
+/// 读取 GPU 模式，缺省为 `auto`。
 #[cfg(windows)]
-fn apply_high_performance_gpu() {
-    // 标记文件导致无法启动时的逃生门。
+fn read_gpu_mode() -> String {
+    if let Ok(text) = std::fs::read_to_string(gpu_mode_path()) {
+        let mode = text.trim();
+        if matches!(mode, "auto" | "low" | "high" | "off") {
+            return mode.to_string();
+        }
+    }
+    if legacy_gpu_marker().exists() {
+        return "high".to_string();
+    }
+    "auto".to_string()
+}
+
+/// 按模式追加 WebView2 启动参数：`low` 走核显，`high` 走独显，`off` 关掉 GPU 进程。
+#[cfg(windows)]
+fn apply_gpu_mode() {
+    // 参数导致无法启动时的逃生门。
     if std::env::var("STARVEIL_DEFAULT_GPU").is_ok() {
-        log_line("GPU：按环境变量要求使用默认选择");
+        log_line("GPU：按环境变量要求使用系统默认选择");
         return;
     }
-    if high_performance_gpu_marker().exists() {
-        append_browser_args("--force_high_performance_gpu");
-        log_line("GPU：按设置使用高性能 GPU");
+    let mode = read_gpu_mode();
+    match mode.as_str() {
+        "off" => append_browser_args("--disable-gpu"),
+        "low" => append_browser_args("--force_low_power_gpu"),
+        "high" => append_browser_args("--force_high_performance_gpu"),
+        _ => return,
     }
+    log_line(&format!("GPU：按设置使用 {mode}"));
 }
 
 /// GPU 选择只对 Windows 的 WebView2 有效。
 #[cfg(not(windows))]
-fn apply_high_performance_gpu() {}
+fn apply_gpu_mode() {}
 
-/// 「使用高性能 GPU」是否已开启（标记文件存在）。
+/// 当前 GPU 模式。非 Windows 恒为 `auto`。
 #[tauri::command]
-fn high_performance_gpu() -> bool {
+fn gpu_mode() -> String {
     #[cfg(windows)]
     {
-        high_performance_gpu_marker().exists()
+        read_gpu_mode()
     }
     #[cfg(not(windows))]
     {
-        false
+        "auto".to_string()
     }
 }
 
-/// 写入或删除高性能 GPU 标记，下次启动生效。
+/// 写入 GPU 模式，重启后生效。
 #[tauri::command]
-fn set_high_performance_gpu(enabled: bool) -> Result<bool, String> {
+fn set_gpu_mode(mode: String) -> Result<String, String> {
     #[cfg(windows)]
     {
-        let marker = high_performance_gpu_marker();
-        if enabled {
-            std::fs::create_dir_all(starveil_data_dir())
-                .map_err(|e| format!("创建数据目录失败：{e}"))?;
-            std::fs::write(&marker, b"1").map_err(|e| format!("写入标记失败：{e}"))?;
-        } else if marker.exists() {
-            std::fs::remove_file(&marker).map_err(|e| format!("删除标记失败：{e}"))?;
+        if !matches!(mode.as_str(), "auto" | "low" | "high" | "off") {
+            return Err(format!("未知的 GPU 模式：{mode}"));
         }
-        log_line(if enabled {
-            "GPU：已切换为高性能 GPU，重启生效"
-        } else {
-            "GPU：已恢复默认选择，重启生效"
-        });
-        Ok(enabled)
+        std::fs::create_dir_all(starveil_data_dir())
+            .map_err(|e| format!("创建数据目录失败：{e}"))?;
+        std::fs::write(gpu_mode_path(), mode.as_bytes())
+            .map_err(|e| format!("写入设置失败：{e}"))?;
+        // 旧标记会让 auto/low 失效，一并清掉。
+        if legacy_gpu_marker().exists() {
+            let _ = std::fs::remove_file(legacy_gpu_marker());
+        }
+        log_line(&format!("GPU：切换为 {mode}，重启生效"));
+        Ok(mode)
     }
     #[cfg(not(windows))]
     {
-        let _ = enabled;
-        Ok(false)
+        let _ = mode;
+        Ok("auto".to_string())
     }
 }
 
@@ -2785,7 +2809,7 @@ pub fn run() {
     prepare_webview_data();
     // GPU 沙箱探测须在建窗之前完成，否则首启黑屏一次。
     apply_gpu_sandbox_workaround();
-    apply_high_performance_gpu();
+    apply_gpu_mode();
     let (proxy_port, proxy_targets) = start_proxy();
     // 进入 async 运行时前创建 blocking client，须按 Platform::ALL 建。
     let mut cores = HashMap::new();
@@ -2850,8 +2874,8 @@ pub fn run() {
             in_picture_in_picture,
             set_system_bar,
             set_immersive,
-            high_performance_gpu,
-            set_high_performance_gpu,
+            gpu_mode,
+            set_gpu_mode,
             exit_app,
             open_room,
             douyu_qualities,

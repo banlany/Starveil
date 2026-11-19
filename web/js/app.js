@@ -801,12 +801,12 @@ function init() {
   initTooltips();
   // 尽早应用上次选择的屏幕方向，减少启动时先按系统方向渲染再转过来的观感。
   applyScreenOrientation();
-  // GPU 选择以标记文件为准，本机设置可能与实际启动参数不一致。
+  // GPU 选择以模式文件为准，本机设置可能落后于实际启动参数。
   if (!IS_MOBILE) {
-    api.highPerformanceGpu()
-      .then((enabled) => {
-        if (state.settings.player.highPerformanceGpu === Boolean(enabled)) return;
-        state.settings.player.highPerformanceGpu = Boolean(enabled);
+    api.gpuMode()
+      .then((mode) => {
+        if (!mode || state.settings.player.gpu === mode) return;
+        state.settings.player.gpu = mode;
         saveSettings();
       })
       .catch(() => {});

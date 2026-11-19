@@ -422,6 +422,11 @@ function importBundle(data, options = {}) {
     }
     // 剔除已废弃的 danmaku.blockUsers。
     if (patch.danmaku && typeof patch.danmaku === 'object') delete patch.danmaku.blockUsers;
+    // 剔除已由 player.gpu 取代的两项。
+    if (patch.player && typeof patch.player === 'object') {
+      delete patch.player.hardwareDecode;
+      delete patch.player.highPerformanceGpu;
+    }
     state.settings = merge(clone(state.settings), patch);
     saveSettings();
     settingsCount = Object.keys(patch).length;

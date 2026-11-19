@@ -72,9 +72,8 @@ export const DEFAULT_SETTINGS = {
     rememberQuality: true,
     // 默认清晰度：auto / highest / 1080 / 720 / 480 / smooth；开启「记住清晰度」时以记住的为准。
     defaultQuality: 'auto',
-    hardwareDecode: true,
-    // 多显卡设备上强制使用独立显卡渲染；重启后生效，真实状态以标记文件为准。
-    highPerformanceGpu: false,
+    // 图形设备：auto 跟随系统 / low 核显 / high 独显 / off 软件渲染。仅 Windows 生效，重启后应用。
+    gpu: 'auto',
     muteOnStart: false,
     autoSwitchLine: true,
     autoRefresh: true,
@@ -238,6 +237,9 @@ function loadSettings() {
   delete settings.live?.autoFullscreen;
   // 清理已移除的 danmaku.blockUsers。
   delete settings.danmaku?.blockUsers;
+  // 清理已由 player.gpu 取代的两项。
+  delete settings.player?.hardwareDecode;
+  delete settings.player?.highPerformanceGpu;
   return settings;
 }
 

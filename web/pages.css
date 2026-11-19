@@ -773,7 +773,11 @@
 .setting-control .value-text {
   color: var(--muted);
   min-width: 42px;
+  max-width: 340px;
   text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .setting-control .chev {
@@ -1865,6 +1869,7 @@
 
 .setting-control .value-text {
   min-width: 48px;
+  max-width: 46vw;
 }
 
 .select-btn {

@@ -367,6 +367,8 @@ function buildRow(config, repaint, ctx) {
     const value = document.createElement('span');
     value.className = 'value-text';
     value.textContent = config.value ?? '';
+    // 超长值会被省略号截断，悬停时给出全文。
+    value.title = config.value ?? '';
     control.appendChild(value);
   } else if (config.type === 'colors') {
     const swatches = document.createElement('div');
@@ -447,6 +449,23 @@ function formatNumber(value, config) {
 
 // ---------------------------------------------------------------- 各详情页 schema
 
+// 当前 WebView 实际使用的 GPU：ANGLE 字符串里取设备名。
+function currentRendererName() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const info = gl?.getExtension('WEBGL_debug_renderer_info');
+    const raw = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+    const angled = /^ANGLE \([^,]+,\s*(.+)\)$/.exec(raw);
+    const name = angled ? angled[1] : raw;
+    return name
+      .replace(/\s*\(0x[0-9A-Fa-f]+\)/, '')
+      .replace(/\s*(Direct3D11|D3D11|Direct3D9|OpenGL|Vulkan|Metal).*$/, '')
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
 function detailSections(key, ctx, repaint) {
   switch (key) {
     case 'appearance': {
@@ -523,21 +542,27 @@ function detailSections(key, ctx, repaint) {
         {
           label: '播放器',
           rows: [
-            { type: 'switch', key: 'player.hardwareDecode', title: '硬件解码', desc: '由 WebView2 / 系统解码器处理视频；播放异常时可尝试关闭' },
             ...(IS_MOBILE
               ? []
               : [
                   {
-                    type: 'switch',
-                    key: 'player.highPerformanceGpu',
-                    title: '使用高性能 GPU',
-                    desc: '多显卡设备上让界面与弹幕走独立显卡；重启后生效，会增加耗电',
-                    onChange: (enabled) => {
-                      api.setHighPerformanceGpu(enabled)
+                    type: 'select',
+                    key: 'player.gpu',
+                    title: '图形设备',
+                    desc: '重启后生效；软件渲染只在画面异常时用',
+                    valueMap: {
+                      auto: '自动（跟随系统）',
+                      low: '核显',
+                      high: '独立显卡',
+                      off: '关闭硬件加速',
+                    },
+                    onChange: (mode) => {
+                      api.setGpuMode(mode)
                         .then(() => toast('重启后生效', 'success'))
                         .catch((error) => toast(String(error), 'error'));
                     },
                   },
+                  { type: 'info', title: '当前渲染器', value: currentRendererName() || '未知' },
                 ]),
             { type: 'switch', key: 'player.rememberQuality', title: '记住清晰度', desc: '同一平台下次进入直播间时沿用上次选择' },
             {
