@@ -2,7 +2,7 @@
 import { api, canonicalImage, roomUrl } from './api.js';
 import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
-import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinHref, skinModes } from '../skins/registry.js';
+import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAccents, skinHref, skinModes } from '../skins/registry.js';
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
@@ -300,25 +300,36 @@ export function currentSkin() {
   return getSkin(state.settings.appearance?.skin);
 }
 
+/// 皮肤实际使用的主题色原值：只有该皮肤提供多个可选色时才认用户自选。
+function resolveAccentValue(skin, appearance) {
+  return appearance.accentSource === 'user' && appearance.accent && skinAccents(skin.id).length > 1
+    ? appearance.accent
+    : skinAccent(skin.id);
+}
+
+/// 当前皮肤正在用的主题色原值（不换算明暗档）。
+export function currentAccentValue() {
+  const appearance = state.settings.appearance || {};
+  return resolveAccentValue(getSkin(appearance.skin), appearance);
+}
+
+/// 当前皮肤正在用的主题色（按 <html data-theme> 换算过）。
+export function currentAccent() {
+  const mode = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  return accentForMode(currentAccentValue(), mode);
+}
+
 /// 皮肤是否锁死了明暗（只提供一套配色）。
 export function skinLockedMode() {
   const modes = skinModes(currentSkin().id);
   return modes.length === 1 ? modes[0] : '';
 }
 
-/// 切皮肤：换样式表与图标表、继承默认主题色、收回不支持的明暗档，最后交给 applyTheme。
+/// 切皮肤：换样式表与图标表，最后交给 applyTheme 重算。
 export async function applySkin(id) {
   const skin = getSkin(id);
   const appearance = state.settings.appearance;
   appearance.skin = skin.id;
-  // 用户自己挑过主题色就不动；否则回到这套皮肤的默认色（accents 第一个）。
-  if (appearance.accentSource !== 'user') {
-    appearance.accent = skinAccent(skin.id);
-    appearance.accentSource = 'skin';
-  }
-  // 单档皮肤：把设置也落成它支持的那一档，否则设置页会显示一个永远不会生效的选项。
-  const modes = skinModes(skin.id);
-  if (modes.length === 1) appearance.theme = modes[0];
   ensureSkinStyle(skin.id);
   // 图标先换好再重画：反过来的话调用方拿到的还是上一套皮肤的图形。
   await loadSkinIcons(skin.id);
@@ -373,12 +384,8 @@ export function applyTheme() {
   root.dataset.theme = effective;
   root.dataset.themeMode = mode;
 
-  // 主题色：用户自选优先，否则取皮肤默认色。
-  const rawAccent = appearance.accentSource === 'user' && appearance.accent
-    ? appearance.accent
-    : skinAccent(skin.id);
   // 存原值，落到 DOM 时按当前明暗档换算。
-  const accent = accentForMode(rawAccent, effective);
+  const accent = accentForMode(resolveAccentValue(skin, appearance), effective);
   root.style.setProperty('--accent', accent);
   root.style.setProperty('--accent-soft', hexToAlpha(accent, effective === 'light' ? 0.18 : 0.16));
   // 压在强调色上的文字颜色，每次 applyTheme 重算。

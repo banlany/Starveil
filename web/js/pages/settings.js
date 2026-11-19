@@ -4,6 +4,8 @@ import {
   aggregateStats,
   applySkin,
   applyTheme,
+  currentAccent,
+  currentAccentValue,
   currentSkin,
   clearHistory,
   clearLogin,
@@ -237,13 +239,10 @@ function buildRow(config, repaint, ctx) {
       card.type = 'button';
       card.className = `skin-card${skin.id === active ? ' is-active' : ''}`;
       card.setAttribute('aria-pressed', String(skin.id === active));
-      // 色点：其它皮肤取 accents 第一项，当前皮肤取 appearance.accent。
+      // 色点：当前皮肤取实际在用的色，其它皮肤取 accents 第一项；都按当前明暗档换算。
       const modes = skinModes(skin.id);
       const fallback = skinAccents(skin.id)[0]?.color || 'currentColor';
-      const raw =
-        skin.id === active ? String(getSetting('appearance.accent', fallback) || fallback) : fallback;
-      // 色点也按当前明暗档换算：选「雪白」时深色下是白点、浅色下是深灰点。
-      const dot = accentForMode(raw, currentMode());
+      const dot = skin.id === active ? currentAccent() : accentForMode(fallback, currentMode());
       card.innerHTML = `
         <span class="skin-dot" style="background:${escapeHtml(dot)}" aria-hidden="true"></span>
         <span class="skin-text">
@@ -273,16 +272,20 @@ function buildRow(config, repaint, ctx) {
     const fragment = document.createDocumentFragment();
     for (const option of config.options) {
       const row = document.createElement('div');
-      row.className = 'setting-row clickable';
-      const checked = getSetting(config.key) === option.value;
+      // 皮肤只支持一档时，这一行只做展示：点击会覆盖用户存着的明暗偏好。
+      const locked = Boolean(config.lockedValue);
+      row.className = `setting-row${locked ? '' : ' clickable'}`;
+      const checked = locked ? option.value === config.lockedValue : getSetting(config.key) === option.value;
       row.innerHTML = `
         <span class="radio${checked ? ' checked' : ''}"></span>
         <div class="setting-info"><div class="setting-title">${escapeHtml(option.label)}</div>${option.desc ? `<div class="setting-desc">${escapeHtml(option.desc)}</div>` : ''}</div>`;
-      row.addEventListener('click', () => {
-        setSetting(config.key, option.value);
-        if (config.onChange) config.onChange(option.value);
-        repaint();
-      });
+      if (!locked) {
+        row.addEventListener('click', () => {
+          setSetting(config.key, option.value);
+          if (config.onChange) config.onChange(option.value);
+          repaint();
+        });
+      }
       fragment.appendChild(row);
     }
     return fragment;
@@ -371,7 +374,7 @@ function buildRow(config, repaint, ctx) {
     // 预设色来自当前皮肤 registry，第一项为默认色。
     const accents = skinAccents(currentSkin().id);
     const fallback = accents[0].color;
-    const current = String(getSetting('appearance.accent', fallback)).toLowerCase();
+    const current = String(currentAccentValue()).toLowerCase();
     for (const accent of accents) {
       const isDefault = accent.color.toLowerCase() === fallback.toLowerCase();
       const swatch = document.createElement('button');
@@ -461,7 +464,8 @@ function detailSections(key, ctx, repaint) {
             {
               type: 'radioGroup',
               key: 'appearance.theme',
-              // 只列出皮肤支持的明暗档。
+              // 只列出皮肤支持的明暗档；单档皮肤这一行不可点，存的偏好留着不动。
+              lockedValue: locked ? modes[0] : '',
               options: [
                 ...(locked ? [] : [{ label: '跟随系统', value: 'system', desc: '随系统的深色/浅色设置自动切换' }]),
                 ...(modes.includes('light') ? [{ label: '浅色模式', value: 'light', desc: locked ? LOCKED_HINT : '' }] : []),
@@ -474,12 +478,10 @@ function detailSections(key, ctx, repaint) {
             },
           ],
         },
-        {
-          label: '主题颜色',
-          rows: [
-            { type: 'colors' },
-          ],
-        },
+        // 只有一套配色的皮肤不提供主题色选择。
+        ...(skinAccents(currentSkin().id).length > 1
+          ? [{ label: '主题颜色', rows: [{ type: 'colors' }] }]
+          : []),
         { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' }, onChange: (value) => { document.body.dataset.density = value; } }] },
         // 屏幕方向只有移动端有意义：桌面窗口的尺寸方向由用户自己拖。
         ...(IS_MOBILE

@@ -389,7 +389,7 @@ function initRail() {
     rail.querySelector('.rail-bottom')?.remove();
   } else {
     const themeButton = rail.querySelector('[data-action="theme"]');
-    themeButton.innerHTML = icon(themeIcon(state.settings.appearance?.theme || 'dark'), 20);
+    themeButton.innerHTML = icon(themeIcon(displayThemeMode()), 20);
     themeButton.addEventListener('click', () => {
       // 皮肤只有一套配色时禁用明暗切换，并给出说明。
       const locked = skinLockedMode();
@@ -413,10 +413,15 @@ function themeIcon(mode) {
   return 'moon';
 }
 
+/// 按钮按实际生效的明暗档显示：皮肤只有一档时显示那一档。
+function displayThemeMode() {
+  return skinLockedMode() || state.settings.appearance?.theme || 'dark';
+}
+
 function refreshThemeButton() {
   const button = rail.querySelector('[data-action="theme"]');
   if (!button) return;
-  const mode = state.settings.appearance?.theme || 'dark';
+  const mode = displayThemeMode();
   const locked = skinLockedMode();
   button.innerHTML = icon(themeIcon(mode), 20);
   if (locked) {
