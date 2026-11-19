@@ -43,6 +43,8 @@ const PATHS = {
     '<circle cx="12" cy="5.2" r="2.2"/><path d="M12 7.4V21"/><path d="M8.4 10.6h7.2"/><path d="M4 14.4a8 8 0 0 0 16 0"/><path d="M4 14.4h2.2M20 14.4h-2.2"/>',
   signal: '<path d="M4 20v-4M9.3 20v-8M14.6 20V7.5M20 20V4"/>',
   danmaku: '<path d="M4 5.5h16v11H9l-4 3.2V5.5Z"/><path d="M8 9.5h8M8 12.5h5"/>',
+  // 弹幕关闭：同一枚气泡划一道斜线。
+  danmakuOff: '<path d="M4 5.5h16v11H9l-4 3.2V5.5Z"/><path d="m3.4 3.4 17.2 17.2"/>',
   more: '<circle cx="5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.3" fill="currentColor" stroke="none"/>',
   share: '<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="m8.2 10.7 7.6-3.9M8.2 13.3l7.6 3.9"/>',
   link: '<path d="M10 13.5a4.5 4.5 0 0 0 6.4 0l2.5-2.5a4.5 4.5 0 0 0-6.4-6.4l-1.4 1.4"/><path d="M14 10.5a4.5 4.5 0 0 0-6.4 0L5.1 13a4.5 4.5 0 0 0 6.4 6.4l1.4-1.4"/>',

@@ -456,7 +456,10 @@ export function renderRoom(ctx, params = {}) {
     session.danmakuEnabled = Boolean(enabled);
     state.settings.danmaku.enabled = session.danmakuEnabled;
     saveSettings();
-    $('ctrl-danmaku').classList.toggle('active', session.danmakuEnabled);
+    const footerButton = $('ctrl-danmaku');
+    footerButton.classList.toggle('active', session.danmakuEnabled);
+    footerButton.innerHTML = icon(session.danmakuEnabled ? 'danmaku' : 'danmakuOff', 21);
+    footerButton.title = session.danmakuEnabled ? '关闭弹幕（D）' : '开启弹幕（D）';
     // 重新开启必须调用 setEnabled(true)，否则渲染循环不会恢复。
     danmaku?.setEnabled(session.danmakuEnabled);
     syncEnabledSwitches();
@@ -1083,6 +1086,7 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>底部边距</span>${picker('cs-safe-bottom', 'safeBottom', presetChoices(CS_PRESETS.safe, config.safeBottom, (value) => `${value} px`))}</div>
         <div class="chat-setting-row"><span>性能档位</span>${picker('cs-perf', 'perf', fixedChoices(PERF_OPTIONS.map((option) => [option.value, option.label]), config.perf), false)}</div>
         <div class="chat-setting-row"><span>帧率上限</span>${picker('cs-fps', 'fps', fixedChoices(FPS_OPTIONS.map((option) => [option.value, option.label]), config.fps))}</div>
+        <p class="chat-settings-note">修改会立即保存并作用于当前弹幕；弹幕轨道按实际位置避让，不叠字。切换性能档位会重建渲染器，屏上的弹幕会被清掉。</p>
       </div>
       <div class="chat-settings-group">
         <h4>屏蔽设置</h4>
@@ -1100,8 +1104,8 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>浮动卡默认折叠</span><button class="switch" id="cs-sc-fold" aria-checked="${state.settings.player.superChatFold !== false}"></button></div>
         <div class="chat-setting-row"><span>浮动时长均衡</span><button class="switch" id="cs-sc-balance" aria-checked="${state.settings.player.superChatBalance !== false}"></button></div>
         <div class="chat-setting-row"><span>最长停留</span>${picker('cs-sc-max', 'superChatMax', fixedChoices(SC_FLOAT_MAX_CHOICES, state.settings.player.superChatMax || SC_FLOAT_MAX_DEFAULT), true, 'player')}</div>
-      </div>
-      <div class="chat-setting-tip">修改会立即保存并作用于当前弹幕；弹幕轨道会按实际位置避让，不再叠字。切换性能档位会重建渲染器，当前屏上的弹幕会被清掉。「浮动卡默认折叠」只管新卡第一眼的样子，两种状态下每张卡都能点头部来回切；「浮动时长均衡」开着时按金额压到 5 秒～上限，关掉则完全按平台给的到期时间。浮动卡上的 × 只把它从视频上撤下，SC 页签那条仍在「正在显示」里，要点它自己的 × 才进历史。</div>`;
+        <p class="chat-settings-note">「浮动卡默认折叠」只决定新卡的初始状态，两种状态下都能点头部来回切；「浮动时长均衡」开着时按金额压到 5 秒～上限，关掉则按平台给的到期时间。浮动卡上的 × 只把卡片从视频上撤下，SC 页签那条仍在「正在显示」里，要点它自己的 × 才进历史。</p>
+      </div>`;
     target.appendChild(wrap);
 
     const bindSwitch = (id, key) => {

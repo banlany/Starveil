@@ -1067,8 +1067,13 @@ body.is-resizing-chat .room-chat {
 }
 
 .chat-tab.active {
-  color: var(--fg);
+  color: var(--accent);
   font-weight: 600;
+}
+
+.chat-tab.active em {
+  color: inherit;
+  opacity: 0.72;
 }
 
 /* 主色条位置由 room.js 计算。 */
@@ -1487,8 +1492,8 @@ body.is-resizing-chat .room-chat {
   margin-left: auto;
 }
 
-.chat-setting-tip {
-  padding: 0 4px 8px;
+.chat-settings-note {
+  margin: 6px 4px 2px;
   color: var(--dim);
   font-size: 10.5px;
   line-height: 1.6;
