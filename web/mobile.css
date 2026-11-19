@@ -79,6 +79,11 @@ html.is-mobile .rail-btn .ico {
 
 /* 横屏：屏幕够宽，侧栏回到左边（与桌面一致），别横在底部占掉一行高度。 */
 @media (orientation: landscape) {
+  html.is-mobile {
+    /* 横屏侧栏占左侧 76px，固定层据此避让。 */
+    --rail-width: 76px;
+  }
+
   html.is-mobile .app {
     flex-direction: row;
   }
@@ -89,7 +94,7 @@ html.is-mobile .rail-btn .ico {
 
   html.is-mobile .rail {
     order: 1;
-    width: 76px;
+    width: var(--rail-width);
     height: auto;
     flex-direction: column;
     align-items: center;
@@ -615,6 +620,8 @@ html.is-theater .room-topbar {
 
 html.is-mobile .pull-refresh {
   display: flex;
+  /* 按内容区居中：横屏时左侧有侧栏，纵向则是底栏，不吃宽度。 */
+  left: calc(50% + var(--rail-width) / 2);
 }
 
 .pull-refresh .pull-arrow {

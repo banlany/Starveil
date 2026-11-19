@@ -205,6 +205,8 @@ export function renderRoom(ctx, params = {}) {
     headers: [],
     lineIndex: 0,
     player: null,
+    // hls.js 累计加载的分片字节数，供播放统计算码率。
+    bytesLoaded: 0,
     // 弹幕发送是否正在进行（防连点）。
     sendingDanmaku: false,
     // 弹幕连接状态 { state, reason }，供聊天栏顶部状态条使用。
@@ -1553,6 +1555,7 @@ export function renderRoom(ctx, params = {}) {
     }
     session.playerProtocol = '';
     session.playerReady = false;
+    session.bytesLoaded = 0;
   }
 
   // ------------------------------------------------------------ 观看时长统计
@@ -1689,6 +1692,9 @@ export function renderRoom(ctx, params = {}) {
           backBufferLength: 30,
           manifestLoadingTimeOut: 8000,
           fragLoadingTimeOut: 20000,
+        });
+        hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+          session.bytesLoaded += Number(data?.frag?.stats?.loaded) || 0;
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data?.fatal) return;
@@ -2347,6 +2353,22 @@ export function renderRoom(ctx, params = {}) {
     let lastAt = 0;
     let fps = 0;
 
+    // hls.js 按分片加载，单次采样常为 0，取最近 5 秒的字节增量换算速率。
+    const byteWindow = [];
+
+    /// 码率：FLV 取 mpegts 的 speed（KB/s），HLS 取分片字节增量。
+    function currentBitrate(speedKb, nowAt) {
+      if (speedKb > 0) return `${((speedKb * 8) / 1024).toFixed(2)} Mbps`;
+      if (!session.bytesLoaded) return '—';
+      byteWindow.push({ at: nowAt, bytes: session.bytesLoaded });
+      while (byteWindow.length > 1 && nowAt - byteWindow[0].at > 5000) byteWindow.shift();
+      const first = byteWindow[0];
+      const span = nowAt - first.at;
+      if (span < 1000) return '—';
+      const kbps = ((session.bytesLoaded - first.bytes) * 1000) / span / 1024;
+      return kbps > 0 ? `${((kbps * 8) / 1024).toFixed(2)} Mbps` : '—';
+    }
+
     function paint() {
       const quality = session.qualities[session.qualityIndex] || '未知';
       const lines = session.lines.length ? `线路 ${session.lineIndex + 1} / 共 ${session.lines.length} 条` : '未取到直播流';
@@ -2363,12 +2385,10 @@ export function renderRoom(ctx, params = {}) {
       const decoded = Number(qualityInfo?.totalVideoFrames) || 0;
       const dropped = Number(qualityInfo?.droppedVideoFrames) || 0;
       const intact = decoded > 0 ? `${(((decoded - dropped) / decoded) * 100).toFixed(2)}%` : '—';
-      // 输出 mpegts 的其余标量统计字段。
+      // mpegts 的其余标量统计字段；HLS 没有 statisticsInfo。
       const stats = session.player?.statisticsInfo || {};
-      // statisticsInfo.speed 是 KB/s；一秒采一次样，换算成 Mbps 更直观。
-      const speedKb = Number(stats.speed) || 0;
-      const bitrate = speedKb > 0 ? `${((speedKb * 8) / 1024).toFixed(2)} Mbps` : '—';
       const nowAt = performance.now();
+      const bitrate = currentBitrate(Number(stats.speed) || 0, nowAt);
       if (lastAt && nowAt > lastAt && decoded > lastFrames) {
         fps = ((decoded - lastFrames) * 1000) / (nowAt - lastAt);
       }

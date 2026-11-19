@@ -465,7 +465,8 @@ html.is-theater .room-page.ui-idle {
 }
 
 .room-page.ui-idle .room-topbar,
-.room-page.ui-idle .player-controls {
+.room-page.ui-idle .player-controls,
+.room-page.ui-idle .chat-expand {
   opacity: 0;
   pointer-events: none;
 }
@@ -1552,7 +1553,12 @@ body.is-resizing-chat .room-chat {
   color: var(--room-float-fg);
   background: var(--room-float-bg);
   border: 1px solid var(--room-float-line);
+  box-shadow: var(--room-float-shadow);
   backdrop-filter: var(--media-blur);
+  transition:
+    opacity var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
 }
 
 /* 悬停底色与字色由 --room-float-hover-* 提供。 */
