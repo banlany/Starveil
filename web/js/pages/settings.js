@@ -767,8 +767,8 @@ function detailSections(key, ctx, repaint) {
                 const ok = await confirmDialog({ title: '重置设置', text: '所有设置将恢复默认值，确定继续吗？', okLabel: '重置', danger: true });
                 if (!ok) return;
                 resetSettings();
-                // GPU 选择存在标记文件里，重置设置时一并清掉。
-                if (!IS_MOBILE) api.setHighPerformanceGpu(false).catch(() => {});
+                // GPU 模式存在数据目录里，重置设置时一并回到自动。
+                if (!IS_MOBILE) api.setGpuMode('auto').catch(() => {});
                 applyTheme();
                 repaintInner();
                 toast('已恢复默认设置', 'success');
