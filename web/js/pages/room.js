@@ -2286,7 +2286,7 @@ export function renderRoom(ctx, params = {}) {
       items.push({ label: '取消定时关闭', icon: 'close', onClick: () => applySleepTimer(0) });
     }
     items.push({ separator: true });
-    items.push({ label: '与「设置 → 定时关闭」同步', icon: 'info' });
+    items.push({ label: '与「设置 → 播放与直播」同步', icon: 'info' });
     openMenu(anchor, items, { align: 'end', placement: 'bottom' });
   }
 

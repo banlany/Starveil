@@ -159,7 +159,6 @@ export const DEFAULT_SETTINGS = {
   },
   other: {
     rememberWindow: true,
-    log: false,
   },
 };
 
@@ -240,6 +239,8 @@ function loadSettings() {
   // 清理已由 player.gpu 取代的两项。
   delete settings.player?.hardwareDecode;
   delete settings.player?.highPerformanceGpu;
+  // 日志开关没有接入实现，落盘旧值一并清掉。
+  delete settings.other?.log;
   return settings;
 }
 

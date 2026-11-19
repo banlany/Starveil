@@ -76,21 +76,36 @@ function presetRow(key, title, values, format, desc = '') {
   return { type: 'select', key, title, desc, numeric: true, valueMap: presetMap(key, values, format) };
 }
 
-const SETTINGS_ITEMS = [
-  { key: 'history', icon: 'history', label: '观看记录' },
-  { key: 'account', icon: 'account', label: '账号管理' },
-  { key: 'sync', icon: 'sync', label: '数据同步' },
-  { key: 'link', icon: 'parse', label: '链接解析' },
-  { key: 'appearance', icon: 'moon', label: '外观设置' },
-  { key: 'home', icon: 'home', label: '主页设置' },
-  { key: 'player', icon: 'player', label: '播放页设置' },
-  { key: 'live', icon: 'live', label: '直播设置' },
-  { key: 'danmaku', icon: 'danmaku', label: '弹幕设置' },
-  { key: 'follow', icon: 'follow', label: '关注设置' },
-  { key: 'timer', icon: 'timer', label: '定时关闭' },
-  { key: 'other', icon: 'other', label: '其他设置' },
-  { key: 'disclaimer', icon: 'shield', label: '免责声明' },
-  { key: 'github', icon: 'github', label: '开源主页', action: 'github' },
+// 一级列表按用途分组，同组项共用一个标签。
+const SETTINGS_GROUPS = [
+  {
+    label: '通用',
+    items: [
+      { key: 'appearance', icon: 'moon', label: '外观设置' },
+      { key: 'home', icon: 'home', label: '主页设置' },
+    ],
+  },
+  {
+    label: '直播',
+    items: [
+      { key: 'playback', icon: 'player', label: '播放与直播' },
+      { key: 'danmaku', icon: 'danmaku', label: '弹幕设置' },
+      { key: 'follow', icon: 'follow', label: '关注设置' },
+      { key: 'link', icon: 'parse', label: '链接解析' },
+    ],
+  },
+  {
+    label: '数据',
+    items: [
+      { key: 'history', icon: 'history', label: '观看记录' },
+      { key: 'account', icon: 'account', label: '账号管理' },
+      { key: 'sync', icon: 'sync', label: '数据同步' },
+    ],
+  },
+  {
+    label: '应用',
+    items: [{ key: 'about', icon: 'info', label: '关于 Starveil' }],
+  },
 ];
 
 const DETAIL_TITLES = {
@@ -100,12 +115,9 @@ const DETAIL_TITLES = {
   link: '链接解析',
   appearance: '外观设置',
   home: '主页设置',
-  player: '播放页设置',
-  live: '直播设置',
+  playback: '播放与直播',
   danmaku: '弹幕设置',
   follow: '关注设置',
-  timer: '定时关闭',
-  other: '其他设置',
   disclaimer: '免责声明',
   licenses: '许可与致谢',
   about: '关于 Starveil',
@@ -127,28 +139,28 @@ export function renderSettings(ctx) {
       <div class="settings-list" id="settings-list"></div>
     </div>`;
   const list = page.querySelector('#settings-list');
-  for (const item of SETTINGS_ITEMS) {
-    const row = document.createElement('button');
-    row.className = 'settings-item';
-    const value =
-      item.key === 'appearance'
-        ? themeLabel(getSetting('appearance.theme'))
-        : item.key === 'danmaku'
-          ? `${getSetting('danmaku.font', 20)} px`
-          : '';
-    row.innerHTML = `
+  for (const group of SETTINGS_GROUPS) {
+    const label = document.createElement('div');
+    label.className = 'settings-group-label';
+    label.textContent = group.label;
+    list.appendChild(label);
+    for (const item of group.items) {
+      const row = document.createElement('button');
+      row.className = 'settings-item';
+      const value =
+        item.key === 'appearance'
+          ? themeLabel(getSetting('appearance.theme'))
+          : item.key === 'danmaku'
+            ? `${getSetting('danmaku.font', 20)} px`
+            : '';
+      row.innerHTML = `
       <span class="item-icon">${icon(item.icon, 22)}</span>
       <span class="item-label">${escapeHtml(item.label)}</span>
       ${value ? `<span class="item-value">${escapeHtml(value)}</span>` : ''}
       <span class="chev">${icon('chevron', 17)}</span>`;
-    row.addEventListener('click', () => {
-      if (item.action) {
-        runSettingAction(ctx, item.action);
-        return;
-      }
-      ctx.go('settingsDetail', { key: item.key });
-    });
-    list.appendChild(row);
+      row.addEventListener('click', () => ctx.go('settingsDetail', { key: item.key }));
+      list.appendChild(row);
+    }
   }
   page.querySelector('#profile-row').addEventListener('click', () => ctx.go('settingsDetail', { key: 'about' }));
   document.getElementById('view').appendChild(page);
@@ -521,7 +533,7 @@ function detailSections(key, ctx, repaint) {
               },
             ],
           }]
-          : []),
+          : [{ label: '窗口', rows: [{ type: 'switch', key: 'other.rememberWindow', title: '记住窗口大小和位置', desc: '下次启动时恢复上次的窗口尺寸' }] }]),
       ];
     }
     case 'home':
@@ -537,7 +549,10 @@ function detailSections(key, ctx, repaint) {
         },
         { label: '排序', rows: [{ type: 'info', title: '推荐排序', desc: '按平台默认热度排序', value: '人气优先' }] },
       ];
-    case 'player':
+    case 'playback': {
+      // 定时关闭的状态由应用层维护，这里只读。
+      const timerInfo = ctx.sleepTimer?.() || { enabled: false, minutes: getSetting('timer.minutes'), remaining: 0 };
+      const timerMinutes = timerInfo.enabled ? Math.max(1, Math.ceil(timerInfo.remaining / 60000)) : 0;
       return [
         {
           label: '播放器',
@@ -599,6 +614,7 @@ function detailSections(key, ctx, repaint) {
             { type: 'switch', key: 'player.autoRefresh', title: '直播流自动刷新', desc: '长时间播放后重新获取直链，避免地址过期' },
             { type: 'switch', key: 'player.forceHttps', title: '强制 HTTPS', desc: '把平台下发的 http 链接改为 https（部分 CDN 不支持时请关闭）' },
             { type: 'select', key: 'player.scaleMode', title: '画面尺寸', valueMap: { contain: '适应', cover: '铺满', fill: '拉伸' }, onChange: (value) => applyScaleMode(value) },
+            { type: 'switch', key: 'player.showStats', title: '显示播放统计信息' },
           ],
         },
         {
@@ -606,24 +622,34 @@ function detailSections(key, ctx, repaint) {
           rows: [
             { type: 'switch', key: 'player.autoFullscreen', title: '进入直播间自动全屏' },
             { type: 'switch', key: 'player.muteOnStart', title: '进入直播间默认静音' },
-            { type: 'switch', key: 'player.showStats', title: '显示播放统计信息' },
-          ],
-        },
-      ];
-    case 'live':
-      return [
-        {
-          label: '直播间行为',
-          rows: [
-            // 自动全屏只在 player 段保留一份。
             { type: 'switch', key: 'live.autoSwitchNext', title: '关播后自动换下一个', desc: '当前房间确认下播后，自动切到关注列表里的下一个直播间' },
             { type: 'switch', key: 'live.allowBackground', title: '允许后台继续播放', desc: '窗口失去焦点时保持视频与弹幕连接' },
             { type: 'switch', key: 'live.gesture', title: '滑动调节音量/亮度', desc: '播放页左右两侧上下滑动调节' },
             { type: 'switch', key: 'live.hideDanmakuOnMinimize', title: '最小化时隐藏弹幕' },
           ],
         },
-        { label: '提示', rows: [{ type: 'info', title: '平台差异', desc: '虎牙不提供贡献榜；抖音、快手已支持观看与账号登录，弹幕暂未接入，快手搜索暂不可用', value: '五站可选' }] },
+        {
+          label: '定时关闭',
+          rows: [
+            { type: 'switch', key: 'timer.enabled', title: '启用定时关闭', desc: '直播间「更多 → 定时关闭」也是同一个开关，两边同步', onChange: () => ctx.restartTimer?.() },
+            { type: 'number', key: 'timer.minutes', title: '自动关闭时间', desc: '从开启那一刻开始倒计时', min: 5, max: 720, step: 5, unit: ' 分钟', onChange: () => ctx.restartTimer?.() },
+            { type: 'switch', key: 'timer.once', title: '只生效一次', desc: '计时结束退出应用后自动关闭定时关闭；不打开则每次启动应用都会重新计时' },
+            {
+              type: 'info',
+              title: '当前状态',
+              desc: timerInfo.enabled
+                ? `约 ${timerMinutes} 分钟后自动退出应用${getSetting('timer.once') ? '，退出后自动关闭' : '，每次启动都会重新计时'}`
+                : '未开启，可以在直播间「更多」里直接开',
+              value: timerInfo.enabled ? '计时中' : '关闭',
+            },
+          ],
+        },
+        {
+          label: '提示',
+          rows: [{ type: 'info', title: '平台差异', desc: '虎牙不提供贡献榜；抖音、快手已支持观看与账号登录，弹幕暂未接入，快手搜索暂不可用', value: '五站可选' }],
+        },
       ];
+    }
     case 'danmaku': {
       const groups = [
         {
@@ -718,79 +744,6 @@ function detailSections(key, ctx, repaint) {
           rows: [
             // 排序按近期观看次数，直播中的始终排在前面。
             { type: 'select', key: 'follow.sortWindow', title: '按进房热度排序', numeric: true, valueMap: { 7: '近 7 天的进房次数', 15: '近 15 天的进房次数', 0: '累计进房次数' }, desc: '直播中的主播始终排在前面；这一项决定其余情况下的顺序。' },
-          ],
-        },
-      ];
-    case 'timer': {
-      const info = ctx.sleepTimer?.() || { enabled: false, minutes: getSetting('timer.minutes'), remaining: 0 };
-      const remainingMinutes = info.enabled ? Math.max(1, Math.ceil(info.remaining / 60000)) : 0;
-      return [
-        {
-          label: '定时关闭',
-          rows: [
-            { type: 'switch', key: 'timer.enabled', title: '启用定时关闭', desc: '直播间「更多 → 定时关闭」也是同一个开关，两边同步', onChange: () => ctx.restartTimer?.() },
-            { type: 'number', key: 'timer.minutes', title: '自动关闭时间', desc: '从开启那一刻开始倒计时', min: 5, max: 720, step: 5, unit: ' 分钟', onChange: () => ctx.restartTimer?.() },
-            { type: 'switch', key: 'timer.once', title: '只生效一次', desc: '计时结束退出应用后自动关闭定时关闭；不打开则每次启动应用都会重新计时' },
-          ],
-        },
-        {
-          label: '',
-          rows: [{
-            type: 'info',
-            title: '当前状态',
-            desc: info.enabled
-              ? `约 ${remainingMinutes} 分钟后自动退出应用${getSetting('timer.once') ? '，退出后自动关闭' : '，每次启动都会重新计时'}`
-              : '未开启，可以在直播间「更多」里直接开',
-            value: info.enabled ? '计时中' : '关闭',
-          }],
-        },
-      ];
-    }
-    case 'other':
-      return [
-        {
-          label: '桌面窗口',
-          rows: [
-            { type: 'switch', key: 'other.rememberWindow', title: '记住窗口大小和位置', desc: '下次启动时恢复上次的窗口尺寸' },
-            { type: 'switch', key: 'other.log', title: '启用日志记录', desc: '记录调试日志，便于排查播放问题' },
-          ],
-        },
-        {
-          label: '维护',
-          rows: [
-            {
-              type: 'action',
-              icon: 'refresh',
-              title: '重置所有设置',
-              desc: '恢复默认外观、播放、弹幕等选项；不会删除关注和观看记录',
-              onClick: async (innerCtx, repaintInner) => {
-                const ok = await confirmDialog({ title: '重置设置', text: '所有设置将恢复默认值，确定继续吗？', okLabel: '重置', danger: true });
-                if (!ok) return;
-                resetSettings();
-                // GPU 模式存在数据目录里，重置设置时一并回到自动。
-                if (!IS_MOBILE) api.setGpuMode('auto').catch(() => {});
-                applyTheme();
-                repaintInner();
-                toast('已恢复默认设置', 'success');
-              },
-            },
-            {
-              type: 'action',
-              icon: 'info',
-              // 安卓日志通过系统分享面板导出。
-              title: IS_MOBILE ? '分享日志文件' : '打开日志目录',
-              desc: IS_MOBILE
-                ? '把运行日志通过系统分享发出去，便于反馈播放问题'
-                : '在资源管理器里打开运行日志所在的文件夹',
-              onClick: async () => {
-                try {
-                  const path = await api.openLogDir();
-                  if (!IS_MOBILE) toast(`已打开：${path}`, 'success');
-                } catch (error) {
-                  toast(String(error), 'error');
-                }
-              },
-            },
           ],
         },
       ];
@@ -1687,6 +1640,50 @@ function paintAbout(content, ctx) {
     <button class="btn small">查看</button>`;
   licenses.querySelector('button').addEventListener('click', () => ctx.go('settingsDetail', { key: 'licenses' }));
   content.appendChild(licenses);
+
+  // 免责声明、运行日志、重置设置都属于「应用」层面的杂项，收在这里。
+  const disclaimer = document.createElement('div');
+  disclaimer.className = 'settings-action-card';
+  disclaimer.innerHTML = `
+    <div class="action-icon">${icon('shield', 20)}</div>
+    <div class="action-text"><h4>免责声明</h4><p>数据来源、使用范围与责任边界</p></div>
+    <button class="btn small">查看</button>`;
+  disclaimer.querySelector('button').addEventListener('click', () => ctx.go('settingsDetail', { key: 'disclaimer' }));
+  content.appendChild(disclaimer);
+
+  const logs = document.createElement('div');
+  logs.className = 'settings-action-card';
+  logs.innerHTML = `
+    <div class="action-icon">${icon('info', 20)}</div>
+    <div class="action-text"><h4>${IS_MOBILE ? '分享日志文件' : '运行日志'}</h4><p>${IS_MOBILE ? '通过系统分享发出去，便于反馈播放问题' : '打开运行日志所在的文件夹'}</p></div>
+    <button class="btn small">${IS_MOBILE ? '分享' : '打开'}</button>`;
+  logs.querySelector('button').addEventListener('click', async () => {
+    try {
+      const path = await api.openLogDir();
+      if (!IS_MOBILE) toast(`已打开：${path}`, 'success');
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+  });
+  content.appendChild(logs);
+
+  const reset = document.createElement('div');
+  reset.className = 'settings-action-card';
+  reset.innerHTML = `
+    <div class="action-icon">${icon('refresh', 20)}</div>
+    <div class="action-text"><h4>重置所有设置</h4><p>恢复默认外观、播放、弹幕等选项；不会删除关注和观看记录</p></div>
+    <button class="btn small danger">重置</button>`;
+  reset.querySelector('button').addEventListener('click', async () => {
+    const ok = await confirmDialog({ title: '重置设置', text: '所有设置将恢复默认值，确定继续吗？', okLabel: '重置', danger: true });
+    if (!ok) return;
+    resetSettings();
+    // GPU 模式存在数据目录里，重置设置时一并回到自动。
+    if (!IS_MOBILE) api.setGpuMode('auto').catch(() => {});
+    applyTheme();
+    toast('已恢复默认设置', 'success');
+    ctx.go('settings');
+  });
+  content.appendChild(reset);
 }
 
 // 许可与致谢：内容与仓库根目录的 THANKS.md 保持一致，改一处要同步改另一处。
@@ -2105,13 +2102,4 @@ function openWebLogin(platform, onDone) {
       captureButton.textContent = '读取登录状态';
     }
   });
-}
-
-// ---------------------------------------------------------------- 一级动作
-
-function runSettingAction(ctx, action) {
-  if (action === 'github') {
-    api.openUrl(PROJECT_REPO);
-    return;
-  }
 }

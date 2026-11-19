@@ -427,6 +427,7 @@ function importBundle(data, options = {}) {
       delete patch.player.hardwareDecode;
       delete patch.player.highPerformanceGpu;
     }
+    if (patch.other && typeof patch.other === 'object') delete patch.other.log;
     state.settings = merge(clone(state.settings), patch);
     saveSettings();
     settingsCount = Object.keys(patch).length;
