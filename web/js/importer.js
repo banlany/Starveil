@@ -420,8 +420,11 @@ function importBundle(data, options = {}) {
         delete patch[key];
       }
     }
-    // 剔除已废弃的 danmaku.blockUsers。
-    if (patch.danmaku && typeof patch.danmaku === 'object') delete patch.danmaku.blockUsers;
+    // 剔除已废弃的 danmaku.blockUsers；30 帧上限已移除。
+    if (patch.danmaku && typeof patch.danmaku === 'object') {
+      delete patch.danmaku.blockUsers;
+      if (patch.danmaku.fps === 30) patch.danmaku.fps = 60;
+    }
     // 剔除已由 player.gpu 取代的两项。
     if (patch.player && typeof patch.player === 'object') {
       delete patch.player.hardwareDecode;

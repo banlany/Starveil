@@ -47,7 +47,6 @@ export const PERF_OPTIONS = [
 export const FPS_OPTIONS = [
   { value: 0, label: '跟随屏幕', desc: '不限制重绘频率' },
   { value: 60, label: '60 帧', desc: '按屏幕刷新率间隔抽帧' },
-  { value: 30, label: '30 帧', desc: '省电档' },
 ];
 
 /// 弹幕数值档位表，设置页与直播间「设置」页签共用。
@@ -178,12 +177,21 @@ export function createDanmakuLayer(container, video, config = null) {
     host.innerHTML = '';
   }
 
+  /// 实际帧间隔（毫秒），由相邻两帧首条的间隔滑动平均得到。
+  let framePeriod = 1000 / 60;
+  let snapStamp = 0;
+
   /// 把绘制位置吸附到设备像素栅格，避免位图重采样导致文字发虚。
+  /// 每帧位移不足 1.5 设备像素时跳过：量化会造成隔帧跳动。
   function snapToDevicePixels({ br, barrage }) {
     const dpr = Number(br?.dpr) || 1;
-    // 每帧位移不足 1.5 个设备像素时不吸附，避免隔帧跳动。
+    const now = performance.now();
+    // 同一帧内多条弹幕的间隔在微秒级，超过 3ms 视为进入下一帧。
+    const delta = now - snapStamp;
+    if (snapStamp && delta > 3 && delta < 100) framePeriod = framePeriod * 0.8 + delta * 0.2;
+    snapStamp = now;
     const speed = Number(barrage?.speed);
-    if (Number.isFinite(speed) && speed > 0 && (speed * dpr) / 60 < 1.5) return;
+    if (Number.isFinite(speed) && speed > 0 && (speed * dpr * framePeriod) / 1000 < 1.5) return;
     if (typeof barrage?.left === 'number') barrage.left = Math.round(barrage.left * dpr) / dpr;
     if (typeof barrage?.top === 'number') barrage.top = Math.round(barrage.top * dpr) / dpr;
   }

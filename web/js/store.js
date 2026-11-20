@@ -239,6 +239,8 @@ function loadSettings() {
   // 清理已由 player.gpu 取代的两项。
   delete settings.player?.hardwareDecode;
   delete settings.player?.highPerformanceGpu;
+  // 30 帧上限已移除，落到 60 帧。
+  if (settings.danmaku?.fps === 30) settings.danmaku.fps = 60;
   // 日志开关没有接入实现，落盘旧值一并清掉。
   delete settings.other?.log;
   return settings;
