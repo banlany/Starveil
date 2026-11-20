@@ -2,8 +2,11 @@
 // 支持的输入：starveil 备份、中立同步包。
 
 import { canonicalImage, ENABLED_PLATFORMS, normalizePlatform, roomUrl } from './api.js';
+import { SKINS } from '../skins/registry.js';
+import { sanitizeOverrides } from '../skins/overrides.js';
 import {
   ACCOUNT_PLATFORMS,
+  applyTheme,
   clone,
   collectAccounts,
   followKey,
@@ -250,6 +253,16 @@ function importBundle(data, options = {}) {
         delete patch[key];
       }
     }
+    if (patch.appearance && typeof patch.appearance === 'object') {
+      // 同步包只带皮肤 id，本机没有这个 id 时保留本机皮肤。
+      if (patch.appearance.skin && !SKINS.some((skin) => skin.id === patch.appearance.skin)) {
+        delete patch.appearance.skin;
+        skipped.skin = 1;
+      }
+      if (patch.appearance.overrides !== undefined) {
+        patch.appearance.overrides = sanitizeOverrides(patch.appearance.overrides);
+      }
+    }
     // 剔除已废弃的 danmaku.blockUsers；30 帧上限已移除。
     if (patch.danmaku && typeof patch.danmaku === 'object') {
       delete patch.danmaku.blockUsers;
@@ -263,6 +276,7 @@ function importBundle(data, options = {}) {
     if (patch.other && typeof patch.other === 'object') delete patch.other.log;
     state.settings = merge(clone(state.settings), patch);
     saveSettings();
+    applyTheme();
     settingsCount = Object.keys(patch).length;
   }
 

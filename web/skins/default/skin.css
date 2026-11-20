@@ -12,9 +12,9 @@ html[data-skin="default"] {
   /* -------------------------------------------------- 主题色
      这里只是首帧兜底，运行时由 store.js 按用户选择覆盖。
      --accent 须等于 registry.js 里 accents 的第一项；
-     --accent-soft 透明度须与 store.js 一致（深色 0.16 / 浅色 0.18）。 */
+     --accent-soft 的百分比须与 store.js 一致（深色 16% / 浅色 18%）。 */
   --accent: #5b8def;
-  --accent-soft: rgba(91, 141, 239, 0.16);
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
   /* 压在强调色上的文字/图标 */
   --accent-on: #ffffff;
   /* 强调色的「深一档」（按下态）与「光晕」（渐变里那一团） */
@@ -310,6 +310,8 @@ html[data-skin="default"] {
   --row-pad-x: 18px;
   --row-pad-y: 11px;
   --row-min-h: 60px;
+  /* 一级设置项的行高，独立于分组内的列表行 */
+  --item-min-h: 57px;
   --row-hover: var(--surface-2);
 
   /* 网格内容卡：默认无底框；可接回 --card-* 改为带框卡片。 */
@@ -355,7 +357,7 @@ html[data-skin="default"] {
 }
 
 html[data-skin="default"][data-theme="light"] {
-  --accent-soft: rgba(91, 141, 239, 0.18);
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
 
   --bg: #f5f5f8;
   --bg-elev: #ffffff;

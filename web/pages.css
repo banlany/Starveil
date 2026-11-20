@@ -598,7 +598,7 @@
 
 /* 一级设置项为独立圆角卡片。 */
 .settings-item {
-  min-height: 57px;
+  min-height: var(--item-min-h);
   display: flex;
   align-items: center;
   gap: 18px;
@@ -2026,22 +2026,53 @@ body[data-card-size="large"] .room-grid {
   gap: 24px 18px;
 }
 
-body[data-density="compact"] .settings-item {
-  min-height: 49px;
+/* ------------------------------------------------------------ 高级外观 */
+
+.override-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
-body[data-density="compact"] .setting-row {
-  min-height: 52px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+input[type="range"].override-slider {
+  width: 132px;
+  height: 3px;
+  background: var(--surface-3);
+  border-radius: var(--radius-pill);
 }
 
-body[data-density="relaxed"] .settings-item {
-  min-height: 64px;
+input[type="range"].override-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  box-shadow: none;
 }
 
-body[data-density="relaxed"] .setting-row {
-  min-height: 68px;
+.override-value {
+  min-width: 46px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.override-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+}
+
+.override-reset:hover {
+  background: var(--wash-2);
+  color: var(--fg);
+}
+
+.override-reset[hidden] {
+  display: none;
 }
 
 /* ------------------------------------------------------------ 首页尾部 */

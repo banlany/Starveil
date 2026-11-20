@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { OVERRIDE_KEYS } from '../web/skins/overrides.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -272,6 +273,14 @@ for (const name of COMPONENT_FILES) {
 for (const [name, where] of usedVars) {
   if (definedVars.has(name) || RUNTIME_VARS.has(name)) continue;
   problems.push(`${where}  var(${name}) 没有定义：皮肤里补上，或者确实是运行时注入就加进 RUNTIME_VARS`);
+}
+
+// ---------------------------------------------------------------- 3b. 覆盖层白名单
+
+for (const key of OVERRIDE_KEYS) {
+  if (!definedVars.has(key)) {
+    problems.push(`web/skins/overrides.js: ${key} 没有定义：皮肤里补上，或从覆盖层移除`);
+  }
 }
 
 // ---------------------------------------------------------------- 4. 图标

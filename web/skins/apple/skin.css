@@ -9,8 +9,8 @@ html[data-skin="apple"][data-theme="light"] {
   /* -------------------------------------------------- 主题色
      只提供系统蓝；用户仍可在设置里换成自定义色。 */
   --accent: #0071e3;
-  /* 浅色档的 soft 透明度要和 store.js 算出来的一致（浅色 0.18） */
-  --accent-soft: rgba(0, 113, 227, 0.18);
+  /* 浅色档的 soft 百分比须与 store.js 一致（18%） */
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
   --accent-on: #ffffff;
   --accent-strong: color-mix(in srgb, var(--accent) 84%, #000);
   /* 渐变里那一团只在封面兜底图上出现，压得很淡 */
@@ -278,6 +278,7 @@ html[data-skin="apple"][data-theme="light"] {
   --row-pad-x: 20px;
   --row-pad-y: 14px;
   --row-min-h: 64px;
+  --item-min-h: 57px;
   --row-hover: rgba(0, 0, 0, 0.028);
 
   /* 网格内容卡（首页/分类/关注/搜索）：只留封面和文字，不给底框。

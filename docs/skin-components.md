@@ -56,7 +56,7 @@
 | 分组容器 | `.settings-group` | `--card-bg` `--card-border` `--card-radius` `--card-shadow` |
 | 设置两栏 | `.settings-side` `.settings-pane` | `--card-*`（左右各一张卡片，各自滚动） |
 | 分组里的行 | `.setting-row` | `--row-divider` `--row-pad-x` `--row-pad-y` `--row-min-h` `--row-hover` |
-| 一级设置项 | `.settings-item` | `--card-*` `--row-hover` |
+| 一级设置项 | `.settings-item` | `--card-*` `--row-hover`；行高 `--item-min-h` |
 | 工具卡 / 动作卡 / 统计卡 | `.tool-card` `.settings-action-card` `.stats-card` | `--card-*` `--card-gap` |
 | 信息表 | `.info-table` `.info-table > div` | `--card-*` `--row-divider` |
 | 列表行 | `.stats-row` `.anchor-card` `.follow-card` `.chat-follow-card` `.lan-peer` `.sc-history-item` | `--card-*` `--row-hover` |

@@ -21,11 +21,13 @@ import {
   resetSettings,
   saveLogin,
   setAccent,
+  setOverride,
   setSetting,
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { SKINS, accentForMode, skinAccents, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
+import { OVERRIDE_GROUPS, formatOverride } from '../../skins/overrides.js';
 // 外部数据导入（starveil 备份 / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能/帧率选项由 danmaku.js 提供，与直播间共用。
@@ -52,7 +54,7 @@ import {
 } from '../ui.js';
 
 // 兜底版本号，与 tauri.conf.json 一致；运行时优先用 app.getVersion()。
-const FALLBACK_VERSION = '0.8.0';
+const FALLBACK_VERSION = '0.8.1';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -449,7 +451,43 @@ function buildRow(config, repaint, ctx) {
   control.className = 'setting-control';
   row.appendChild(control);
 
-  if (config.type === 'switch') {
+  if (config.type === 'override') {
+    const item = config.item;
+    const stored = getSetting('appearance.overrides', {})?.[item.key];
+    const computed = getComputedStyle(document.documentElement).getPropertyValue(item.key).trim();
+    const fallback = Number.parseFloat(computed);
+    const start = Number.isFinite(fallback) ? fallback : item.min;
+    const wrap = document.createElement('div');
+    wrap.className = 'override-control';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'override-slider';
+    slider.min = String(item.min);
+    slider.max = String(item.max);
+    slider.step = String(item.step);
+    slider.value = String(stored ? Number.parseFloat(stored) : start);
+    slider.setAttribute('aria-label', item.label);
+    const value = document.createElement('span');
+    value.className = 'override-value';
+    value.textContent = stored || formatOverride(item, start);
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'override-reset';
+    reset.title = '恢复皮肤默认';
+    reset.innerHTML = icon('refresh', 14);
+    reset.hidden = !stored;
+    slider.addEventListener('input', () => {
+      const text = formatOverride(item, Number(slider.value));
+      value.textContent = text;
+      document.documentElement.style.setProperty(item.key, text);
+    });
+    slider.addEventListener('change', () => {
+      setOverride(item.key, formatOverride(item, Number(slider.value)));
+    });
+    reset.addEventListener('click', () => setOverride(item.key, null));
+    wrap.append(slider, value, reset);
+    control.appendChild(wrap);
+  } else if (config.type === 'switch') {
     const button = document.createElement('button');
     button.className = 'switch';
     button.setAttribute('role', 'switch');
@@ -697,7 +735,23 @@ function detailSections(key, ctx, repaint) {
             }],
           }]
           : []),
-        { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' }, onChange: (value) => { document.body.dataset.density = value; } }] },
+        { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' } }] },
+        {
+          label: '高级外观',
+          rows: [
+            ...OVERRIDE_GROUPS.flatMap((group) => group.items.map((item) => ({
+              type: 'override',
+              item,
+              title: `${group.label} · ${item.label}`,
+            }))),
+            {
+              type: 'action',
+              title: '恢复皮肤默认值',
+              desc: '清除全部覆盖项，回到当前皮肤自带的取值',
+              onClick: () => setSetting('appearance.overrides', {}),
+            },
+          ],
+        },
         // 屏幕方向只有移动端有意义：桌面窗口的尺寸方向由用户自己拖。
         ...(IS_MOBILE
           ? [{

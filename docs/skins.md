@@ -230,6 +230,19 @@ Windows 没有系统标题栏（`decorations: false`），顶部那条是我们�
 不然黑字带黑影像是糊了；`--media-accent` 要跟着底一起换，
 否则「为深色配的浅色主题色」压在白底上会看不见。
 
+### 用户变量覆盖层
+
+`web/skins/overrides.js` 是唯一白名单：`OVERRIDE_GROUPS` 声明可覆盖的变量、取值范围与单位，
+设置页「外观 → 高级外观」按它生成滑杆。成对变量（`--media-*` 的底色与字色、`--on-sc*`）不列入，
+`sanitizeOverrides()` 只接受表内变量与「数值 + 本项单位」。
+
+- 值存在 `appearance.overrides`，只记改过的项；切皮肤保留，清除后回到皮肤自带值。
+- `applyTheme()` 把 `DENSITY_PRESETS` 的密度预设与用户覆盖合并，写进 `<html>` 的 inline style，
+  优先级高于 `skin.css`。`index.html` 的首帧脚本读 `starveil.boot.v1` 的 `overrides` 提前注入。
+- 界面密度走 `--row-min-h` `--row-pad-y` `--item-min-h`，与用户覆盖共用同一组变量。
+- 备份与同步包导入时用 `sanitizeOverrides()` 清洗覆盖值，并校验 `appearance.skin` 已注册。
+- `check-skin.mjs` 核对白名单里的每个变量都有定义；新增可调项只改 `OVERRIDE_GROUPS` 一处。
+
 ### 运行时注入的变量
 
 这几个不写在皮肤里，由 JS 直接 `setProperty`，检查脚本已放行：

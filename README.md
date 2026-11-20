@@ -4,7 +4,7 @@
 推荐、分类、搜索、直播间与播放。界面是纯 HTML / CSS / ES Modules（无前端框架），
 播放走 mpegts.js（FLV）与 hls.js（HLS），协议层是 Rust 的 [`live_core`](src-tauri/vendor/live_core)。
 
-> **0.8.0** · Windows 10/11 x64 · Android 8.0+（arm64-v8a） · GPL-3.0 · 非官方第三方客户端，仅供学习交流
+> **0.8.1** · Windows 10/11 x64 · Android 8.0+（arm64-v8a） · GPL-3.0 · 非官方第三方客户端，仅供学习交流
 
 ![首页](docs/img/home.png)
 

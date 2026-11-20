@@ -26,7 +26,8 @@
   <!-- 皮肤与明暗必须在首帧前定下来：
        皮肤文件只声明 CSS 变量，晚一步加载会先闪一帧默认配色，
        浅色模式更是会先黑一下。这条内联脚本读 store.js 写的预涂缓存
-       （starveil.boot.v1），再按 `skins/<id>/skin.css` 的约定插入样式表。
+       （starveil.boot.v1，含 theme / skin / overrides），提前注入覆盖变量，
+       再按 `skins/<id>/skin.css` 的约定插入样式表。
        路径规则和 skins/registry.js 的 skinHref() 必须一致。 -->
   <script>
     (function () {
@@ -40,6 +41,14 @@
         }
         if (boot.theme === 'light' || boot.theme === 'dark') root.dataset.theme = boot.theme;
         root.dataset.themeMode = boot.theme || 'dark';
+        if (boot.overrides && typeof boot.overrides === 'object') {
+          for (var key in boot.overrides) {
+            var val = boot.overrides[key];
+            if (!/^--[a-z0-9-]+$/.test(key)) continue;
+            if (typeof val !== 'string' || val.length > 64 || /[;{}<>]/.test(val)) continue;
+            root.style.setProperty(key, val);
+          }
+        }
       } catch (e) {
         /* 缓存坏了就用默认皮肤 + 深色，applyTheme 跑起来会纠正 */
       }

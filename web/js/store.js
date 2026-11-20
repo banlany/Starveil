@@ -3,6 +3,7 @@ import { api, canonicalImage, roomUrl } from './api.js';
 import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
 import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAccents, skinHref, skinModes } from '../skins/registry.js';
+import { resolvedOverrides, sanitizeOverrides } from '../skins/overrides.js';
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
@@ -64,6 +65,8 @@ export const DEFAULT_SETTINGS = {
     // 主题色是否跟随皮肤；用户自选后不再被皮肤覆盖。
     accentSource: 'skin',
     density: 'comfortable',
+    // 用户覆盖的皮肤变量，键为变量名，只存改过的项。
+    overrides: {},
     // 界面字体家族名；空串表示用皮肤自带的字体栈。仅默认皮肤提供这项。
     font: '',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
@@ -226,6 +229,7 @@ function loadSettings() {
     settings.appearance.skin = DEFAULT_SKIN_ID;
   }
   settings.appearance.skin = getSkin(settings.appearance.skin).id;
+  settings.appearance.overrides = sanitizeOverrides(settings.appearance.overrides);
   const bakedAccent = skinAccent(settings.appearance.skin);
   if (!settings.appearance.accentSource) {
     settings.appearance.accentSource = settings.appearance.accent === bakedAccent ? 'skin' : 'user';
@@ -302,6 +306,16 @@ export function setAccent(color, followSkin = false) {
   const appearance = state.settings.appearance;
   appearance.accent = color;
   appearance.accentSource = followSkin ? 'skin' : 'user';
+  saveSettings();
+  applyTheme();
+}
+
+/// 写入或清除单个覆盖项；清除后回到皮肤自带值。
+export function setOverride(key, value) {
+  const appearance = state.settings.appearance;
+  if (!appearance.overrides || typeof appearance.overrides !== 'object') appearance.overrides = {};
+  if (value === null || value === undefined) delete appearance.overrides[key];
+  else appearance.overrides[key] = value;
   saveSettings();
   applyTheme();
 }
@@ -398,9 +412,13 @@ export function applyTheme() {
   // 存原值，落到 DOM 时按当前明暗档换算。
   const accent = accentForMode(resolveAccentValue(skin, appearance), effective);
   root.style.setProperty('--accent', accent);
-  root.style.setProperty('--accent-soft', hexToAlpha(accent, effective === 'light' ? 0.18 : 0.16));
+  root.style.setProperty('--accent-soft', `color-mix(in srgb, ${accent} ${effective === 'light' ? 18 : 16}%, transparent)`);
   // 压在强调色上的文字颜色，每次 applyTheme 重算。
   root.style.setProperty('--accent-on', isLightColor(accent) ? '#15151b' : '#ffffff');
+
+  // 变量覆盖层：密度预设打底，用户覆盖值优先，inline style 高于 skin.css。
+  const overrides = resolvedOverrides(appearance);
+  applyOverrideVars(overrides);
 
   // 界面字体只给默认皮肤用：其它皮肤自带字体栈，切过去时把覆盖清掉。
   const userFont = skin.id === DEFAULT_SKIN_ID ? String(appearance.font || '').trim() : '';
@@ -412,8 +430,20 @@ export function applyTheme() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (bg && meta) meta.setAttribute('content', bg);
   if (bg) syncSystemBar(effective, bg);
-  rememberBootPaint(effective, skin.id);
+  rememberBootPaint(effective, skin.id, overrides);
   window.dispatchEvent(new CustomEvent('simple-live:theme'));
+}
+
+/// 覆盖层注入：清掉上一轮有、这一轮没有的键，其余写入 inline style。
+let lastOverrideKeys = [];
+
+function applyOverrideVars(vars) {
+  const root = document.documentElement;
+  for (const key of lastOverrideKeys) {
+    if (!(key in vars)) root.style.removeProperty(key);
+  }
+  for (const [key, value] of Object.entries(vars)) root.style.setProperty(key, value);
+  lastOverrideKeys = Object.keys(vars);
 }
 
 /// 读一个 CSS 变量的当前计算值（皮肤文件是唯一来源）。
@@ -436,10 +466,10 @@ function syncSystemBar(effective, color) {
 /// 首帧预涂缓存（theme / skin），供 index.html 内联脚本读取，不参与备份与同步。
 const BOOT_KEY = 'starveil.boot.v1';
 
-function rememberBootPaint(theme, skin) {
+function rememberBootPaint(theme, skin, overrides = {}) {
   try {
     const prev = localStorage.getItem(BOOT_KEY);
-    const next = JSON.stringify({ theme, skin });
+    const next = JSON.stringify({ theme, skin, overrides });
     if (prev !== next) localStorage.setItem(BOOT_KEY, next);
   } catch {
     /* 隐私模式/配额满：只是丢一次预涂，不影响功能 */
@@ -458,30 +488,32 @@ export function toggleTheme() {
   return next;
 }
 
-function hexToAlpha(hex, alpha) {
-  const normalized = String(hex).replace('#', '');
-  if (normalized.length !== 6) return `rgba(251,114,153,${alpha})`;
-  const r = parseInt(normalized.slice(0, 2), 16);
-  const g = parseInt(normalized.slice(2, 4), 16);
-  const b = parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
+/// 把 CSS 颜色规范化成 RGB 通道；canvas 不认的值保留上一次的哨兵色。
+let colorCtx = null;
+
+function colorChannels(value) {
+  if (!colorCtx) colorCtx = document.createElement('canvas').getContext('2d');
+  if (!colorCtx) return null;
+  colorCtx.fillStyle = '#000000';
+  colorCtx.fillStyle = String(value);
+  const normalized = colorCtx.fillStyle;
+  const hex = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(normalized);
+  if (hex) {
+    return [0, 2, 4].map((offset) => parseInt(hex[1].slice(offset, offset + 2), 16));
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(normalized);
+  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
 }
 
 /// 是否需要用深色文字：按 WCAG 相对亮度判断，阈值 0.40。
-function isLightColor(hex) {
-  const normalized = String(hex).replace('#', '');
-  const full =
-    normalized.length === 3
-      ? normalized.split('').map((char) => char + char).join('')
-      : normalized;
-  if (full.length !== 6) return false;
-  const channel = (value) => {
-    const ratio = value / 255;
+function isLightColor(value) {
+  const channels = colorChannels(value);
+  if (!channels) return false;
+  const channel = (v) => {
+    const ratio = v / 255;
     return ratio <= 0.03928 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
   };
-  const r = channel(parseInt(full.slice(0, 2), 16));
-  const g = channel(parseInt(full.slice(2, 4), 16));
-  const b = channel(parseInt(full.slice(4, 6), 16));
+  const [r, g, b] = channels.map(channel);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4;
 }
 
