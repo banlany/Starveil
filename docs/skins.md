@@ -107,6 +107,7 @@ html[data-skin="apple"][data-theme="light"] {
 | 图标 | `--icon-stroke` `--icon-cap` `--icon-join` `--icon-stroke-thin` |
 | 圆角 | `--radius-2xs` `--radius-xs` `--radius-sm` `--radius-md` `--radius` `--radius-lg` `--radius-xl` `--radius-pill` |
 | 字体 | `--font` `--font-display` `--font-mono` |
+| 动效 | `--dur-fast` `--dur-base` `--dur-slow` `--ease` |
 
 ### 字体：把要用的字体排进 `--font`，别指望系统装了什么
 
@@ -120,9 +121,20 @@ GB2312 子集、三个字重），所以栈里可以放心写它：
 - 兜底再写 `system-ui, sans-serif`。
 
 弹幕走 canvas，拿不到 CSS 变量，`danmaku.js` 会读 `getComputedStyle(document.body).fontFamily`
-当作画布字体，所以**改皮肤就等于改弹幕字体**，不需要另外配一遍。
+当作画布字体，所以**没单独设弹幕字体时，改皮肤就等于改弹幕字体**。
 生僻字仍由系统字体逐字兜底（内置字体只到 GB2312），不会出现方块。
-| 动效 | `--dur-fast` `--dur-base` `--dur-slow` `--ease` |
+
+### 用户字体：两个运行时变量，皮肤里不要定义
+
+设置页可以覆盖字体，覆盖值由 JS 写到 `:root` / 聊天列表上，皮肤里**不定义**这两个变量：
+
+| 变量 | 写入方 | 用途 |
+|---|---|---|
+| `--font-user` | `store.js` 的 `applyTheme` | 外观 → 界面字体；值为 `"<字体>", var(--font)`，未设置时整条链落回 `--font` |
+| `--dm-font` | `room.js` 的 `applyDanmakuStyle` | 弹幕 → 字体；写到 `#chat-list`，`.chat-line` 用 `var(--dm-font, inherit)` |
+
+界面字体只对默认皮肤开放：`applyTheme` 在其它皮肤下会清掉 `--font-user`，所以皮肤自带的
+字体栈不会被用户设置覆盖。弹幕字体与皮肤无关，选中值由 canvas 直接使用。
 
 ### 主题色：一套皮肤提供一组，不是固定一个
 

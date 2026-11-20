@@ -64,6 +64,8 @@ export const DEFAULT_SETTINGS = {
     // 主题色是否跟随皮肤；用户自选后不再被皮肤覆盖。
     accentSource: 'skin',
     density: 'comfortable',
+    // 界面字体家族名；空串表示用皮肤自带的字体栈。仅默认皮肤提供这项。
+    font: '',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
     orientation: 'auto',
   },
@@ -103,6 +105,8 @@ export const DEFAULT_SETTINGS = {
     area: 40, // 顶部显示区域，占播放器高度百分比
     lines: 10,
     font: 20,
+    // 弹幕字体家族名；空串表示跟随界面字体。
+    fontFamily: '',
     weight: 700,
     speed: 8, // 弹幕持续秒数
     opacity: 95,
@@ -397,6 +401,11 @@ export function applyTheme() {
   root.style.setProperty('--accent-soft', hexToAlpha(accent, effective === 'light' ? 0.18 : 0.16));
   // 压在强调色上的文字颜色，每次 applyTheme 重算。
   root.style.setProperty('--accent-on', isLightColor(accent) ? '#15151b' : '#ffffff');
+
+  // 界面字体只给默认皮肤用：其它皮肤自带字体栈，切过去时把覆盖清掉。
+  const userFont = skin.id === DEFAULT_SKIN_ID ? String(appearance.font || '').trim() : '';
+  if (userFont) root.style.setProperty('--font-user', `"${userFont}", var(--font)`);
+  else root.style.removeProperty('--font-user');
 
   // 标题栏底色与安卓系统栏跟随 --bg；取不到值时不设置。
   const bg = readVar('--bg');

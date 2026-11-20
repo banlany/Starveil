@@ -12,6 +12,8 @@ const LINE_HEIGHT_RATIO = 1.35;
 /// 兜底默认值，与 store.js 的 DEFAULTS.danmaku 一致。
 const FALLBACK_CONFIG = {
   font: 20,
+  // 空串表示跟随界面字体（取 body 计算值）。
+  fontFamily: '',
   weight: 700,
   opacity: 95,
   area: 40,
@@ -379,7 +381,14 @@ export function createDanmakuLayer(container, video, config = null) {
     return Math.max(18, Math.round(font * LINE_HEIGHT_RATIO));
   }
 
-  /// 弹幕字体取自 body 计算后的 font-family，跟随皮肤。
+  /// 弹幕字体：用户指定的家族名在前，界面字体栈兜底，跟随皮肤与界面字体设置。
+  function fontFamilyFor(config) {
+    const family = String(config.fontFamily || '').trim();
+    const fallback = themeFontFamily();
+    return family ? `"${family}", ${fallback}` : fallback;
+  }
+
+  /// 界面字体取自 body 计算后的 font-family。
   function themeFontFamily() {
     try {
       const value = getComputedStyle(document.body).fontFamily;
@@ -410,7 +419,7 @@ export function createDanmakuLayer(container, video, config = null) {
       speed: Math.max(60, (session.width || container.clientWidth || 960) / durationSeconds),
       opacity: Math.max(0.2, Math.min(1, (config.opacity ?? 95) / 100)),
       renderRegion: Math.max(0.1, Math.min(1, regionPx / height)),
-      fontFamily: themeFontFamily(),
+      fontFamily: fontFamilyFor(config),
       fontWeight: String(config.weight || FALLBACK_CONFIG.weight),
       heightReduce: 0,
       avoidOverlap: true,
@@ -799,7 +808,12 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       if (session.config.emoji === false) clearImages();
       if (!session.renderer) return;
       // 字号或性能档位变化需重建。
-      if (!previous || previous.font !== session.config.font || previous.perf !== session.config.perf) {
+      if (
+        !previous ||
+        previous.font !== session.config.font ||
+        previous.perf !== session.config.perf ||
+        previous.fontFamily !== session.config.fontFamily
+      ) {
         rebuild();
         return;
       }

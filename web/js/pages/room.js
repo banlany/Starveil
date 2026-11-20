@@ -7,6 +7,7 @@ import { createDualPlayback, seekInBuffer } from '../dual.js';
 import { flvBufferOptions, hlsBufferOptions } from '../player-buffer.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
 import { IS_MOBILE } from '../platform.js';
+import { openFontPicker, fontLabelOf } from '../font-picker.js';
 import { bindHorizontalSwipe } from '../swipe.js';
 import {
   addWatchTime,
@@ -442,6 +443,10 @@ export function renderRoom(ctx, params = {}) {
     layer.style.top = `${Math.max(0, Number(config.safeTop) || 0)}px`;
     layer.style.bottom = `${Math.max(0, Number(config.safeBottom) || 0)}px`;
     applyBigEmojiSize(config.bigEmojiLines);
+    // 聊天列表正文跟随弹幕字体；空值时清掉变量，落回界面字体。
+    const family = String(config.fontFamily || '').trim();
+    if (family) chatList?.style.setProperty('--dm-font', `"${family}"`);
+    else chatList?.style.removeProperty('--dm-font');
     danmaku?.update(config);
   }
 
@@ -1080,6 +1085,7 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>显示区域</span>${picker('cs-area', 'area', presetChoices(CS_PRESETS.area, config.area, (value) => `${value}%`))}</div>
         <div class="chat-setting-row"><span>显示行数</span>${picker('cs-lines', 'lines', presetChoices(CS_PRESETS.lines, config.lines, (value) => `${value} 行`))}</div>
         <div class="chat-setting-row"><span>字体大小</span>${picker('cs-font', 'font', presetChoices(CS_PRESETS.font, config.font, (value) => `${value} px`))}</div>
+        ${IS_MOBILE ? '' : `<div class="chat-setting-row"><span>字体</span><button type="button" class="chat-setting-select" id="cs-font-family" aria-haspopup="dialog"><span class="chat-setting-value"${config.fontFamily ? ` style="font-family:'${escapeHtml(config.fontFamily)}'"` : ''}>${escapeHtml(config.fontFamily || '跟随界面')}</span>${icon('chevronDown', 13)}</button></div>`}
         <div class="chat-setting-row"><span>字体粗细</span>${picker('cs-weight', 'weight', fixedChoices([[300, '极细'], [400, '很细'], [500, '正常'], [600, '小粗'], [700, '偏粗'], [800, '很粗'], [900, '极粗']], config.weight))}</div>
         <div class="chat-setting-row"><span>滚动速度</span>${picker('cs-speed', 'speed', presetChoices(CS_PRESETS.speed, config.speed, (value) => `${value} 秒`))}</div>
         <div class="chat-setting-row"><span>弹幕描边</span><button class="switch" id="cs-stroke" aria-checked="${config.stroke}"></button></div>
@@ -1149,6 +1155,29 @@ export function renderRoom(ctx, params = {}) {
       area.addEventListener('input', () => setConfig(key, area.value));
     };
 
+    // 字体：打开与设置页同一个选择浮层，选完立即写回并重建弹幕层。
+    const fontButton = wrap.querySelector('#cs-font-family');
+    if (fontButton) {
+      const fontValue = fontButton.querySelector('.chat-setting-value');
+      fontLabelOf(config.fontFamily, '跟随界面').then((text) => {
+        fontValue.textContent = text;
+      });
+      fontButton.addEventListener('click', () => {
+        openFontPicker({
+          current: config.fontFamily || '',
+          followLabel: '跟随界面',
+          onPick: (name) => {
+            fontValue.style.fontFamily = name ? `"${name}"` : '';
+            fontValue.textContent = name || '跟随界面';
+            fontLabelOf(name, '跟随界面').then((text) => {
+              fontValue.textContent = text;
+            });
+            setConfig('fontFamily', name);
+          },
+        });
+      });
+    }
+
     bindSwitch('cs-enabled', 'enabled');
     bindSwitch('cs-emoji', 'emoji');
     bindSwitch('cs-stroke', 'stroke');
@@ -1202,7 +1231,7 @@ export function renderRoom(ctx, params = {}) {
     // 其余参数交给弹幕层；仅字号变化需要重建实例。
     danmaku?.update(state.settings.danmaku);
     // 边距变化会改变容器尺寸，弹幕层自己会感知并重排。
-    if (['opacity', 'lines', 'area', 'font', 'weight', 'stroke', 'strokeWidth', 'safeTop', 'safeBottom'].includes(key)) {
+    if (['opacity', 'lines', 'area', 'font', 'fontFamily', 'weight', 'stroke', 'strokeWidth', 'safeTop', 'safeBottom'].includes(key)) {
       applyDanmakuStyle();
     }
   }

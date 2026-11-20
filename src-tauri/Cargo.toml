@@ -36,6 +36,10 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "charset"] }
 
+# Windows 用 DirectWrite 枚举已装字体（`src/fonts.rs`），只有 Windows 需要这个依赖。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_DirectWrite"] }
+
 # 屏幕方向要调 Activity.setRequestedOrientation，只能走 JNI；
 # `ndk-context` 由 Tauri 的 Android 启动流程初始化，拿得到 JavaVM 与 Activity。
 [target.'cfg(target_os = "android")'.dependencies]

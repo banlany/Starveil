@@ -149,6 +149,15 @@ async function douyinSign({ kind, page = 1, partition = '' }) {
   return { msToken, aBogus };
 }
 
+// 系统已装字体的家族清单（`{ name, label }`）；只请求一次，非 Windows 返回空数组。
+let fontListTask = null;
+export function listFonts() {
+  fontListTask ??= call('list_fonts')
+    .then((list) => (Array.isArray(list) ? list : []))
+    .catch(() => []);
+  return fontListTask;
+}
+
 // ---------------------------------------------------------------- 命令
 
 export const api = {

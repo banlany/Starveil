@@ -31,6 +31,10 @@ const RUNTIME_VARS = new Set([
   '--big-emoji-lines',
   '--avatar-hue',
   '--chat-width',
+  // store.js 的 applyTheme 写入的界面字体覆盖（设置 → 外观 → 字体）
+  '--font-user',
+  // room.js 把弹幕字体写到聊天列表上（设置 → 弹幕 → 字体）
+  '--dm-font',
   // styles.css / mobile.css 里的布局尺寸
   '--rail-width',
   '--topbar-height',

@@ -1275,6 +1275,8 @@ body.is-resizing-chat .room-chat {
   line-height: 1.55;
   word-break: break-word;
   padding: 2px 0;
+  /* 弹幕字体（设置 → 弹幕 → 字体）；未设置时继承界面字体。 */
+  font-family: var(--dm-font, inherit); /* skin:allow 弹幕字体由设置注入，缺省继承界面字体 */
 }
 
 .chat-line .who {

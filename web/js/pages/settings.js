@@ -1,5 +1,5 @@
 // 设置：一级列表 + 二级详情。大部分选项会真正写入 localStorage 并即时生效。
-import { api, formatCount, formatOnline, timeAgo, roomUrl } from '../api.js';
+import { api, formatCount, formatOnline, listFonts, timeAgo, roomUrl } from '../api.js';
 import {
   aggregateStats,
   applySkin,
@@ -25,7 +25,7 @@ import {
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
-import { SKINS, accentForMode, skinAccents, skinModes } from '../../skins/registry.js';
+import { SKINS, accentForMode, skinAccents, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
 // 外部数据导入（starveil 备份 / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能/帧率选项由 danmaku.js 提供，与直播间共用。
@@ -34,6 +34,8 @@ import { DANMAKU_PRESETS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
 import { BUFFER_PRESETS } from '../player-buffer.js';
 // 移动端专属设置项（屏幕方向）要按平台显示。
 import { IS_MOBILE } from '../platform.js';
+// 系统字体清单只在 Windows 有，字体行按结果决定显不显示。
+import { openFontPicker, fontLabelOf } from '../font-picker.js';
 import {
   avatarHtml,
   bindImageFallback,
@@ -499,6 +501,42 @@ function buildRow(config, repaint, ctx) {
       );
     });
     control.appendChild(button);
+  } else if (config.type === 'font') {
+    const current = String(getSetting(config.key) || '');
+    const button = document.createElement('button');
+    button.className = 'select-btn';
+    button.innerHTML = `${icon('chevron', 14)}`;
+    const label = document.createElement('span');
+    label.textContent = current || config.followLabel || '跟随默认';
+    // 当前值按字体自身字形显示；显示名（中文名）在清单到达后补上。
+    if (current) {
+      label.style.fontFamily = `"${current}"`;
+      fontLabelOf(current, config.followLabel).then((text) => {
+        label.textContent = text;
+      });
+    }
+    button.prepend(label);
+    button.addEventListener('click', () => {
+      openFontPicker({
+        current,
+        followLabel: config.followLabel,
+        onPick: (name) => {
+          setSetting(config.key, name);
+          config.onChange?.(name);
+          repaint();
+        },
+      });
+    });
+    control.appendChild(button);
+    // 读不到系统字体清单的平台（非 Windows、安卓）整块不出现，连分组标签一起摘掉。
+    listFonts().then((fonts) => {
+      if (fonts.length) return;
+      const group = row.closest('.settings-group');
+      const label = group?.previousElementSibling;
+      row.remove();
+      if (group && !group.children.length) group.remove();
+      if (label?.classList.contains('settings-group-label')) label.remove();
+    });
   } else if (config.type === 'action') {
     if (config.value) {
       const value = document.createElement('span');
@@ -645,6 +683,19 @@ function detailSections(key, ctx, repaint) {
         // 只有一套配色的皮肤不提供主题色选择。
         ...(skinAccents(currentSkin().id).length > 1
           ? [{ label: '主题颜色', rows: [{ type: 'colors' }] }]
+          : []),
+        // 界面字体只给默认皮肤：其它皮肤自带字体栈，切过去时覆盖会被清掉。
+        ...(!IS_MOBILE && currentSkin().id === DEFAULT_SKIN_ID
+          ? [{
+            label: '界面字体',
+            rows: [{
+              type: 'font',
+              key: 'appearance.font',
+              title: '字体',
+              desc: '作用于整个界面与标题；字体里没有的字回落到皮肤自带字体',
+              followLabel: '跟随皮肤',
+            }],
+          }]
           : []),
         { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' }, onChange: (value) => { document.body.dataset.density = value; } }] },
         // 屏幕方向只有移动端有意义：桌面窗口的尺寸方向由用户自己拖。
@@ -803,6 +854,7 @@ function detailSections(key, ctx, repaint) {
             presetRow('danmaku.speed', '滚动速度', DANMAKU_PRESETS.speed, (value) => `${value} 秒`, '弹幕持续秒数，越小越快'),
             presetRow('danmaku.opacity', '不透明度', DANMAKU_PRESETS.opacity, (value) => `${value}%`),
             presetRow('danmaku.font', '字体大小', DANMAKU_PRESETS.font, (value) => `${value} px`),
+            ...(IS_MOBILE ? [] : [{ type: 'font', key: 'danmaku.fontFamily', title: '字体', desc: '作用于弹幕画布与右侧聊天列表', followLabel: '跟随界面' }]),
             { type: 'select', key: 'danmaku.weight', title: '字体粗细', numeric: true, valueMap: { 300: '极细', 400: '很细', 500: '正常', 600: '小粗', 700: '偏粗', 800: '很粗', 900: '极粗' } },
             { type: 'switch', key: 'danmaku.stroke', title: '弹幕描边' },
             presetRow('danmaku.strokeWidth', '描边宽度', DANMAKU_PRESETS.strokeWidth, (value) => `${value} px`),

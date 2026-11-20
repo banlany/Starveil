@@ -23,6 +23,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 mod flv;
 mod webdav;
 
+// 系统字体清单：设置页的界面字体与弹幕字体用它，非 Windows 返回空表。
+mod fonts;
+
 // 局域网同步：UDP 广播发现 + 本机 HTTP 服务（同一 Wi-Fi 内直连收发同步包）。
 mod lan_sync;
 // 剪贴板与「用浏览器打开」在安卓上走 JNI（见 `MainActivity`），不需要这套 Win32 壳。
@@ -1081,6 +1084,14 @@ fn app_platform() -> PlatformInfo {
         os: std::env::consts::OS,
         mobile: cfg!(any(target_os = "android", target_os = "ios")),
     }
+}
+
+/// 已安装的字体家族；非 Windows 返回空表，前端据此隐藏字体选项。
+#[tauri::command]
+async fn list_fonts() -> Vec<fonts::FontEntry> {
+    tauri::async_runtime::spawn_blocking(fonts::list)
+        .await
+        .unwrap_or_default()
 }
 
 /// 屏幕方向：auto / portrait / landscape，通过 `Activity.setRequestedOrientation` 设置。
@@ -2869,6 +2880,7 @@ pub fn run() {
             resolve_input,
             quit_app,
             app_platform,
+            list_fonts,
             set_screen_orientation,
             enter_picture_in_picture,
             in_picture_in_picture,

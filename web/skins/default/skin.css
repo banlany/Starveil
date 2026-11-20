@@ -330,9 +330,10 @@ html[data-skin="default"] {
   --radius-pill: 999px;
 
   /* -------------------------------------------------- 字体
-     --font 正文与控件，--font-display 标题与数字，--font-mono 等宽内容。 */
+     --font 正文与控件，--font-display 标题与数字，--font-mono 等宽内容。
+     --font-user 由设置页写入（外观 → 界面字体），缺省时整条链都走皮肤字体。 */
   --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", "Segoe UI", system-ui, sans-serif;
-  --font-display: var(--font);
+  --font-display: var(--font-user, var(--font));
   --font-mono: Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
 
   /* -------------------------------------------------- 图标
