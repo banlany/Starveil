@@ -1,4 +1,4 @@
-// 皮肤注册表。一套皮肤 = `web/skins/<id>/skin.css` + 这里的一条记录。
+// 皮肤注册表。内置皮肤 = `web/skins/<id>/skin.css` + 这里的一条记录。
 // skin.css 只声明 CSS 变量（见 docs/skins.md）。
 //
 // 字段：
@@ -7,10 +7,11 @@
 //   desc     设置页说明
 //   accents  主题色清单，第一项为默认色；可选 `light` 指定浅色档下的替代色值
 //   modes    支持的明暗档位，只有一项时表示锁定该档
-//   icons    为 true 时加载 `skins/<id>/icons.js` 的 ICON_PATHS
+//   icons    为 true 时加载 `skins/<id>/icons.js` 的 ICON_PATHS；皮肤包用图标表对象
 //   titlebar 'traffic' 表示 macOS 红绿灯，缺省为 Windows 右侧三键
+//   base     皮肤包专用的内置皮肤 id，变量基底来自它的 skin.css
 
-export const SKINS = [
+export const BUILTIN_SKINS = [
   {
     id: 'default',
     name: '星幕',
@@ -45,16 +46,55 @@ export const SKINS = [
 
 export const DEFAULT_SKIN_ID = 'default';
 
-const BY_ID = new Map(SKINS.map((skin) => [skin.id, skin]));
+/// 当前可用皮肤：内置 + 运行时注册的皮肤包，设置页与同步包校验共用这一份。
+export const SKINS = [];
+const BY_ID = new Map();
+const BUILTIN_IDS = new Set(BUILTIN_SKINS.map((skin) => skin.id));
+const SKIN_ID_RE = /^[a-z0-9][a-z0-9-]{1,31}$/;
+
+/// 注册皮肤包；同 id 覆盖，内置 id 不可覆盖。
+export function registerSkin(def) {
+  if (!def || typeof def.id !== 'string' || !SKIN_ID_RE.test(def.id)) return false;
+  const index = SKINS.findIndex((skin) => skin.id === def.id);
+  if (index >= 0) {
+    if (BUILTIN_IDS.has(def.id)) return false;
+    SKINS[index] = def;
+  } else {
+    SKINS.push(def);
+  }
+  BY_ID.set(def.id, def);
+  return true;
+}
+
+/// 卸载皮肤包；内置皮肤不可卸载。
+export function unregisterSkin(id) {
+  if (BUILTIN_IDS.has(id)) return false;
+  const index = SKINS.findIndex((skin) => skin.id === id);
+  if (index < 0) return false;
+  SKINS.splice(index, 1);
+  BY_ID.delete(id);
+  return true;
+}
+
+for (const skin of BUILTIN_SKINS) registerSkin(skin);
+
+export function hasSkin(id) {
+  return BY_ID.has(id);
+}
+
+/// 变量基底：皮肤包用 base 指向内置皮肤，内置皮肤用自身 id。
+export function skinBase(def) {
+  return def?.base || def?.id || DEFAULT_SKIN_ID;
+}
 
 /// 取皮肤定义，未知 id 退回默认皮肤。
 export function getSkin(id) {
   return BY_ID.get(id) || BY_ID.get(DEFAULT_SKIN_ID);
 }
 
-/// 皮肤样式表路径：`skins/<id>/skin.css`（index.html 的内联脚本按同一约定拼地址）。
+/// 皮肤样式表路径：`skins/<base>/skin.css`（index.html 的内联脚本按同一约定拼地址）。
 export function skinHref(id) {
-  return `skins/${id}/skin.css`;
+  return `skins/${skinBase(getSkin(id))}/skin.css`;
 }
 
 /// 这套皮肤实际可用的明暗档位。

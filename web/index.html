@@ -26,12 +26,13 @@
   <!-- 皮肤与明暗必须在首帧前定下来：
        皮肤文件只声明 CSS 变量，晚一步加载会先闪一帧默认配色，
        浅色模式更是会先黑一下。这条内联脚本读 store.js 写的预涂缓存
-       （starveil.boot.v1，含 theme / skin / overrides），提前注入覆盖变量，
-       再按 `skins/<id>/skin.css` 的约定插入样式表。
+       （starveil.boot.v1，含 theme / 基底皮肤 / 皮肤包 CSS / overrides），
+       提前注入覆盖变量与皮肤包差异样式，再按 `skins/<base>/skin.css` 插入样式表。
        路径规则和 skins/registry.js 的 skinHref() 必须一致。 -->
   <script>
     (function () {
       var href = 'skins/default/skin.css';
+      var packCssText = '';
       var root = document.documentElement;
       try {
         var boot = JSON.parse(localStorage.getItem('starveil.boot.v1') || '{}');
@@ -49,10 +50,22 @@
             root.style.setProperty(key, val);
           }
         }
+        var pack = boot.pack;
+        if (pack && /^[a-z0-9][a-z0-9-]{1,31}$/.test(pack.id) &&
+            typeof pack.css === 'string' && pack.css.length <= 65536 &&
+            !/[<>@\\]|url\s*\(|expression\s*\(/i.test(pack.css)) {
+          root.dataset.skinPack = pack.id;
+          packCssText = pack.css;
+        }
       } catch (e) {
         /* 缓存坏了就用默认皮肤 + 深色，applyTheme 跑起来会纠正 */
       }
       document.write('<link rel="stylesheet" id="skin-css" href="' + href + '">');
+      if (packCssText) {
+        document.write('<style id="skin-pack-css"></style>');
+        var style = document.getElementById('skin-pack-css');
+        if (style) style.textContent = packCssText;
+      }
     })();
   </script>
   <!-- 内置字体：安卓/iOS 没有「苹方」，Windows 也没有 SF Pro，

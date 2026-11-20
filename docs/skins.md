@@ -11,7 +11,9 @@
 ```
 web/
   skins/
-    registry.js          皮肤清单（唯一的注册处）
+    registry.js          内置皮肤清单 + 运行时注册表
+    overrides.js         用户变量覆盖层白名单
+    pack.js              皮肤包格式、清洗与 CSS 生成
     default/
       skin.css           默认皮肤「星幕」：深色 + 浅色
     apple/
@@ -23,8 +25,9 @@ web/
   mobile.css             移动端布局
 ```
 
-`web/index.html` 在首帧前按 `skins/<id>/skin.css` 的约定插入样式表，
-并先读 `localStorage` 里的预涂缓存定下 `data-theme` / `data-skin`，避免启动时闪一帧默认配色。
+`web/index.html` 在首帧前按 `skins/<base>/skin.css` 的约定插入基底样式表，
+并先读 `localStorage` 里的预涂缓存定下 `data-theme` / `data-skin` / `data-skin-pack`、
+注入变量覆盖与皮肤包差异样式，避免启动时闪一帧默认配色。
 
 ## 两个维度
 
@@ -68,6 +71,7 @@ html[data-skin="apple"][data-theme="light"] {
 | `modes` | 是 | 支持的明暗档；只写一项就等于锁定明暗 |
 | `icons` | 否 | `true` = 这套皮肤自带 `skins/<id>/icons.js`，可以换图标图形 |
 | `titlebar` | 否 | `'traffic'` = 窗口按钮换成 macOS 左侧红绿灯，不写就是 Windows 右侧三键 |
+| `base` | 否 | 皮肤包专用：变量基底指向的内置皮肤 id |
 
 颜色、尺寸、圆角、阴影、动效这些**观感**全在 `skin.css` 的变量里；
 上面这张表只管「这套皮肤叫什么、提供哪些档位、有没有自己的图标和标题栏形态」。
@@ -262,7 +266,7 @@ Windows 没有系统标题栏（`decorations: false`），顶部那条是我们�
 1. 建目录 `web/skins/<id>/skin.css`（`<id>` 只能用小写字母、数字、短横线）；
 2. 复制 `default/skin.css` 的两块作用域，把 `<id>` 换掉，按需要改值；
    不需要的变量可以整段删掉——但**组件用到的**必须在两块里都有定义（浅色块可以只覆盖差异项）；
-3. 在 `web/skins/registry.js` 的 `SKINS` 里加一条：
+3. 在 `web/skins/registry.js` 的 `BUILTIN_SKINS` 里加一条：
 
    ```js
    {
@@ -282,7 +286,59 @@ Windows 没有系统标题栏（`decorations: false`），顶部那条是我们�
 4. 把新皮肤 `--accent` 的静态值写成就第 3 步 accents 第一项的颜色；
 5. 跑 `node tools/check-skin.mjs`。
 
-设置页不需要改：它读 `SKINS` 与 `skinAccents()`，多于一套时自动出现多张卡片、色板自动跟着换。
+设置页不需要改：它读 `SKINS`（含运行时注册的皮肤包）与 `skinAccents()`，
+多于一套时自动出现多张卡片、色板自动跟着换。
+
+## 皮肤包
+
+「设置 → 外观 → 皮肤包」安装、导出、删除 JSON 皮肤包。包存在 `localStorage` 的
+`starveil.skin-packs.v1`，最多 16 套、单包 64 KB。同步包与备份只带 `appearance.skin` 的 id，
+包本体不跨设备；本机没有这个 id 时保留本机皮肤。
+
+包基于一套内置皮肤（`base`），只写差异变量：
+
+| 字段 | 说明 |
+| --- | --- |
+| `format` / `version` | `starveil-skin` / `1` |
+| `id` | 小写字母、数字、短横线，2–32 位，不能撞内置皮肤 id |
+| `name` / `desc` | 卡片上的名字与说明 |
+| `base` | 内置皮肤 id，变量基底来自它的 `skin.css` |
+| `accents` | 同注册表；色值只收 3 / 6 位十六进制，可带 `light` 替代色 |
+| `modes` | `dark` / `light`，只列一项即锁定该档 |
+| `titlebar` | `windows` / `traffic` |
+| `vars.dark` / `vars.light` | 变量名 → 值，只写要改的变量 |
+| `icons` | 图标名 → SVG 片段，只写要换的图标 |
+
+```json
+{
+  "format": "starveil-skin",
+  "version": 1,
+  "id": "oled",
+  "name": "OLED 影院",
+  "desc": "纯黑底 + 冷蓝，画面周边控件退场",
+  "base": "default",
+  "accents": [{ "id": "blue", "name": "冷蓝", "color": "#6f9dff" }],
+  "modes": ["dark"],
+  "vars": { "dark": { "--bg": "#000000", "--surface": "#0a0a0b", "--radius": "2px" } },
+  "icons": { "flame": "<circle cx=\"12\" cy=\"12\" r=\"9\"/>" }
+}
+```
+
+`packCss()` 生成两块作用域并注入 `#skin-pack-css` 的 `<style>`，紧跟基底 `skin.css` 之后：
+
+```css
+html[data-skin-pack="oled"] { --bg: #000000; }
+html[data-skin-pack="oled"][data-theme="light"] { --bg: #ffffff; }
+```
+
+`<html data-skin>` 保持基底 id，`<html data-skin-pack>` 是包 id。包 CSS 自动补
+`--accent`（浅色档取 `accent.light`）；运行时 `applyTheme()` 的 inline 变量优先级更高。
+`index.html` 首帧从 `starveil.boot.v1` 读 `pack.css` 提前注入，重载不闪。
+
+`pack.js::sanitizeSkinPack()` 是唯一入口：变量名限 `--[a-z0-9-]`，值拒绝分号、花括号、
+尖括号、`@`、反斜杠、`url()` 与 `expression()`；图标片段只留 `path` `circle` `rect` `line`
+`polyline` `polygon` `ellipse` `g`，事件属性与脚本标签整条丢弃。CSS 用 `textContent` 写入
+`<style>`，图标按「基础 → 皮肤 → 用户」三层合并。
 
 ## 强制检查
 
@@ -303,7 +359,9 @@ node tools/check-skin.mjs
 6. `registry.js` 里有皮肤没声明 `accents`，标了 `icons: true` 却没有 `icons.js`，
    或 `icons.js` 里写了 `js/icons.js` 里不存在的图标名；
 7. `js/icons.js` 的 `icon()` 又把线宽写回标签，或丢了 `data-icon`（切皮肤时就地重画会失效）；
-8. 组件里 `var(--x)` 用到但没有任何定义（拼错变量名就是这样漏的）。
+8. 组件里 `var(--x)` 用到但没有任何定义（拼错变量名就是这样漏的）；
+9. 皮肤包契约：合法包被拒、非法 id / base / format / version 被放过、CSS 注入与外链变量值、
+   带事件属性或非白名单标签的图标没被清洗掉。
 
 确实需要保留字面量的行，行尾加 `/* skin:allow 原因 */` 放行，并在 PR 里说明。
 

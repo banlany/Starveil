@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OVERRIDE_KEYS } from '../web/skins/overrides.js';
+import { BUILTIN_SKINS } from '../web/skins/registry.js';
+import { PACK_FORMAT, PACK_VERSION, packCss, sanitizeSkinPack } from '../web/skins/pack.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -178,18 +180,15 @@ for (const name of COMPONENT_FILES) {
 
 // ---------------------------------------------------------------- 2. 皮肤文件
 
-const registrySource = read(path.join(WEB, 'skins', 'registry.js'));
-// 只做最朴素的解析：注册表是手写数据，不是需要跑起来的代码。
-const entries = [...registrySource.matchAll(/\{\s*id:\s*'([^']+)'[\s\S]*?modes:\s*\[([^\]]*)\][\s\S]*?\}/g)]
-  .map((match) => ({
-    id: match[1],
-    modes: [...match[2].matchAll(/'([^']+)'/g)].map((m) => m[1]),
-    icons: /icons:\s*true/.test(match[0]),
-    // accents 数组是「皮肤提供的主题色」，第一个即默认色
-    accent: (match[0].match(/accents:\s*\[[\s\S]*?color:\s*'(#[0-9a-fA-F]{3,8})'/) || [])[1] || '',
-  }));
+const entries = BUILTIN_SKINS.map((skin) => ({
+  id: skin.id,
+  modes: skin.modes || [],
+  icons: skin.icons === true,
+  // accents 数组是「皮肤提供的主题色」，第一个即默认色。
+  accent: skin.accents?.[0]?.color || '',
+}));
 
-if (!entries.length) problems.push('web/skins/registry.js: 没解析到任何皮肤，检查 SKINS 的字面量格式');
+if (!entries.length) problems.push('web/skins/registry.js: BUILTIN_SKINS 里没有皮肤');
 for (const entry of entries) {
   if (!entry.accent) {
     problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 没有声明 accents（第一项就是默认主题色）`);
@@ -294,8 +293,8 @@ if (fs.existsSync(iconsFile)) {
   if (/stroke-(?:width|linecap|linejoin)=/.test(factory)) {
     problems.push('web/js/icons.js: icon() 里不许写 stroke-width/linecap/linejoin 属性，交给 .ico 的 --icon-* 变量');
   }
-  if (!/OVERRIDES/.test(factory)) {
-    problems.push('web/js/icons.js: icon() 没走皮肤覆盖表（OVERRIDES），皮肤将无法替换图形');
+  if (!/MERGED|OVERRIDES/.test(factory)) {
+    problems.push('web/js/icons.js: icon() 没走皮肤覆盖表，皮肤将无法替换图形');
   }
   if (!/data-icon=/.test(factory)) {
     problems.push('web/js/icons.js: icon() 输出里少了 data-icon，切皮肤时就地重画图标会失效');
@@ -336,6 +335,58 @@ if (fs.existsSync(htmlFile)) {
       problems.push(`web/index.html:${lineNumber}  内联图标画在骨架里，皮肤管不到；挪进 js/icons.js 再输出`);
     }
   });
+}
+
+// ---------------------------------------------------------------- 5. 皮肤包契约
+
+const samplePack = {
+  format: PACK_FORMAT,
+  version: PACK_VERSION,
+  id: 'oled',
+  name: 'OLED 影院',
+  base: 'default',
+  accents: [{ id: 'blue', name: '冷蓝', color: '#6f9dff' }],
+  modes: ['dark'],
+  vars: { dark: { '--bg': '#000000', '--surface': '#0a0a0b' }, light: { '--bg': '#ffffff' } },
+  icons: { home: '<path d="M2 2h20"/>' },
+};
+
+const valid = sanitizeSkinPack(samplePack);
+if (!valid.ok) {
+  problems.push(`web/skins/pack.js: 合法皮肤包被拒：${valid.error}`);
+} else {
+  const css = packCss(valid.pack);
+  if (!css.includes('html[data-skin-pack="oled"]') || !css.includes('[data-theme="light"]')) {
+    problems.push('web/skins/pack.js: packCss 缺少深色或浅色作用域');
+  }
+  if (!css.includes('--accent: #6f9dff')) {
+    problems.push('web/skins/pack.js: packCss 没有补上首帧 --accent');
+  }
+}
+
+for (const [label, raw] of [
+  ['内置 id', { ...samplePack, id: 'default' }],
+  ['非法 id', { ...samplePack, id: 'OLED_X' }],
+  ['未知 base', { ...samplePack, base: 'nope' }],
+  ['错误 format', { ...samplePack, format: 'other' }],
+  ['过高 version', { ...samplePack, version: PACK_VERSION + 1 }],
+]) {
+  if (sanitizeSkinPack(raw).ok) problems.push(`皮肤包校验没拦住：${label}`);
+}
+
+const dirtyVars = sanitizeSkinPack({
+  ...samplePack,
+  vars: { dark: { '--bg': 'red; } body{display:none}', '--surface': 'url(https://x/y.png)' } },
+});
+if (!dirtyVars.ok || Object.keys(dirtyVars.pack.vars.dark).length) {
+  problems.push('皮肤包校验没拦住 CSS 注入或外链变量值');
+}
+const dirtyIcons = sanitizeSkinPack({
+  ...samplePack,
+  icons: { home: '<path onload="alert(1)"/>', moon: '<script>alert(1)</script>' },
+});
+if (!dirtyIcons.ok || Object.keys(dirtyIcons.pack.icons).length) {
+  problems.push('皮肤包校验没拦住带事件属性或非白名单标签的图标');
 }
 
 // ---------------------------------------------------------------- 输出

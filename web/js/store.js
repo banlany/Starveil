@@ -2,8 +2,12 @@
 import { api, canonicalImage, roomUrl } from './api.js';
 import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
-import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAccents, skinHref, skinModes } from '../skins/registry.js';
+import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAccents, skinBase, skinHref, skinModes } from '../skins/registry.js';
 import { resolvedOverrides, sanitizeOverrides } from '../skins/overrides.js';
+import { loadSkinPacks, packCss } from '../skins/pack.js';
+
+// 注册本机皮肤包，loadSettings() 里校验 appearance.skin 时才能认出它们。
+loadSkinPacks();
 
 const SETTINGS_KEY = 'simple-live.settings.v2';
 const FOLLOW_KEY = 'simple-live.follow.v2';
@@ -355,7 +359,7 @@ export async function applySkin(id) {
   const skin = getSkin(id);
   const appearance = state.settings.appearance;
   appearance.skin = skin.id;
-  ensureSkinStyle(skin.id);
+  ensureSkinStyle(skin);
   // 图标先换好再重画：反过来的话调用方拿到的还是上一套皮肤的图形。
   await loadSkinIcons(skin.id);
   saveSettings();
@@ -366,6 +370,11 @@ export async function applySkin(id) {
 /// 加载皮肤图标覆盖表；失败时退回基础表。
 export async function loadSkinIcons(id = currentSkin().id) {
   const skin = getSkin(id);
+  if (skin.icons && typeof skin.icons === 'object') {
+    setIconOverrides(skin.icons, 'pack');
+    return;
+  }
+  setIconOverrides(null, 'pack');
   if (!skin.icons) {
     setIconOverrides(null);
     return;
@@ -379,9 +388,9 @@ export async function loadSkinIcons(id = currentSkin().id) {
   }
 }
 
-/// 换皮肤样式表 href。
-function ensureSkinStyle(id) {
-  const href = skinHref(id);
+/// 内置皮肤只换 link；皮肤包另注入差异变量的 style，紧跟在基底样式表之后。
+function ensureSkinStyle(skin) {
+  const href = skinHref(skin.id);
   let link = document.getElementById('skin-css');
   if (!link) {
     link = document.createElement('link');
@@ -391,6 +400,19 @@ function ensureSkinStyle(id) {
     document.head.insertBefore(link, first || null);
   }
   if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+
+  let style = document.getElementById('skin-pack-css');
+  if (skin.base) {
+    const css = packCss(skin);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'skin-pack-css';
+      link.after(style);
+    }
+    if (style.textContent !== css) style.textContent = css;
+  } else if (style) {
+    style.remove();
+  }
 }
 
 /// 把皮肤的变量真正落到 `<html>` 上：皮肤 → 明暗 → 强调色。
@@ -405,9 +427,13 @@ export function applyTheme() {
   if (!modes.includes(effective)) effective = modes[0];
 
   const root = document.documentElement;
-  if (root.dataset.skin !== skin.id) root.dataset.skin = skin.id;
+  const base = skinBase(skin);
+  if (root.dataset.skin !== base) root.dataset.skin = base;
+  if (skin.base) root.dataset.skinPack = skin.id;
+  else delete root.dataset.skinPack;
   root.dataset.theme = effective;
   root.dataset.themeMode = mode;
+  ensureSkinStyle(skin);
 
   // 存原值，落到 DOM 时按当前明暗档换算。
   const accent = accentForMode(resolveAccentValue(skin, appearance), effective);
@@ -430,7 +456,7 @@ export function applyTheme() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (bg && meta) meta.setAttribute('content', bg);
   if (bg) syncSystemBar(effective, bg);
-  rememberBootPaint(effective, skin.id, overrides);
+  rememberBootPaint(effective, skin, overrides);
   window.dispatchEvent(new CustomEvent('simple-live:theme'));
 }
 
@@ -463,13 +489,14 @@ function syncSystemBar(effective, color) {
   api.setSystemBar(color, effective === 'light').catch(() => {});
 }
 
-/// 首帧预涂缓存（theme / skin），供 index.html 内联脚本读取，不参与备份与同步。
+/// 首帧预涂缓存（theme / 基底皮肤 / 皮肤包 CSS / overrides），不参与备份与同步。
 const BOOT_KEY = 'starveil.boot.v1';
 
 function rememberBootPaint(theme, skin, overrides = {}) {
   try {
     const prev = localStorage.getItem(BOOT_KEY);
-    const next = JSON.stringify({ theme, skin, overrides });
+    const pack = skin.base ? { id: skin.id, css: packCss(skin) } : null;
+    const next = JSON.stringify({ theme, skin: skinBase(skin), pack, overrides });
     if (prev !== next) localStorage.setItem(BOOT_KEY, next);
   } catch {
     /* 隐私模式/配额满：只是丢一次预涂，不影响功能 */

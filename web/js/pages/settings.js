@@ -28,6 +28,7 @@ import {
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { SKINS, accentForMode, skinAccents, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
 import { OVERRIDE_GROUPS, formatOverride } from '../../skins/overrides.js';
+import { installSkinPack, removeSkinPack, templatePack } from '../../skins/pack.js';
 // 外部数据导入（starveil 备份 / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能/帧率选项由 danmaku.js 提供，与直播间共用。
@@ -397,7 +398,7 @@ function buildRow(config, repaint, ctx) {
         <span class="skin-text">
           <b>${escapeHtml(skin.name)}</b>
           <small>${escapeHtml(skin.desc || '')}</small>
-          <em>${modes.length > 1 ? '深色 / 浅色' : modes[0] === 'light' ? '仅浅色' : '仅深色'}</em>
+          <em>${skin.base ? `皮肤包 · 基底 ${escapeHtml(skin.base)} · ` : ''}${modes.length > 1 ? '深色 / 浅色' : modes[0] === 'light' ? '仅浅色' : '仅深色'}</em>
         </span>
         ${skin.id === active ? `<span class="skin-check">${icon('check', 15)}</span>` : ''}`;
       card.addEventListener('click', async () => {
@@ -697,6 +698,62 @@ function detailSections(key, ctx, repaint) {
         {
           label: '皮肤',
           rows: [{ type: 'skin' }],
+        },
+        {
+          label: '皮肤包',
+          rows: [
+            {
+              type: 'action',
+              title: '安装皮肤包',
+              desc: '从 JSON 文件安装；同 id 覆盖，安装后立即切换',
+              onClick: (ctx, repaint) => pickJsonFile(async (file) => {
+                try {
+                  const result = installSkinPack(JSON.parse(await file.text()));
+                  if (!result.ok) {
+                    toast(`安装失败：${result.error}`, 'error');
+                    return;
+                  }
+                  await applySkin(result.pack.id);
+                  repaint();
+                  toast(`已安装「${result.pack.name}」`, 'success');
+                } catch (error) {
+                  toast(`安装失败：${error?.message || error}`, 'error');
+                }
+              }),
+            },
+            {
+              type: 'action',
+              title: '导出当前皮肤',
+              desc: '内置皮肤导出空白模板，皮肤包导出原文；改完 vars 再装回来',
+              onClick: async () => {
+                const skin = currentSkin();
+                const pack = skin.base ? skin : templatePack(skin);
+                const saved = await saveJsonFile(`starveil-skin-${skin.id}.json`, pack);
+                if (saved) toast('皮肤包已导出', 'success');
+              },
+            },
+            ...(currentSkin().base
+              ? [{
+                type: 'action',
+                title: '删除当前皮肤包',
+                desc: '从本机移除；同步包只带皮肤 id，包本体不跨设备',
+                onClick: async (ctx, repaint) => {
+                  const skin = currentSkin();
+                  const ok = await confirmDialog({
+                    title: '删除皮肤包',
+                    text: `「${skin.name}」将从本机移除。`,
+                    okLabel: '删除',
+                    danger: true,
+                  });
+                  if (!ok) return;
+                  removeSkinPack(skin.id);
+                  await applySkin(DEFAULT_SKIN_ID);
+                  repaint();
+                  toast('皮肤包已删除', 'success');
+                },
+              }]
+              : []),
+          ],
         },
         {
           label: '显示主题',

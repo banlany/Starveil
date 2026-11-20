@@ -103,20 +103,23 @@ const PATHS = {
   spark: '<path d="M12 2.5 14.2 9l6.5 2.2-6.5 2.2L12 20l-2.2-6.6L3.3 11.2 9.8 9 12 2.5Z"/>',
 };
 
-/// 皮肤图标覆盖表，只含要替换的图标名。
-let OVERRIDES = {};
+/// 图标覆盖分层：基础表 → 皮肤包 → 用户，后者优先。
+const OVERRIDES = { skin: {}, pack: {}, user: {} };
+let MERGED = {};
 
-/// 换一套图标表，并就地重画页面上已有的 svg（外壳元素不会随页面重渲染）。
-export function setIconOverrides(map) {
-  OVERRIDES = map && typeof map === 'object' ? map : {};
+/// 换一层图标表，并就地重画页面上已有的 svg（外壳元素不会随页面重渲染）。
+export function setIconOverrides(map, layer = 'skin') {
+  const target = Object.hasOwn(OVERRIDES, layer) ? layer : 'skin';
+  OVERRIDES[target] = map && typeof map === 'object' ? map : {};
+  MERGED = { ...OVERRIDES.skin, ...OVERRIDES.pack, ...OVERRIDES.user };
   for (const svg of document.querySelectorAll('svg.ico[data-icon]')) {
-    const path = OVERRIDES[svg.dataset.icon] || PATHS[svg.dataset.icon];
+    const path = MERGED[svg.dataset.icon] || PATHS[svg.dataset.icon];
     if (path) svg.innerHTML = path;
   }
 }
 
 export function icon(name, size = 20, className = '') {
-  const path = OVERRIDES[name] || PATHS[name] || PATHS.info;
+  const path = MERGED[name] || PATHS[name] || PATHS.info;
   // 线宽、端点、拐角由 CSS 的 --icon-* 控制；data-icon 供切皮肤时替换图形。
   return `<svg class="ico ${className}" data-icon="${name}" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" aria-hidden="true">${path}</svg>`;
 }

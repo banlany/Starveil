@@ -2,7 +2,7 @@
 // 支持的输入：starveil 备份、中立同步包。
 
 import { canonicalImage, ENABLED_PLATFORMS, normalizePlatform, roomUrl } from './api.js';
-import { SKINS } from '../skins/registry.js';
+import { hasSkin } from '../skins/registry.js';
 import { sanitizeOverrides } from '../skins/overrides.js';
 import {
   ACCOUNT_PLATFORMS,
@@ -255,7 +255,7 @@ function importBundle(data, options = {}) {
     }
     if (patch.appearance && typeof patch.appearance === 'object') {
       // 同步包只带皮肤 id，本机没有这个 id 时保留本机皮肤。
-      if (patch.appearance.skin && !SKINS.some((skin) => skin.id === patch.appearance.skin)) {
+      if (patch.appearance.skin && !hasSkin(String(patch.appearance.skin))) {
         delete patch.appearance.skin;
         skipped.skin = 1;
       }
