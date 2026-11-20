@@ -165,12 +165,7 @@ html[data-skin="default"] {
   --tip-max-w: 260px;
 
   /* -------------------------------------------------- 阴影 / 遮罩 */
-  /* 三级：贴合（小浮起）、悬浮（菜单/浮动按钮）、弹层（对话框/提示条）。 */
-  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.22);
-  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.38);
-  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.45);
-  /* 只当分隔线用的一道极淡投影（吸顶头部用） */
-  --shadow-line: 0 12px 22px -20px rgba(0, 0, 0, 0.8);
+  /* 三级阶梯由 skins/base.css 派生，深色档用默认系数。 */
   --scrim: rgba(5, 5, 8, 0.58);
   /* 弹窗/抽屉背后那层压暗的模糊 */
   --blur-overlay: blur(5px);
@@ -321,15 +316,7 @@ html[data-skin="default"] {
   --tile-shadow: none;
 
   /* -------------------------------------------------- 圆角阶梯
-     组件里不许再出现 5/7/9/11/13px 这类魔法值，一律从这七档里取。 */
-  --radius-2xs: 4px;
-  --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
-  --radius-pill: 999px;
+     由 skins/base.css 的 --radius-scale 派生，组件一律从这八档里取。 */
 
   /* -------------------------------------------------- 字体
      --font 正文与控件，--font-display 标题与数字，--font-mono 等宽内容。
@@ -347,10 +334,7 @@ html[data-skin="default"] {
   --icon-stroke-thin: 1.2;
 
   /* -------------------------------------------------- 动效
-     皮肤可以整体调快/调慢，也可以换缓动（例如机械感用 steps）。 */
-  --dur-fast: 0.14s;
-  --dur-base: 0.2s;
-  --dur-slow: 0.28s;
+     时长阶梯由 skins/base.css 的 --dur-scale 派生；皮肤可换缓动。 */
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   color-scheme: dark;
@@ -406,10 +390,11 @@ html[data-skin="default"][data-theme="light"] {
   --tip-border: rgba(0, 0, 0, 0.08);
   --tip-shadow: 0 10px 26px rgba(15, 20, 30, 0.17);
 
-  --shadow-1: 0 2px 8px rgba(15, 20, 30, 0.06);
-  --shadow-2: 0 10px 26px rgba(15, 20, 30, 0.12);
-  --shadow-3: 0 18px 48px rgba(15, 20, 30, 0.16);
-  --shadow-line: 0 12px 22px -20px rgba(15, 20, 30, 0.35);
+  --shadow-rgb: 15, 20, 30;
+  --shadow-a1: 0.06;
+  --shadow-a2: 0.12;
+  --shadow-a3: 0.16;
+  --shadow-a-line: 0.35;
   --scrim: rgba(15, 18, 28, 0.42);
 
   --room-bg: #f2f3f7;

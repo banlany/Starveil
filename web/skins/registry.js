@@ -28,6 +28,8 @@ export const BUILTIN_SKINS = [
     ],
     desc: '中性深灰打底，七种主题色可选。深色/浅色都支持，适合长时间挂着看。',
     modes: ['dark', 'light'],
+    // 字体栈是可替换的，允许「设置 → 外观 → 界面字体」覆盖。
+    allowUserFont: true,
   },
   {
     id: 'apple',
@@ -45,6 +47,7 @@ export const BUILTIN_SKINS = [
 ];
 
 export const DEFAULT_SKIN_ID = 'default';
+export const TITLEBAR_MODES = ['windows', 'traffic'];
 
 /// 当前可用皮肤：内置 + 运行时注册的皮肤包，设置页与同步包校验共用这一份。
 export const SKINS = [];
@@ -115,15 +118,11 @@ export function skinAccent(id) {
   return skinAccents(id)[0].color;
 }
 
-/// 主题色在指定明暗档下实际使用的色值。
+/// 主题色在指定明暗档下实际使用的色值：只读这套皮肤 accents 里该项的 light。
 /// 只影响渲染：设置里存的一直是 `color` 原值。
-export function accentForMode(color, mode) {
+export function accentForMode(skinId, color, mode) {
   if (mode !== 'light' || !color) return color;
   const target = String(color).toLowerCase();
-  for (const skin of SKINS) {
-    for (const accent of skinAccents(skin.id)) {
-      if (accent.color.toLowerCase() === target && accent.light) return accent.light;
-    }
-  }
-  return color;
+  const accent = skinAccents(skinId).find((item) => item.color.toLowerCase() === target);
+  return accent?.light || color;
 }

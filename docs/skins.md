@@ -14,6 +14,7 @@ web/
     registry.js          内置皮肤清单 + 运行时注册表
     overrides.js         用户变量覆盖层白名单
     pack.js              皮肤包格式、清洗与 CSS 生成
+    base.css             圆角 / 时长 / 阴影的阶梯派生层
     default/
       skin.css           默认皮肤「星幕」：深色 + 浅色
     apple/
@@ -70,15 +71,16 @@ html[data-skin="apple"][data-theme="light"] {
 | `accents` | 是 | 这皮肤提供的主题色，**第一项是默认色**（设置页色板只读这里） |
 | `modes` | 是 | 支持的明暗档；只写一项就等于锁定明暗 |
 | `icons` | 否 | `true` = 这套皮肤自带 `skins/<id>/icons.js`，可以换图标图形 |
-| `titlebar` | 否 | `'traffic'` = 窗口按钮换成 macOS 左侧红绿灯，不写就是 Windows 右侧三键 |
+| `titlebar` | 否 | `windows` / `traffic`（枚举 `TITLEBAR_MODES`），缺省 `windows` |
+| `allowUserFont` | 否 | `true` 表示开放「设置 → 外观 → 界面字体」，缺省关闭 |
 | `base` | 否 | 皮肤包专用：变量基底指向的内置皮肤 id |
 
-颜色、尺寸、圆角、阴影、动效这些**观感**全在 `skin.css` 的变量里；
-上面这张表只管「这套皮肤叫什么、提供哪些档位、有没有自己的图标和标题栏形态」。
+颜色与组件尺寸在 `skin.css`；圆角、时长、阴影的阶梯由 `base.css` 派生，
+皮肤只写缩放系数与差异项。上面这张表只管皮肤的身份、档位与形态。
 
 ## 变量契约
 
-分组见 `web/skins/default/skin.css` 的注释。摘要：
+分组见 `web/skins/default/skin.css` 的注释，阶梯派生见 `web/skins/base.css`。摘要：
 
 | 组 | 变量 |
 | --- | --- |
@@ -109,9 +111,34 @@ html[data-skin="apple"][data-theme="light"] {
 | 红绿灯（mac 形态） | `--traffic-size` `--traffic-gap` `--traffic-close` `--traffic-min` `--traffic-max` `--traffic-edge` `--traffic-glyph` `--traffic-glyph-size` `--traffic-glyph-stroke` |
 | 悬停提示 | `--tip-bg` `--tip-fg` `--tip-border` `--tip-shadow` `--tip-radius` `--tip-pad-x` `--tip-pad-y` `--tip-font` `--tip-max-w` |
 | 图标 | `--icon-stroke` `--icon-cap` `--icon-join` `--icon-stroke-thin` |
-| 圆角 | `--radius-2xs` `--radius-xs` `--radius-sm` `--radius-md` `--radius` `--radius-lg` `--radius-xl` `--radius-pill` |
+| 圆角 | `--radius-2xs` `--radius-xs` `--radius-sm` `--radius-md` `--radius` `--radius-lg` `--radius-xl` `--radius-pill`（base.css） |
 | 字体 | `--font` `--font-display` `--font-mono` |
-| 动效 | `--dur-fast` `--dur-base` `--dur-slow` `--ease` |
+| 动效 | `--dur-fast` `--dur-base` `--dur-slow`（base.css）`--ease`（皮肤） |
+
+### 阶梯派生层
+
+`web/skins/base.css` 在 `:root` 上把 8 档圆角、3 档时长、4 档阴影展开成 `calc()`：
+
+```css
+--radius-scale: 1;
+--radius-sm: calc(8px * var(--radius-scale));
+--dur-scale: 1;
+--dur-fast: calc(0.14s * var(--dur-scale));
+--shadow-scale: 1;
+--shadow-rgb: 0, 0, 0;
+--shadow-a1: 0.22;
+--shadow-1: 0 calc(2px * var(--shadow-scale)) calc(8px * var(--shadow-scale))
+            rgba(var(--shadow-rgb), var(--shadow-a1));
+```
+
+- 皮肤只写 `--radius-scale` / `--dur-scale` / `--shadow-scale` / `--shadow-rgb` /
+  `--shadow-a1` `-a2` `-a3` `-a-line`。星幕深色用默认值，苹果写放大与变慢的系数，
+  星幕浅色只换阴影颜色与透明度。
+- 单档要精确取值时直接覆盖派生变量（苹果把 `--radius` 写回 `12px`）。
+- 皮肤包 `vars` 里写 `--radius-scale: 0.25` 即可整体收圆角，不必逐档重列。
+- `calc()` 里的 `var()` 在使用处展开，`html[data-skin=...]` 上的系数会参与求值；
+  用户覆盖层写进 `<html>` 的 inline style，优先级最高。
+- 派生值是 `calc()` 文本，设置页滑杆用探针元素读取浏览器算出的长度/时长。
 
 ### 字体：把要用的字体排进 `--font`，别指望系统装了什么
 
@@ -137,8 +164,8 @@ GB2312 子集、三个字重），所以栈里可以放心写它：
 | `--font-user` | `store.js` 的 `applyTheme` | 外观 → 界面字体；值为 `"<字体>", var(--font)`，未设置时整条链落回 `--font` |
 | `--dm-font` | `room.js` 的 `applyDanmakuStyle` | 弹幕 → 字体；写到 `#chat-list`，`.chat-line` 用 `var(--dm-font, inherit)` |
 
-界面字体只对默认皮肤开放：`applyTheme` 在其它皮肤下会清掉 `--font-user`，所以皮肤自带的
-字体栈不会被用户设置覆盖。弹幕字体与皮肤无关，选中值由 canvas 直接使用。
+界面字体只对 `allowUserFont: true` 的皮肤开放：`applyTheme` 在其它皮肤下清掉 `--font-user`。
+弹幕字体与皮肤无关，选中值由 canvas 直接使用。
 
 ### 主题色：一套皮肤提供一组，不是固定一个
 
@@ -155,6 +182,8 @@ accents: [
 - 设置页「外观 → 主题颜色」的色板只读这一份清单，别处不要再写第二份色板；
 - 色板只在 `accents` 多于一项时出现。只有一项的皮肤（苹果）固定用它，不接受用户自选；
 - 用户自选记在 `appearance.accentSource`，跨皮肤保留，但只在该皮肤提供多个色时生效；
+- 浅色档替代色写在这一项自身的 `light` 字段；`accentForMode(skinId, color, mode)`
+  只在当前皮肤的 accents 里查同名色值，设置里存的始终是 `color` 原值；
 - `skin.css` 里的 `--accent` 只作**首帧兜底**（JS 未执行时使用），必须等于 accents 第一项，
   `check-skin` 会核对这两个值。
 
@@ -305,8 +334,9 @@ Windows 没有系统标题栏（`decorations: false`），顶部那条是我们�
 | `base` | 内置皮肤 id，变量基底来自它的 `skin.css` |
 | `accents` | 同注册表；色值只收 3 / 6 位十六进制，可带 `light` 替代色 |
 | `modes` | `dark` / `light`，只列一项即锁定该档 |
-| `titlebar` | `windows` / `traffic` |
-| `vars.dark` / `vars.light` | 变量名 → 值，只写要改的变量 |
+| `titlebar` | `windows` / `traffic`，枚举 `TITLEBAR_MODES` |
+| `allowUserFont` | 布尔值，是否开放界面字体 |
+| `vars.dark` / `vars.light` | 变量名 → 值，只写要改的变量；`--radius-scale` 这类系数写这里 |
 | `icons` | 图标名 → SVG 片段，只写要换的图标 |
 
 ```json
@@ -359,9 +389,11 @@ node tools/check-skin.mjs
 6. `registry.js` 里有皮肤没声明 `accents`，标了 `icons: true` 却没有 `icons.js`，
    或 `icons.js` 里写了 `js/icons.js` 里不存在的图标名；
 7. `js/icons.js` 的 `icon()` 又把线宽写回标签，或丢了 `data-icon`（切皮肤时就地重画会失效）；
-8. 组件里 `var(--x)` 用到但没有任何定义（拼错变量名就是这样漏的）；
-9. 皮肤包契约：合法包被拒、非法 id / base / format / version 被放过、CSS 注入与外链变量值、
-   带事件属性或非白名单标签的图标没被清洗掉。
+8. 组件里 `var(--x)` 用到但 `base.css` + 皮肤合并后仍没有定义
+   （拼错变量名就是这样漏的）；
+9. `base.css` 缺失或写了变量声明以外的规则，皮肤 `titlebar` 不在 `TITLEBAR_MODES` 里；
+10. 皮肤包契约：合法包被拒、非法 id / base / format / version 被放过、CSS 注入与外链变量值、
+    带事件属性或非白名单标签的图标没被清洗掉。
 
 确实需要保留字面量的行，行尾加 `/* skin:allow 原因 */` 放行，并在 PR 里说明。
 
@@ -380,3 +412,5 @@ node tools/check-skin.mjs
   图卡（首页 / 分类的封面卡）用 `--tile-*`，默认透明无描边；想让它们长成卡片，
   在皮肤里把 `--tile-*` 接回 `--card-*`。
 - 不要给开关、单选点、色板写死宽高，尺寸即风格，走 `--switch-*` / `--radio-*` / `--swatch-*`。
+- 不要在皮肤里重列 8 档圆角、3 档时长或 4 档阴影，改 `--radius-scale` / `--dur-scale`
+  / `--shadow-scale` 与阴影系数；单档微调才覆盖派生变量。

@@ -3,12 +3,12 @@
 //
 // 用法：node tools/check-skin.mjs  [--verbose]
 //
-// 三件事：
+// 检查项：
 //   1. 组件 CSS（styles/pages/room/mobile）里出现颜色字面量、非零圆角数字、
 //      非变量字体就报错；确有必要的行尾写 `/* skin:allow 原因 */` 放行。
-//   2. 每个皮肤的 skin.css 必须存在，且定义了自己 id 对应的两块作用域。
-//   3. 组件里 `var(--x)` 用到的每个变量都必须有定义（皮肤或运行时注入），
-//      拦住拼错变量名这种「看着没事、其实整块样式没生效」的问题。
+//   2. 内置皮肤的 skin.css 必须存在，且定义了自己 id 对应的两块作用域。
+//   3. 组件里 `var(--x)` 用到的每个变量，在 base.css + 皮肤合并后必须有定义。
+//   4. 控件几何、图标表、用户覆盖层白名单与皮肤包契约。
 //
 // 只依赖 node 内置模块，接 CI 直接加一步 `node tools/check-skin.mjs`。
 
@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OVERRIDE_KEYS } from '../web/skins/overrides.js';
-import { BUILTIN_SKINS } from '../web/skins/registry.js';
+import { BUILTIN_SKINS, TITLEBAR_MODES } from '../web/skins/registry.js';
 import { PACK_FORMAT, PACK_VERSION, packCss, sanitizeSkinPack } from '../web/skins/pack.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -184,6 +184,7 @@ const entries = BUILTIN_SKINS.map((skin) => ({
   id: skin.id,
   modes: skin.modes || [],
   icons: skin.icons === true,
+  titlebar: skin.titlebar || 'windows',
   // accents 数组是「皮肤提供的主题色」，第一个即默认色。
   accent: skin.accents?.[0]?.color || '',
 }));
@@ -193,9 +194,29 @@ for (const entry of entries) {
   if (!entry.accent) {
     problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 没有声明 accents（第一项就是默认主题色）`);
   }
+  if (!TITLEBAR_MODES.includes(entry.titlebar)) {
+    problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 的 titlebar 不在 TITLEBAR_MODES 里`);
+  }
 }
 
 const definedVars = new Set();
+
+// 阶梯派生层：圆角/时长/阴影由 scale 展开，皮肤只需写差异系数。
+const baseFile = path.join(WEB, 'skins', 'base.css');
+if (!fs.existsSync(baseFile)) {
+  problems.push('web/skins/base.css 不存在（阶梯派生层）');
+} else {
+  const css = read(baseFile);
+  for (const match of css.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)) definedVars.add(match[1]);
+  eachLine(css, (line, lineNumber) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(':root') || trimmed === '}' || trimmed === '{') return;
+    if (trimmed.includes('{')) return;
+    if (!/^--[a-zA-Z0-9-]+\s*:/.test(trimmed)) {
+      problems.push(`web/skins/base.css:${lineNumber}  只准声明变量： ${trimmed}`);
+    }
+  });
+}
 
 for (const entry of entries) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(entry.id)) {
@@ -271,7 +292,7 @@ for (const name of COMPONENT_FILES) {
 
 for (const [name, where] of usedVars) {
   if (definedVars.has(name) || RUNTIME_VARS.has(name)) continue;
-  problems.push(`${where}  var(${name}) 没有定义：皮肤里补上，或者确实是运行时注入就加进 RUNTIME_VARS`);
+  problems.push(`${where}  var(${name}) 没有定义：base.css 或皮肤里补上，或者确实是运行时注入就加进 RUNTIME_VARS`);
 }
 
 // ---------------------------------------------------------------- 3b. 覆盖层白名单

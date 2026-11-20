@@ -345,7 +345,7 @@ export function currentAccentValue() {
 /// 当前皮肤正在用的主题色（按 <html data-theme> 换算过）。
 export function currentAccent() {
   const mode = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-  return accentForMode(currentAccentValue(), mode);
+  return accentForMode(currentSkin().id, currentAccentValue(), mode);
 }
 
 /// 皮肤是否锁死了明暗（只提供一套配色）。
@@ -436,7 +436,7 @@ export function applyTheme() {
   ensureSkinStyle(skin);
 
   // 存原值，落到 DOM 时按当前明暗档换算。
-  const accent = accentForMode(resolveAccentValue(skin, appearance), effective);
+  const accent = accentForMode(skin.id, resolveAccentValue(skin, appearance), effective);
   root.style.setProperty('--accent', accent);
   root.style.setProperty('--accent-soft', `color-mix(in srgb, ${accent} ${effective === 'light' ? 18 : 16}%, transparent)`);
   // 压在强调色上的文字颜色，每次 applyTheme 重算。
@@ -446,8 +446,8 @@ export function applyTheme() {
   const overrides = resolvedOverrides(appearance);
   applyOverrideVars(overrides);
 
-  // 界面字体只给默认皮肤用：其它皮肤自带字体栈，切过去时把覆盖清掉。
-  const userFont = skin.id === DEFAULT_SKIN_ID ? String(appearance.font || '').trim() : '';
+  // 界面字体只给声明了 allowUserFont 的皮肤用，切到别的皮肤时清掉覆盖。
+  const userFont = skin.allowUserFont ? String(appearance.font || '').trim() : '';
   if (userFont) root.style.setProperty('--font-user', `"${userFont}", var(--font)`);
   else root.style.removeProperty('--font-user');
 

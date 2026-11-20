@@ -147,11 +147,12 @@ html[data-skin="apple"][data-theme="light"] {
   --tip-font: 12px;
   --tip-max-w: 280px;
 
-  /* -------------------------------------------------- 阴影 / 遮罩：4% / 10% / 14%，扩散较大 */
-  --shadow-1: 0 4px 12px rgba(0, 0, 0, 0.04);
-  --shadow-2: 0 10px 36px rgba(0, 0, 0, 0.13);
-  --shadow-3: 0 20px 44px rgba(0, 0, 0, 0.16);
-  --shadow-line: 0 12px 22px -20px rgba(0, 0, 0, 0.28);
+  /* -------------------------------------------------- 阴影 / 遮罩：淡系数、扩散大一点 */
+  --shadow-scale: 1.2;
+  --shadow-a1: 0.04;
+  --shadow-a2: 0.13;
+  --shadow-a3: 0.16;
+  --shadow-a-line: 0.28;
   --scrim: rgba(0, 0, 0, 0.3);
   --blur-overlay: blur(8px);
   /* 20px 是这套风格的 vibrancy 取值：浮层要能透出背后的颜色轮廓 */
@@ -288,15 +289,9 @@ html[data-skin="apple"][data-theme="light"] {
   --tile-radius: var(--radius-lg);
   --tile-shadow: none;
 
-  /* -------------------------------------------------- 圆角阶梯：胶囊 / 24px / 12px 三档 */
-  --radius-2xs: 6px;
-  --radius-xs: 8px;
-  --radius-sm: 10px;
-  --radius-md: 12px;
+  /* -------------------------------------------------- 圆角阶梯：整体放大，中圆角保持 12px */
+  --radius-scale: 1.25;
   --radius: 12px;
-  --radius-lg: 18px;
-  --radius-xl: 24px;
-  --radius-pill: 999px;
 
   /* -------------------------------------------------- 字体：SF Pro → Segoe UI，中文 PingFang → 微软雅黑 */
   /* 苹方/SF 只存在于苹果系统；后面的「HarmonyOS Sans SC」是内置字体（见 fonts.css），
@@ -312,10 +307,8 @@ html[data-skin="apple"][data-theme="light"] {
   --icon-join: round;
   --icon-stroke-thin: 1.1;
 
-  /* -------------------------------------------------- 动效：500ms 上浮与阴影扩散，fast 用于 hover */
-  --dur-fast: 0.22s;
-  --dur-base: 0.32s;
-  --dur-slow: 0.5s;
+  /* -------------------------------------------------- 动效：比默认慢一档 */
+  --dur-scale: 1.6;
   --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
 
   color-scheme: light;

@@ -376,6 +376,24 @@ function currentMode() {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 }
 
+/// 覆盖项初值：阶梯变量的值是 calc() 文本，借探针元素取浏览器算出的长度或时长。
+let overrideProbe = null;
+
+function computedOverrideValue(item) {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(item.key).trim();
+  const direct = Number.parseFloat(raw);
+  if (Number.isFinite(direct)) return direct;
+  if (!overrideProbe) {
+    overrideProbe = document.createElement('div');
+    document.body.appendChild(overrideProbe);
+  }
+  overrideProbe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+  const prop = item.unit === 's' ? 'transitionDuration' : 'width';
+  overrideProbe.style[prop] = `var(${item.key})`;
+  const value = Number.parseFloat(getComputedStyle(overrideProbe)[prop]);
+  return Number.isFinite(value) ? value : item.min;
+}
+
 function buildRow(config, repaint, ctx) {
   if (config.type === 'skin') {
     // 皮肤清单来自 skins/registry.js，这里不维护第二份。
@@ -392,7 +410,7 @@ function buildRow(config, repaint, ctx) {
       // 色点：当前皮肤取实际在用的色，其它皮肤取 accents 第一项；都按当前明暗档换算。
       const modes = skinModes(skin.id);
       const fallback = skinAccents(skin.id)[0]?.color || 'currentColor';
-      const dot = skin.id === active ? currentAccent() : accentForMode(fallback, currentMode());
+      const dot = skin.id === active ? currentAccent() : accentForMode(skin.id, fallback, currentMode());
       card.innerHTML = `
         <span class="skin-dot" style="background:${escapeHtml(dot)}" aria-hidden="true"></span>
         <span class="skin-text">
@@ -455,9 +473,7 @@ function buildRow(config, repaint, ctx) {
   if (config.type === 'override') {
     const item = config.item;
     const stored = getSetting('appearance.overrides', {})?.[item.key];
-    const computed = getComputedStyle(document.documentElement).getPropertyValue(item.key).trim();
-    const fallback = Number.parseFloat(computed);
-    const start = Number.isFinite(fallback) ? fallback : item.min;
+    const start = computedOverrideValue(item);
     const wrap = document.createElement('div');
     wrap.className = 'override-control';
     const slider = document.createElement('input');
@@ -604,7 +620,7 @@ function buildRow(config, repaint, ctx) {
       const swatch = document.createElement('button');
       swatch.className = `swatch${current === accent.color.toLowerCase() ? ' active' : ''}`;
       // 色块按当前明暗档换算后显示。
-      swatch.style.background = accentForMode(accent.color, currentMode());
+      swatch.style.background = accentForMode(currentSkin().id, accent.color, currentMode());
       swatch.title = isDefault ? `${accent.name}（这套皮肤的默认色）` : accent.name;
       swatch.setAttribute('aria-label', accent.name);
       swatch.addEventListener('click', () => {
@@ -779,8 +795,8 @@ function detailSections(key, ctx, repaint) {
         ...(skinAccents(currentSkin().id).length > 1
           ? [{ label: '主题颜色', rows: [{ type: 'colors' }] }]
           : []),
-        // 界面字体只给默认皮肤：其它皮肤自带字体栈，切过去时覆盖会被清掉。
-        ...(!IS_MOBILE && currentSkin().id === DEFAULT_SKIN_ID
+        // 界面字体只给声明了 allowUserFont 的皮肤。
+        ...(!IS_MOBILE && currentSkin().allowUserFont
           ? [{
             label: '界面字体',
             rows: [{

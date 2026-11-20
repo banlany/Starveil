@@ -3,6 +3,7 @@
 import { macIcon, winIcon } from './icons.js';
 import { IS_MOBILE } from './platform.js';
 import { currentSkin } from './store.js';
+import { TITLEBAR_MODES } from '../skins/registry.js';
 
 const windowApi = () => window.__TAURI__?.window;
 
@@ -10,9 +11,10 @@ let appWindow = null;
 let maximized = false;
 let wired = false;
 
-/// 这套皮肤的窗口按钮形态：`traffic` 为左侧红绿灯，缺省为 Windows 右侧三键。
+/// 窗口按钮形态取皮肤声明的枚举值，缺省为 Windows 右侧三键。
 function titlebarMode() {
-  return currentSkin()?.titlebar === 'traffic' ? 'traffic' : 'windows';
+  const value = currentSkin()?.titlebar;
+  return TITLEBAR_MODES.includes(value) ? value : 'windows';
 }
 
 /// 把窗口按钮图形画进按钮；线宽由 `.titlebar-btn .ico` 读 --icon-stroke-thin。

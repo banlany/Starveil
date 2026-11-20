@@ -1,0 +1,32 @@
+/* 阶梯派生层：圆角、时长、阴影由 scale 与系数统一计算。
+   皮肤只写差异系数；单档要微调时直接覆盖 --radius-sm 这类派生变量。
+   calc 乘除法由 WebView2 / Chrome 111+ 提供。 */
+
+:root {
+  --radius-scale: 1;
+  --dur-scale: 1;
+  --shadow-scale: 1;
+  --shadow-rgb: 0, 0, 0;
+  --shadow-a1: 0.22;
+  --shadow-a2: 0.38;
+  --shadow-a3: 0.45;
+  --shadow-a-line: 0.8;
+
+  --radius-2xs: calc(4px * var(--radius-scale));
+  --radius-xs: calc(6px * var(--radius-scale));
+  --radius-sm: calc(8px * var(--radius-scale));
+  --radius-md: calc(10px * var(--radius-scale));
+  --radius: calc(12px * var(--radius-scale));
+  --radius-lg: calc(16px * var(--radius-scale));
+  --radius-xl: calc(20px * var(--radius-scale));
+  --radius-pill: calc(999px * var(--radius-scale));
+
+  --dur-fast: calc(0.14s * var(--dur-scale));
+  --dur-base: calc(0.2s * var(--dur-scale));
+  --dur-slow: calc(0.28s * var(--dur-scale));
+
+  --shadow-1: 0 calc(2px * var(--shadow-scale)) calc(8px * var(--shadow-scale)) rgba(var(--shadow-rgb), var(--shadow-a1));
+  --shadow-2: 0 calc(10px * var(--shadow-scale)) calc(28px * var(--shadow-scale)) rgba(var(--shadow-rgb), var(--shadow-a2));
+  --shadow-3: 0 calc(18px * var(--shadow-scale)) calc(48px * var(--shadow-scale)) rgba(var(--shadow-rgb), var(--shadow-a3));
+  --shadow-line: 0 12px 22px -20px rgba(var(--shadow-rgb), var(--shadow-a-line));
+}

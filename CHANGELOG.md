@@ -19,6 +19,10 @@
 
 - 皮肤注册表支持运行时注册；首帧预涂缓存带皮肤包差异 CSS，图标覆盖按
   「基础 → 皮肤包 → 用户」三层合并。
+- 圆角 8 档、时长 3 档、阴影 4 档改由 `skins/base.css` 的 scale 与系数派生，
+  两套内置皮肤只写差异；校验按「base.css + 皮肤合并后」闭环。
+- 浅色替代色只读当前皮肤 accents 自身的 `light`；界面字体改由 `allowUserFont` 声明，
+  `titlebar` 收成 `TITLEBAR_MODES` 枚举。
 - 主题色淡底 `--accent-soft` 改由 CSS `color-mix()` 计算，不再依赖 JS 解析十六进制色值；
   界面密度的三档并入皮肤变量覆盖层，去掉 `body[data-density]` 的硬编码规则。
 

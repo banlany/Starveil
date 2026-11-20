@@ -5,6 +5,7 @@ import {
   DEFAULT_SKIN_ID,
   registerSkin,
   skinAccents,
+  TITLEBAR_MODES,
   unregisterSkin,
 } from './registry.js';
 
@@ -108,7 +109,8 @@ export function sanitizeSkinPack(raw) {
     base,
     accents: cleanAccents(raw.accents),
     modes: cleanModes(raw.modes),
-    titlebar: raw.titlebar === 'traffic' ? 'traffic' : 'windows',
+    titlebar: TITLEBAR_MODES.includes(raw.titlebar) ? raw.titlebar : 'windows',
+    allowUserFont: raw.allowUserFont === true,
     vars: { dark: cleanVars(raw.vars?.dark), light: cleanVars(raw.vars?.light) },
     icons: cleanIcons(raw.icons),
   };
@@ -183,7 +185,8 @@ export function templatePack(skin) {
     base: skin.base || skin.id,
     accents: skinAccents(skin.id).map((accent) => ({ ...accent })),
     modes: [...(skin.modes || ['dark'])],
-    titlebar: skin.titlebar === 'traffic' ? 'traffic' : 'windows',
+    titlebar: TITLEBAR_MODES.includes(skin.titlebar) ? skin.titlebar : 'windows',
+    allowUserFont: skin.allowUserFont === true,
     vars: { dark: {}, light: {} },
     icons: {},
   };

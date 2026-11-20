@@ -7,6 +7,8 @@
   <meta name="color-scheme" content="dark light" />
   <title>Starveil</title>
   <link rel="icon" href="assets/logo.png" />
+  <!-- 阶梯派生层先于皮肤加载：皮肤只写 scale 与系数，派生值在这里展开 -->
+  <link rel="stylesheet" href="skins/base.css" />
   <!-- 首帧前先判定平台：移动端没有自绘标题栏、侧栏要挪到底部，
        等 app.js 执行再切会先闪一下桌面布局。 -->
   <script>
