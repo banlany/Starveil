@@ -241,7 +241,7 @@ html.is-mobile .icon-btn {
 /* ------------------------------------------------------------ 列表与卡片 */
 
 html.is-mobile .page-pad,
-html.is-mobile .settings-page,
+html.is-mobile .settings-page:not(.is-pane),
 html.is-mobile .category-page,
 html.is-mobile .search-body,
 html.is-mobile .follow-toolbar,
@@ -321,6 +321,38 @@ html.is-mobile .setting-row {
 
 html.is-mobile .setting-row.clickable:active {
   background: var(--surface-2);
+}
+
+/* 横屏两栏：手机宽度有限，左栏收窄、字号降一档。 */
+@media (orientation: landscape) {
+  html.is-mobile .settings-page.is-pane {
+    grid-template-columns: 172px minmax(0, 1fr);
+  }
+
+  html.is-mobile .settings-side {
+    padding: 8px 6px 12px 8px;
+  }
+
+  html.is-mobile .side-brand {
+    padding: 4px 6px 10px;
+  }
+
+  html.is-mobile .side-item {
+    min-height: 34px;
+    font-size: 12.5px;
+  }
+
+  html.is-mobile .settings-page.is-pane .pane-head {
+    padding: 14px 14px 0;
+  }
+
+  html.is-mobile .pane-head h1 {
+    font-size: 17px;
+  }
+
+  html.is-mobile .settings-page.is-pane .settings-content {
+    padding: 8px 14px 28px;
+  }
 }
 
 /* 弹层在窄屏上占满宽度，别再留 40px 边。 */
@@ -487,9 +519,9 @@ html.is-mobile .chat-resizer {
   }
 }
 
-/* 横屏下设置、搜索类页面限宽；卡片流页面不限宽。 */
+/* 横屏下设置、搜索类页面限宽；卡片流页面与两栏设置不限宽。 */
 @media (orientation: landscape) {
-  html.is-mobile .settings-page,
+  html.is-mobile .settings-page:not(.is-pane),
   html.is-mobile .settings-content,
   /* 分类房间列表为卡片流，不限宽。 */
   html.is-mobile .subpage-body:not(.category-rooms-body),

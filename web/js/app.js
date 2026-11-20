@@ -21,7 +21,7 @@ import { renderCategory } from './pages/category.js';
 import { renderCategoryRooms } from './pages/category-rooms.js';
 import { renderFollow } from './pages/follow.js';
 import { renderSearch } from './pages/search.js';
-import { renderSettings, renderSettingsDetail } from './pages/settings.js';
+import { renderSettings, renderSettingsDetail, useWideSettings } from './pages/settings.js';
 import { renderRoom } from './pages/room.js';
 import { importData } from './importer.js';
 import { initTitlebar } from './titlebar.js';
@@ -293,7 +293,9 @@ function initSwipe() {
 
 function renderChrome() {
   const config = PAGES[state.page] || PAGES.home;
-  rail.classList.toggle('is-hidden', !config.rail);
+  // 宽屏的二级设置页仍是两栏（左栏是分区导航），必须保留应用侧栏。
+  const keepRail = config.rail || (state.page === 'settingsDetail' && useWideSettings());
+  rail.classList.toggle('is-hidden', !keepRail);
   topbar.classList.toggle('is-hidden', !config.topbar);
   searchButton.classList.toggle('is-hidden', !config.search);
   // 刷新按钮钉在顶栏左上角（和关注页同一个位置），只在首页出现。
@@ -646,6 +648,14 @@ function initPullRefresh() {
   view.addEventListener('touchcancel', reset, { passive: true });
 }
 
+/// 横竖屏切换时重排设置页：竖屏是列表进二级页，横屏是两栏。
+function initOrientationLayout() {
+  if (!IS_MOBILE) return;
+  window.matchMedia?.('(orientation: landscape)').addEventListener?.('change', () => {
+    if (state.page === 'settings' || state.page === 'settingsDetail') render({ keepScroll: false });
+  });
+}
+
 const WINDOW_STATE_KEY = 'starveil.window.v1';
 let windowRestoring = false;
 let windowSaveTimer = 0;
@@ -824,6 +834,7 @@ function init() {
   initGlobalShortcuts();
   initPullRefresh();
   initSwipe();
+  initOrientationLayout();
   initUnderlineTracking();
   state.page = 'home';
   state.routeParams = {};

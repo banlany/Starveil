@@ -50,7 +50,7 @@ import {
 } from '../ui.js';
 
 // 兜底版本号，与 tauri.conf.json 一致；运行时优先用 app.getVersion()。
-const FALLBACK_VERSION = '0.7.5';
+const FALLBACK_VERSION = '0.8.0';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -108,6 +108,9 @@ const SETTINGS_GROUPS = [
   },
 ];
 
+// 许可与免责声明挂在「关于」下面，两栏里高亮停在父项。
+const SECTION_PARENT = { licenses: 'about', disclaimer: 'about' };
+
 const DETAIL_TITLES = {
   history: '观看记录',
   account: '账号管理',
@@ -123,7 +126,31 @@ const DETAIL_TITLES = {
   about: '关于 Starveil',
 };
 
+/// 宽屏（桌面、移动端横屏）用左导航 + 右内容两栏；移动端竖屏保留列表进二级页。
+export function useWideSettings() {
+  return !IS_MOBILE || window.matchMedia('(orientation: landscape)').matches;
+}
+
+// 两栏模式下切换右侧分区的入口，由 renderSettingsWide 注册。
+let wideSelect = null;
+// 两栏布局记住上次看的分区，重绘后回到原处。
+let wideKey = 'appearance';
+
+/// 打开某个二级分区：两栏时换右侧内容，单栏时进二级页。
+function openSection(key, ctx) {
+  if (wideSelect && ctx.route() === 'settings') {
+    wideSelect(key);
+    return;
+  }
+  ctx.go('settingsDetail', { key });
+}
+
 export function renderSettings(ctx) {
+  if (useWideSettings()) return renderSettingsWide(ctx, wideKey);
+  return renderSettingsList(ctx);
+}
+
+function renderSettingsList(ctx) {
   const page = document.createElement('section');
   page.className = 'settings-page';
   page.innerHTML = `
@@ -167,8 +194,85 @@ export function renderSettings(ctx) {
   return () => {};
 }
 
+/// 两栏布局：左栏分区导航常驻，右栏直接显示二级内容。
+function renderSettingsWide(ctx, initialKey) {
+  const startKey = DETAIL_TITLES[initialKey] ? initialKey : 'appearance';
+  wideKey = startKey;
+  const page = document.createElement('section');
+  page.className = 'settings-page is-pane';
+  page.innerHTML = `
+    <aside class="settings-side">
+      <button class="side-brand" id="side-brand">
+        <img src="assets/logo.png" alt="" />
+        <span class="side-brand-text">
+          <b>Starveil</b>
+          <small>设置</small>
+        </span>
+      </button>
+      <nav class="side-nav" id="side-nav"></nav>
+    </aside>
+    <div class="settings-pane" id="settings-pane">
+      <header class="pane-head"><h1 id="pane-title"></h1></header>
+      <div class="settings-content" id="pane-content"></div>
+    </div>`;
+  const nav = page.querySelector('#side-nav');
+  const pane = page.querySelector('#settings-pane');
+  const content = page.querySelector('#pane-content');
+  const title = page.querySelector('#pane-title');
+
+  for (const group of SETTINGS_GROUPS) {
+    const label = document.createElement('div');
+    label.className = 'side-group';
+    label.textContent = group.label;
+    nav.appendChild(label);
+    for (const item of group.items) {
+      const button = document.createElement('button');
+      button.className = 'side-item';
+      button.dataset.key = item.key;
+      button.innerHTML = `<span class="side-icon">${icon(item.icon, 18)}</span><span class="side-label">${escapeHtml(item.label)}</span>`;
+      button.addEventListener('click', () => select(item.key));
+      nav.appendChild(button);
+    }
+  }
+
+  function select(key) {
+    // 换分区回到顶部；同一分区重绘（改选项）由 paintDetail 保持原位。
+    const switching = content.dataset.key !== key;
+    wideKey = key;
+    const navKey = SECTION_PARENT[key] || key;
+    for (const button of nav.querySelectorAll('.side-item')) {
+      const on = button.dataset.key === navKey;
+      button.classList.toggle('active', on);
+      if (on) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    }
+    title.textContent = DETAIL_TITLES[key] || '设置';
+    content.dataset.key = key;
+    if (switching) pane.scrollTop = 0;
+    paintDetail(key, content, ctx, pane);
+  }
+
+  wideSelect = select;
+  page.querySelector('#side-brand').addEventListener('click', () => select('about'));
+  document.getElementById('view').appendChild(page);
+  select(startKey);
+
+  // 雪白的实际色值随明暗档变化，切换后需重绘色块。
+  const onTheme = () => {
+    if (wideKey === 'appearance') select(wideKey);
+  };
+  window.addEventListener('simple-live:theme', onTheme);
+  return () => {
+    window.removeEventListener('simple-live:theme', onTheme);
+    if (wideSelect === select) wideSelect = null;
+    stopSyncTimers();
+  };
+}
+
 export function renderSettingsDetail(ctx, params = {}) {
   const key = params.key || 'appearance';
+  // 宽屏下二级页也走两栏，避免切换时整页换壳。
+  if (useWideSettings()) return renderSettingsWide(ctx, key);
   const title = DETAIL_TITLES[key] || '设置';
   const page = document.createElement('section');
   page.className = 'subpage detail-page';
@@ -180,42 +284,9 @@ export function renderSettingsDetail(ctx, params = {}) {
     <div class="settings-content" id="detail-content"></div>`;
   page.querySelector('.back-btn').addEventListener('click', () => ctx.back());
   const content = page.querySelector('#detail-content');
+  const view = document.getElementById('view');
 
-  function paint() {
-    const scrollTop = document.getElementById('view').scrollTop;
-    content.innerHTML = '';
-    if (key === 'history') return paintHistory(content, ctx);
-    if (key === 'sync') return paintSync(content, ctx, paint);
-    if (key === 'link') return paintLink(content, ctx);
-    if (key === 'about') return paintAbout(content, ctx);
-    if (key === 'licenses') return paintLicenses(content, ctx);
-    if (key === 'disclaimer') return paintDisclaimer(content, ctx, paint);
-    if (key === 'account') return paintAccount(content, ctx);
-    const sections = detailSections(key, ctx, paint);
-    for (const section of sections) {
-      if (section.label) {
-        const label = document.createElement('div');
-        label.className = 'settings-group-label';
-        label.textContent = section.label;
-        content.appendChild(label);
-      }
-      if (section.node) {
-        content.appendChild(section.node);
-        continue;
-      }
-      const group = document.createElement('div');
-      group.className = 'settings-group';
-      for (const row of section.rows || []) group.appendChild(buildRow(row, paint, ctx));
-      content.appendChild(group);
-    }
-    if (sections.note) {
-      const note = document.createElement('p');
-      note.className = 'settings-note';
-      note.textContent = sections.note;
-      content.appendChild(note);
-    }
-    document.getElementById('view').scrollTop = scrollTop;
-  }
+  const paint = () => paintDetail(key, content, ctx, view);
 
   document.getElementById('view').appendChild(page);
   paint();
@@ -229,6 +300,68 @@ export function renderSettingsDetail(ctx, params = {}) {
     window.removeEventListener('simple-live:theme', onTheme);
     stopSyncTimers();
   };
+}
+
+/// 画一个二级分区的内容；scroller 是当前滚动容器，重绘后保持位置。
+function paintDetail(key, content, ctx, scroller) {
+  const scrollTop = scroller ? scroller.scrollTop : 0;
+  content.innerHTML = '';
+  const repaint = () => paintDetail(key, content, ctx, scroller);
+  const done = () => {
+    if (scroller) scroller.scrollTop = scrollTop;
+  };
+  if (key === 'history') {
+    paintHistory(content, ctx);
+    return done();
+  }
+  if (key === 'sync') {
+    paintSync(content, ctx, repaint);
+    return done();
+  }
+  if (key === 'link') {
+    paintLink(content, ctx);
+    return done();
+  }
+  if (key === 'about') {
+    paintAbout(content, ctx);
+    return done();
+  }
+  if (key === 'licenses') {
+    paintLicenses(content, ctx);
+    return done();
+  }
+  if (key === 'disclaimer') {
+    paintDisclaimer(content, ctx, repaint);
+    return done();
+  }
+  if (key === 'account') {
+    paintAccount(content, ctx);
+    return done();
+  }
+  const sections = detailSections(key, ctx, repaint);
+  for (const section of sections) {
+    if (section.label) {
+      const label = document.createElement('div');
+      label.className = 'settings-group-label';
+      label.textContent = section.label;
+      content.appendChild(label);
+    }
+    if (section.node) {
+      content.appendChild(section.node);
+      continue;
+    }
+    const group = document.createElement('div');
+    group.className = 'settings-group';
+    for (const row of section.rows || []) group.appendChild(buildRow(row, repaint, ctx));
+    content.appendChild(group);
+  }
+  if (sections.note) {
+    const note = document.createElement('p');
+    note.className = 'settings-note';
+    note.textContent = sections.note;
+    content.appendChild(note);
+  }
+  done();
 }
 
 // ---------------------------------------------------------------- 行构建
@@ -1638,7 +1771,7 @@ function paintAbout(content, ctx) {
     <div class="action-icon">${icon('shield', 20)}</div>
     <div class="action-text"><h4>许可与致谢</h4><p>协议层来源、第三方开源库与素材署名</p></div>
     <button class="btn small">查看</button>`;
-  licenses.querySelector('button').addEventListener('click', () => ctx.go('settingsDetail', { key: 'licenses' }));
+  licenses.querySelector('button').addEventListener('click', () => openSection('licenses', ctx));
   content.appendChild(licenses);
 
   // 免责声明、运行日志、重置设置都属于「应用」层面的杂项，收在这里。
@@ -1648,7 +1781,7 @@ function paintAbout(content, ctx) {
     <div class="action-icon">${icon('shield', 20)}</div>
     <div class="action-text"><h4>免责声明</h4><p>数据来源、使用范围与责任边界</p></div>
     <button class="btn small">查看</button>`;
-  disclaimer.querySelector('button').addEventListener('click', () => ctx.go('settingsDetail', { key: 'disclaimer' }));
+  disclaimer.querySelector('button').addEventListener('click', () => openSection('disclaimer', ctx));
   content.appendChild(disclaimer);
 
   const logs = document.createElement('div');
