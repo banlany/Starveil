@@ -14,10 +14,11 @@ export const ICON_PATHS = {
     '<path d="M12 20.2c-1.4-1-8.4-5.5-8.4-10.6a4.6 4.6 0 0 1 4.6-4.6c1.6 0 3 .8 3.8 2.1.8-1.3 2.2-2.1 3.8-2.1a4.6 4.6 0 0 1 4.6 4.6c0 5.1-7 9.6-8.4 10.6Z"/>',
   followFilled:
     '<path fill="currentColor" stroke="none" d="M12 20.2c-1.4-1-8.4-5.5-8.4-10.6a4.6 4.6 0 0 1 4.6-4.6c1.6 0 3 .8 3.8 2.1.8-1.3 2.2-2.1 3.8-2.1a4.6 4.6 0 0 1 4.6 4.6c0 5.1-7 9.6-8.4 10.6Z"/>',
-  // 分类：圆角方块（SF square.grid.2x2）。
-  grid: '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.4"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.4"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.4"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.4"/>',
-  gridFilled:
-    '<rect x="3.2" y="3.2" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="13.3" y="3.2" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="3.2" y="13.3" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/><rect x="13.3" y="13.3" width="7.5" height="7.5" rx="2.8" fill="currentColor" stroke="none"/>',
+  // 分类：三层堆叠（顶面菱形 + 两道斜边），与关注页的网格视图区分。
+  category:
+    '<path d="M12 3 20.4 8.3 12 13.6 3.6 8.3 12 3Z"/><path d="M3.6 13.4 12 18l8.4-4.6"/><path d="M3.6 16.9 12 21.5l8.4-4.6"/>',
+  categoryFilled:
+    '<path fill="currentColor" stroke="none" d="M11.35 2.72a1.25 1.25 0 0 1 1.3 0l7.86 4.72a1.2 1.2 0 0 1 0 2.04l-7.86 4.72a1.25 1.25 0 0 1-1.3 0L3.49 9.48a1.2 1.2 0 0 1 0-2.04Z"/><path d="M3.6 13.6 12 18.2l8.4-4.6" stroke-width="2.3"/><path d="M3.6 17.1 12 21.7l8.4-4.6" stroke-width="2.3"/>',
   gridView:
     '<rect x="3.4" y="3.4" width="7.2" height="7.2" rx="2.2"/><rect x="13.4" y="3.4" width="7.2" height="7.2" rx="2.2"/><rect x="3.4" y="13.4" width="7.2" height="7.2" rx="2.2"/><rect x="13.4" y="13.4" width="7.2" height="7.2" rx="2.2"/>',
   // 设置：8 齿方齿轮 + 中心孔（SF gearshape）。

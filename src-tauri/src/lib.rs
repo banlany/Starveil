@@ -1893,7 +1893,7 @@ fn login_window_label(platform: Platform) -> String {
 /// 新窗口的 WebView2 environment 参数须与主窗口完全一致，否则创建失败。
 /// 主窗口参数见 tauri.conf.json 的 `additionalBrowserArgs`，改一处须同步另一处。
 #[cfg(desktop)]
-const LOGIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
+const LOGIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --enable-features=OverlayScrollbar";
 
 /// 打开独立登录窗口，与主窗口共享 WebView2 用户数据目录与 Cookie。
 #[tauri::command]

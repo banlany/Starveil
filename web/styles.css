@@ -422,27 +422,50 @@ textarea.input {
   line-height: 1.6;
 }
 
-.chip {
+/* ------------------------------------------------------------ 筛选切换 */
+
+/* 关注页的标签与筛选项、设置页的记录/统计、直播间 SC 页签共用一套外观：
+   独立胶囊，选中态 = 主题色文字 + 主题色描边 + 淡主题色底。 */
+.chip,
+.segmented,
+.follow-mode,
+.sc-view-nav {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.chip,
+.segmented button,
+.follow-mode button,
+.sc-view-nav button {
   height: var(--chip-h);
   padding: 0 var(--chip-pad-x);
   border-radius: var(--chip-radius);
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   font-size: var(--chip-font);
   color: var(--chip-fg);
   background: var(--chip-bg);
   border: var(--chip-line);
   box-shadow: var(--chip-shadow);
-  transition: all var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
-.chip:hover {
+.chip:hover,
+.segmented button:hover,
+.follow-mode button:hover,
+.sc-view-nav button:hover {
   color: var(--chip-hover-fg);
   background: var(--chip-hover-bg);
 }
 
-.chip.active {
+.chip.active,
+.segmented button.active,
+.follow-mode button.active,
+.sc-view-nav button.active {
   color: var(--chip-on-fg);
   background: var(--chip-on-bg);
   border: var(--chip-on-line);
@@ -1139,25 +1162,11 @@ textarea.input {
 
 /* ------------------------------------------------------------ 滚动条 */
 
-::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: var(--radius-md);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
+/* 悬浮滚动条（启动参数 --enable-features=OverlayScrollbar）：不占布局空间，
+   只在滚动时淡入。这里不能写 ::-webkit-scrollbar —— 自定义样式会让 Chromium
+   退回占位滚动条，宽度又回到 15px。颜色用标准属性，overlay 与系统滚动条都认。 */
+:root {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 @media (max-width: 1280px) {

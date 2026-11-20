@@ -307,37 +307,6 @@
   min-width: 28px;
 }
 
-.follow-mode {
-  display: inline-flex;
-  gap: var(--seg-gap);
-  padding: var(--seg-inset);
-  border-radius: var(--seg-track-radius);
-  background: var(--seg-bg);
-  border: var(--seg-track-line);
-}
-
-.follow-mode button {
-  height: var(--seg-h);
-  padding: 0 var(--seg-pad-x);
-  border-radius: var(--seg-radius);
-  color: var(--seg-fg);
-  font-size: var(--seg-font);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-
-.follow-mode button:hover {
-  color: var(--seg-hover-fg);
-}
-
-.follow-mode button.active {
-  background: var(--seg-pick-bg);
-  color: var(--seg-pick-fg);
-  box-shadow: var(--seg-pick-shadow);
-}
-
 .follow-count {
   margin-left: auto;
   color: var(--dim);
@@ -678,23 +647,31 @@
 
 /* ------------------------------------------------------------ 设置两栏 */
 
-/* 桌面与移动端横屏：左栏分区导航常驻，右栏直接显示二级内容。 */
+/* 桌面与移动端横屏：左栏分区导航与右栏内容各为一张卡片，各自滚动。 */
 .settings-page.is-pane {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 268px minmax(0, 1fr);
+  gap: 14px;
   height: 100%;
   min-height: 0;
-  padding: 0;
+  padding: 14px;
+}
+
+.settings-side,
+.settings-pane {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
 }
 
 .settings-side {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  padding: 12px 10px 18px 12px;
-  background: var(--bg-elev);
-  border-right: 1px solid var(--line);
-  overflow-y: auto;
+  padding: 12px 10px 16px;
 }
 
 .side-brand {
@@ -785,33 +762,26 @@
 
 .settings-pane {
   min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 48px;
 }
 
 .pane-head {
-  padding: 24px 0 0;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 30px 0;
 }
 
-.settings-page.is-pane .pane-head,
 .settings-page.is-pane .settings-content {
   width: 100%;
   max-width: 1100px;
   margin: 0 auto;
-  padding-left: 30px;
-  padding-right: 30px;
+  padding: 14px 30px 40px;
 }
 
 .pane-head h1 {
   margin: 0;
   font-size: 21px;
   font-weight: 600;
-}
-
-.settings-page.is-pane .settings-content {
-  padding-top: 14px;
-  padding-bottom: 40px;
 }
 
 /* ------------------------------------------------------------ 设置详情 */
@@ -1513,34 +1483,13 @@
   animation: pane-in 0.2s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 
-/* 分段控件：观看记录/统计、本周/本月/今年/全部 共用。 */
+/* 分段控件的外观在 styles.css（与关注页 chip、SC 页签共用）。
+   一组独占一行：观看记录页的「记录/统计」与时间范围分成两行，避免两组挤成一条。 */
 .segmented {
-  display: inline-flex;
-  gap: var(--seg-gap);
-  padding: var(--seg-inset);
-  margin-bottom: 14px;
-  border-radius: var(--seg-track-radius);
-  background: var(--seg-bg);
-  border: var(--seg-track-line);
-}
-
-.segmented button {
-  height: var(--seg-h);
-  padding: 0 var(--seg-pad-x);
-  border-radius: var(--seg-radius);
-  color: var(--seg-fg);
-  font-size: var(--seg-font);
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-
-.segmented button:hover {
-  color: var(--seg-hover-fg);
-}
-
-.segmented button.active {
-  color: var(--seg-pick-fg);
-  background: var(--seg-pick-bg);
-  box-shadow: var(--seg-pick-shadow);
+  display: flex;
+  flex-wrap: wrap;
+  width: fit-content;
+  margin-bottom: 12px;
 }
 
 .stats-summary {

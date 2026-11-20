@@ -367,7 +367,7 @@ function initRail() {
   const icons = {
     home: ['home', 'homeFilled'],
     follow: ['follow', 'followFilled'],
-    category: ['grid', 'gridFilled'],
+    category: ['category', 'categoryFilled'],
     settings: ['account', 'accountFilled'],
   };
   for (const button of rail.querySelectorAll('.rail-btn[data-nav]')) {

@@ -26,7 +26,7 @@ import {
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { SKINS, accentForMode, skinAccents, skinModes } from '../../skins/registry.js';
-// 外部数据导入（starveil 备份 / dart profile / 中立同步包）与同步包构建。
+// 外部数据导入（starveil 备份 / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
 // 弹幕性能/帧率选项由 danmaku.js 提供，与直播间共用。
 import { DANMAKU_PRESETS, FPS_OPTIONS, PERF_OPTIONS } from '../danmaku.js';
@@ -1179,7 +1179,8 @@ function paintSync(content, ctx, repaint) {
     <div class="tool-actions">
       <button class="btn primary" id="sync-export">${icon('download', 16)} 导出备份</button>
       <button class="btn" id="sync-import">${icon('upload', 16)} 导入备份</button>
-    </div>`;
+    </div>
+    <div id="import-report"></div>`;
   const backupNote = document.createElement('div');
   backupNote.className = 'pill-note';
   backupNote.style.marginTop = '14px';
@@ -1194,10 +1195,6 @@ function paintSync(content, ctx, repaint) {
       app: 'Starveil',
       exportedAt: new Date().toISOString(),
       settings: state.settings,
-      // shield 沿用 dart 导出命名，导入侧认这个键。
-      shield: {
-        keywords: state.settings.danmaku?.blockKeywords || '',
-      },
       // 走 store 读取，避免坏数据导致导出无反应。
       follows: loadFollow(),
       history: state.history,
@@ -1212,6 +1209,22 @@ function paintSync(content, ctx, repaint) {
     if (saved) toast('备份已导出', 'success');
   });
   backup.querySelector('#sync-import').addEventListener('click', () => pickJsonFile(runImport));
+
+  const report = backup.querySelector('#import-report');
+
+  async function runImport(file) {
+    try {
+      const summary = await applyImport(JSON.parse(await file.text()));
+      report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('check', 16)}<div>${escapeHtml(
+        describeImport(summary)
+      )}，正在重新载入…</div></div>`;
+      setTimeout(() => location.reload(), 900);
+    } catch (error) {
+      report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('info', 16)}<div>导入失败：${escapeHtml(
+        String(error?.message || error)
+      )}</div></div>`;
+    }
+  }
 
   // ② 同步内容：决定局域网与 WebDAV 打包时带什么，开关改动后重绘。
   paintSyncScope(content, repaint);
@@ -1422,37 +1435,7 @@ function paintSync(content, ctx, repaint) {
   })();
 
 
-  // ④ 从 dart_simple_live 导入 profile JSON；节点在 WebDAV 之后插入。
-  const migrate = document.createElement('div');
-  migrate.className = 'tool-card';
-  migrate.innerHTML = `
-    <h3>从 dart_simple_live 迁移</h3>
-    <p>选择 SimpleLive 导出的 profile 文件（<code>simple_live_profile</code> 格式），
-       会把关注、观看记录、弹幕/播放设置与关键词屏蔽搬到本机；抖音/快手的记录会被跳过。</p>
-    <div class="tool-actions">
-      <button class="btn primary" id="sync-dart">${icon('upload', 16)} 选择 profile 文件</button>
-    </div>
-    <div id="import-report"></div>`;
-
-  const report = migrate.querySelector('#import-report');
-
-  migrate.querySelector('#sync-dart').addEventListener('click', () => pickJsonFile(runImport));
-
-  async function runImport(file) {
-    try {
-      const summary = await applyImport(JSON.parse(await file.text()));
-      report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('check', 16)}<div>${escapeHtml(
-        describeImport(summary)
-      )}，正在重新载入…</div></div>`;
-      setTimeout(() => location.reload(), 900);
-    } catch (error) {
-      report.innerHTML = `<div class="pill-note" style="margin-top:14px">${icon('info', 16)}<div>导入失败：${escapeHtml(
-        String(error?.message || error)
-      )}</div></div>`;
-    }
-  }
-
-  // ⑤ WebDAV 同步：整包上传/下载，不做字段级合并。
+  // ④ WebDAV 同步：整包上传/下载，不做字段级合并。
   const config = state.settings.sync.webdav;
   const sync = document.createElement('div');
   sync.className = 'tool-card';
@@ -1575,12 +1558,9 @@ function paintSync(content, ctx, repaint) {
   syncScope.style.marginTop = '10px';
   syncScope.innerHTML = bundleScopeNote();
   sync.appendChild(syncScope);
-
-  // 迁移卡片最后插入（节点在上面就建好了，这里只决定顺序）。
-  content.appendChild(migrate);
 }
 
-/// 选一个 JSON 文件交给回调处理，导入入口（备份/迁移）共用。
+/// 选一个 JSON 文件交给回调处理。
 function pickJsonFile(onPick) {
   const input = document.createElement('input');
   input.type = 'file';

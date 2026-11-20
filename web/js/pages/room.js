@@ -457,7 +457,6 @@ export function renderRoom(ctx, params = {}) {
     state.settings.danmaku.enabled = session.danmakuEnabled;
     saveSettings();
     const footerButton = $('ctrl-danmaku');
-    footerButton.classList.toggle('active', session.danmakuEnabled);
     footerButton.innerHTML = icon(session.danmakuEnabled ? 'danmaku' : 'danmakuOff', 21);
     footerButton.title = session.danmakuEnabled ? '关闭弹幕（D）' : '开启弹幕（D）';
     // 重新开启必须调用 setEnabled(true)，否则渲染循环不会恢复。

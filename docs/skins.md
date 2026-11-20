@@ -90,7 +90,7 @@ html[data-skin="apple"][data-theme="light"] {
 | 开关 | `--switch-w` `--switch-h` `--switch-pad` `--switch-knob-size` `--switch-travel` `--switch-radius` `--switch-knob-radius` `--switch-off` `--switch-on` `--switch-knob` `--switch-knob-off` `--switch-knob-shadow` `--switch-dur` `--switch-ease` |
 | 单选 | `--radio-size` `--radio-ring` `--radio-radius` `--radio-dot` `--radio-dot-radius` `--radio-line` `--radio-line-on` `--radio-dot-fill` |
 | 色板 | `--swatch-size` `--swatch-radius` `--swatch-ring` `--swatch-check-*` `--skin-dot-*` |
-| 分段 | 按钮层 `--seg-h` `--seg-pad-x` `--seg-radius` `--seg-font` `--seg-fg` `--seg-hover-fg`；槽 `--seg-bg` `--seg-inset` `--seg-gap` `--seg-track-radius` `--seg-track-line`；选中 `--seg-pick-bg` `--seg-pick-fg` `--seg-pick-shadow`；填充式段（SC）`--seg-on-bg` `--seg-on-fg` |
+| 筛选切换 | `--chip-*`（`.chip`、`.segmented button`、`.follow-mode button`、`.sc-view-nav button` 共用） |
 | 胶囊 chip | `--chip-h` `--chip-pad-x` `--chip-radius` `--chip-font` `--chip-bg` `--chip-fg` `--chip-line` `--chip-shadow` `--chip-hover-bg` `--chip-hover-fg` `--chip-on-bg` `--chip-on-fg` `--chip-on-line` `--chip-solid-bg` |
 | 平台标签 | `--tab-pad-x` `--tab-font` `--tab-gap` `--tab-underline-h` `--tab-underline-bg` `--tab-underline-radius` `--platform-logo-radius` |
 | 提示条 | `--toast-bg` `--toast-fg` `--toast-border` |
@@ -99,7 +99,7 @@ html[data-skin="apple"][data-theme="light"] {
 | 直播间 | `--room-bg` `--room-panel` `--room-bar` `--room-field` `--room-line` `--room-float-bg/-fg/-line/-shadow` `--room-float-hover-bg/-fg` |
 | SC 卡片 | `--on-sc` `--on-sc-strong` `--on-sc-weak` `--on-sc-hover` `--on-sc-ring` `--on-sc-shadow` `--sc-line` `--sc-radius` `--sc-msg-*` `--sc-border-w` `--sc-shade` `--sc-chat-fg` |
 | 封面/头像 | `--cover-*` `--avatar-*` `--logo-bg` `--qr-bg` `--img-placeholder` |
-| 骨架/滚动条 | `--shimmer` `--scrollbar-thumb(-hover)` |
+| 骨架/滚动条 | `--shimmer` `--scrollbar-thumb` |
 | 自绘标题栏 | `--titlebar-bg` `--titlebar-fg` `--titlebar-line` `--titlebar-btn` `--titlebar-btn-hover` `--titlebar-btn-active` |
 | 窗口按钮 | `--window-close-hover` `--window-close-active` `--window-close-fg` |
 | 红绿灯（mac 形态） | `--traffic-size` `--traffic-gap` `--traffic-close` `--traffic-min` `--traffic-max` `--traffic-edge` `--traffic-glyph` `--traffic-glyph-size` `--traffic-glyph-stroke` |
@@ -159,17 +159,17 @@ accents: [
 export const ICON_PATHS = { home: '<path d="…"/>', settings: '<rect …/>' };
 ```
 
-可覆盖的名字以 `web/js/icons.js` 的 `PATHS` 为全集（当前 67 个）：
+可覆盖的名字以 `web/js/icons.js` 的 `PATHS` 为全集（当前 66 个）：
 
-`account` `anchor` `back` `check` `chevron` `chevronDown` `chevronUp` `close`
-`contrast` `copy` `danmaku` `delay` `dot` `download` `dual` `eye`
-`eyeOff` `filter` `flame` `follow` `followFilled` `fullscreen` `fullscreenExit` `github`
-`grid` `gridView` `hd` `history` `home` `info` `link` `list`
-`live` `logout` `minus` `moon` `more` `mute` `other` `parse`
-`pause` `play` `player` `plus` `quality` `refresh` `route` `screen`
-`search` `send` `settings` `share` `shield` `signal` `spark` `star`
-`stats` `sun` `sync` `tag` `text` `timer` `upload` `userMinus`
-`users` `volume` `wifi`
+`account` `accountFilled` `anchor` `back` `category` `categoryFilled` `check` `chevron`
+`chevronDown` `chevronUp` `close` `contrast` `copy` `danmaku` `danmakuOff` `delay`
+`download` `dual` `filter` `flame` `follow` `followFilled` `fullscreen` `fullscreenExit`
+`github` `gridView` `history` `home` `homeFilled` `info` `link` `list`
+`live` `minus` `moon` `more` `mute` `other` `parse` `pause`
+`play` `player` `plus` `quality` `refresh` `route` `screen` `search`
+`send` `settings` `share` `shield` `signal` `spark` `star` `stats`
+`sun` `sync` `tag` `text` `timer` `upload` `userMinus` `users`
+`volume` `wifi`
 
 `icon()` 找不到覆盖项时静默退回基础表，所以 `check-skin` 会核对 `icons.js` 里的每个键
 是否存在于 `js/icons.js` 的 `PATHS`。

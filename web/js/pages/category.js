@@ -26,7 +26,7 @@ export function renderCategory(ctx) {
       state.category.error = String(error);
       body.replaceChildren(
         emptyState({
-          iconName: 'grid',
+          iconName: 'category',
           title: '分类加载失败',
           text: String(error),
           actionLabel: '重新加载',
@@ -42,7 +42,7 @@ export function renderCategory(ctx) {
   function renderTree() {
     body.innerHTML = '';
     if (!state.category.tree.length) {
-      body.appendChild(emptyState({ iconName: 'grid', title: '这个平台暂时没有分类', text: '试试切换其他平台。' }));
+      body.appendChild(emptyState({ iconName: 'category', title: '这个平台暂时没有分类', text: '试试切换其他平台。' }));
       return;
     }
     for (const [index, parent] of state.category.tree.entries()) {

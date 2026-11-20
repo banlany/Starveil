@@ -451,9 +451,6 @@ async function exportFollow() {
     exportedAt: new Date().toISOString(),
     follows: loadFollow(),
     settings: state.settings,
-    shield: {
-      keywords: state.settings.danmaku?.blockKeywords || '',
-    },
     history: state.history,
     accounts: collectAccounts(),
   };
@@ -471,12 +468,6 @@ function importFollow(after) {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      // 导出时关键词屏蔽放在 `shield` 里，导入侧会搬到 settings.danmaku.blockKeywords。
-      if (data.shield) {
-        data.settings = data.settings || {};
-        data.settings.danmaku = data.settings.danmaku || {};
-        if (!data.settings.danmaku.blockKeywords) data.settings.danmaku.blockKeywords = data.shield.keywords || '';
-      }
       // 走 importData，与设置页导入同一条路；两种导出格式都支持。
       const summary = importData(data);
       for (const platform of summary.accounts || []) {

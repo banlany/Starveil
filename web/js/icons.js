@@ -10,9 +10,12 @@ const PATHS = {
   // 四角星：四角为半径 0.85 的圆头，凹边与线框版同深。
   followFilled:
     '<path fill="currentColor" stroke="none" d="M11.15 3.45a.85.85 0 0 1 1.7 0Q15 9 20.55 11.15a.85.85 0 0 1 0 1.7Q15 15 12.85 20.55a.85.85 0 0 1-1.7 0Q9 15 3.45 12.85a.85.85 0 0 1 0-1.7Q9 9 11.15 3.45Z"/>',
-  grid: '<rect x="3.2" y="3.2" width="7.4" height="7.4" rx="1.6"/><rect x="13.4" y="3.2" width="7.4" height="7.4" rx="1.6"/><rect x="3.2" y="13.4" width="7.4" height="7.4" rx="1.6"/><rect x="13.4" y="13.4" width="7.4" height="7.4" rx="1.6"/>',
-  gridFilled:
-    '<rect x="3" y="3" width="8" height="8" rx="2.7" fill="currentColor" stroke="none"/><rect x="13" y="3" width="8" height="8" rx="2.7" fill="currentColor" stroke="none"/><rect x="3" y="13" width="8" height="8" rx="2.7" fill="currentColor" stroke="none"/><rect x="13" y="13" width="8" height="8" rx="2.7" fill="currentColor" stroke="none"/>',
+  // 分类：三层堆叠（顶面菱形 + 两道斜边），与关注页的网格视图区分。
+  category:
+    '<path d="M12 3 20.4 8.3 12 13.6 3.6 8.3 12 3Z"/><path d="M3.6 13.4 12 18l8.4-4.6"/><path d="M3.6 16.9 12 21.5l8.4-4.6"/>',
+  // 选中态：顶面填实，两层斜边加粗。
+  categoryFilled:
+    '<path fill="currentColor" stroke="none" d="M11.35 2.72a1.25 1.25 0 0 1 1.3 0l7.86 4.72a1.2 1.2 0 0 1 0 2.04l-7.86 4.72a1.25 1.25 0 0 1-1.3 0L3.49 9.48a1.2 1.2 0 0 1 0-2.04Z"/><path d="M3.6 13.6 12 18.2l8.4-4.6" stroke-width="2.3"/><path d="M3.6 17.1 12 21.7l8.4-4.6" stroke-width="2.3"/>',
   account: '<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>',
   accountFilled:
     '<path fill="currentColor" stroke="none" d="M12 3.2a4.4 4.4 0 1 1 0 8.8 4.4 4.4 0 0 1 0-8.8Z"/><path fill="currentColor" stroke="none" d="M12 13.4c4.3 0 7.8 2.9 7.8 5.9 0 1.33-1.07 2.4-2.4 2.4H6.6c-1.33 0-2.4-1.07-2.4-2.4 0-3 3.5-5.9 7.8-5.9Z"/>',

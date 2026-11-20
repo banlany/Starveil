@@ -29,6 +29,17 @@ html.is-mobile body {
   text-size-adjust: 100%;
 }
 
+/* 触屏没有「拖滚动条」的操作，滚动条只会碍事：任何方向都不显示。 */
+html.is-mobile,
+html.is-mobile * {
+  scrollbar-width: none;
+}
+
+html.is-mobile ::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* ------------------------------------------------------------ 外壳：rail → 底部 TabBar */
 
 /* 用 order 调整底栏位置，避免影响 overlay-root 等固定层。 */
@@ -327,10 +338,12 @@ html.is-mobile .setting-row.clickable:active {
 @media (orientation: landscape) {
   html.is-mobile .settings-page.is-pane {
     grid-template-columns: 172px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
   }
 
   html.is-mobile .settings-side {
-    padding: 8px 6px 12px 8px;
+    padding: 8px 6px 12px;
   }
 
   html.is-mobile .side-brand {

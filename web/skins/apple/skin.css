@@ -63,38 +63,21 @@ html[data-skin="apple"][data-theme="light"] {
   --btn-small-radius: var(--radius-pill);
   --btn-small-font: 13px;
 
-  /* 分段按钮：--seg-on-* 为填充式选中，--seg-pick-* 为滑块式选中块。 */
-  --seg-h: 28px;
-  --seg-pad-x: 14px;
-  --seg-radius: 9px;
-  --seg-font: 13px;
-  --seg-bg: rgba(118, 118, 128, 0.12);
-  --seg-fg: #6e6e73;
-  --seg-on-bg: var(--accent);
-  --seg-on-fg: #ffffff;
-  --seg-inset: 3px;
-  --seg-gap: 2px;
-  --seg-track-radius: var(--radius-md);
-  --seg-track-line: 1px solid transparent;
-  --seg-hover-fg: #1d1d1f;
-  --seg-pick-bg: #ffffff;
-  --seg-pick-fg: #1d1d1f;
-  --seg-pick-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04);
-
-  /* 胶囊 chip：白底、无描边、10px 圆角、灰色文字；选中换成淡蓝底 + 系统蓝字（iOS 的选中样式）。 */
+  /* 胶囊 chip：白底、10px 圆角、灰色文字；选中换成淡蓝底 + 系统蓝字 + 蓝色描边。
+     描边宽度两态一致，选中时不改变盒子尺寸。 */
   --chip-h: 30px;
   --chip-pad-x: 14px;
   --chip-radius: var(--radius-sm);
   --chip-font: 13px;
   --chip-bg: #ffffff;
   --chip-fg: #6e6e73;
-  --chip-line: 1px solid transparent;
+  --chip-line: 1.5px solid transparent;
   --chip-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   --chip-hover-bg: #f2f2f7;
   --chip-hover-fg: #1d1d1f;
   --chip-on-bg: rgba(0, 113, 227, 0.12);
   --chip-on-fg: #0071e3;
-  --chip-on-line: 1px solid transparent;
+  --chip-on-line: 1.5px solid var(--accent);
   --chip-solid-bg: #f2f2f7;
 
   /* 顶部平台标签：字号按文档的 14px 档，指示条细而不圆。 */
@@ -255,7 +238,6 @@ html[data-skin="apple"][data-theme="light"] {
   /* -------------------------------------------------- 骨架屏 */
   --shimmer: rgba(0, 0, 0, 0.045);
   --scrollbar-thumb: #c7c7cc;
-  --scrollbar-thumb-hover: #b0b0b5;
 
   /* -------------------------------------------------- 自绘标题栏：与画布同色（引用变量） */
   --titlebar-bg: var(--bg);

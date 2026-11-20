@@ -69,39 +69,22 @@ html[data-skin="default"] {
   --btn-small-radius: var(--radius-sm);
   --btn-small-font: 12.5px;
 
-  /* 分段按钮：--seg-* 按钮层，--seg-track-* 外槽，--seg-pick-* 选中块。 */
-  --seg-h: 26px;
-  --seg-pad-x: 12px;
-  --seg-radius: var(--radius-pill);
-  --seg-font: 12px;
-  --seg-bg: var(--surface);
-  --seg-fg: var(--muted);
-  --seg-on-bg: var(--accent-soft);
-  --seg-on-fg: var(--accent);
-  --seg-inset: 3px;
-  --seg-gap: 3px;
-  --seg-track-radius: var(--radius-sm);
-  --seg-track-line: 1px solid var(--line);
-  --seg-hover-fg: var(--fg);
-  --seg-pick-bg: var(--surface-3);
-  --seg-pick-fg: var(--fg);
-  --seg-pick-shadow: none;
-
-  /* 胶囊 chip：关注页的筛选标签、分类/搜索页的快捷标签。
-     想做「方角标签」就把 --chip-radius 调小，想做「无底只描边」把 --chip-bg 留空。 */
+  /* 筛选切换（关注页标签、设置页记录/统计、SC 页签）共用一套胶囊外观：
+     未选中是描边灰字，选中是主题色描边 + 主题色文字 + 淡主题色底。
+     描边宽度两态一致，选中时不改变盒子尺寸。 */
   --chip-h: 30px;
   --chip-pad-x: 13px;
   --chip-radius: var(--radius-pill);
   --chip-font: 13px;
   --chip-bg: transparent;
   --chip-fg: var(--muted);
-  --chip-line: 1px solid var(--line-strong);
+  --chip-line: 1.5px solid var(--line-strong);
   --chip-shadow: none;
   --chip-hover-bg: var(--surface);
   --chip-hover-fg: var(--fg);
-  --chip-on-bg: var(--surface-2);
-  --chip-on-fg: var(--fg);
-  --chip-on-line: 1px solid transparent;
+  --chip-on-bg: var(--accent-soft);
+  --chip-on-fg: var(--accent);
+  --chip-on-line: 1.5px solid var(--accent);
   --chip-solid-bg: var(--surface-2);
 
   /* 顶部的平台标签（B站 / 斗鱼 / …）与下方那条主题色指示条。
@@ -284,7 +267,6 @@ html[data-skin="default"] {
   /* -------------------------------------------------- 骨架屏 */
   --shimmer: rgba(255, 255, 255, 0.055);
   --scrollbar-thumb: #34343d;
-  --scrollbar-thumb-hover: #45454f;
 
   /* -------------------------------------------------- 自绘标题栏
      独立 token，默认与 --bg 同色。 */
@@ -452,7 +434,6 @@ html[data-skin="default"][data-theme="light"] {
 
   --shimmer: rgba(0, 0, 0, 0.04);
   --scrollbar-thumb: #c9c9d2;
-  --scrollbar-thumb-hover: #b4b4c0;
 
   color-scheme: light;
 }

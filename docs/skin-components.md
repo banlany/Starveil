@@ -23,7 +23,7 @@
 | 平台标签 | `.platform-tab` | `--tab-pad-x` `--tab-font` `--tab-gap` `--muted`（未选中）`--fg`（选中） |
 | 标签下的色条 | `.tab-underline` | `--tab-underline-h` `--tab-underline-bg` `--tab-underline-radius`；内缩 `--tab-underline-inset`（布局） |
 | 平台图标 | `.platform-img` | `--platform-logo-radius` `--img-placeholder` |
-| 滚动条 | `::-webkit-scrollbar-thumb` | `--scrollbar-thumb` `--scrollbar-thumb-hover` |
+| 滚动条 | `scrollbar-color`（`::-webkit-scrollbar` 不写，否则退回占位滚动条） | `--scrollbar-thumb` |
 
 ## 二、按钮与表单控件
 
@@ -34,12 +34,12 @@
 | 次按钮 / 危险 | `.btn.ghost` `.btn.danger` | `--muted` `--surface-2`；`--danger-soft` `--danger` |
 | 小按钮 | `.btn.small` | `--btn-small-h` `--btn-small-pad-x` `--btn-small-font` `--btn-small-radius` |
 | 图标按钮 | `.icon-btn` | `--radius-md` `--muted` `--surface-2`；选中 `--accent` `--accent-soft` |
-| 胶囊按钮 | `.chip` | `--radius-pill` `--muted` `--line-strong` `--surface` `--surface-2` |
+| 胶囊按钮 | `.chip`（关注页筛选、设置页记录/统计、SC 页签共用） | `--chip-h` `--chip-pad-x` `--chip-radius` `--chip-font` `--chip-bg` `--chip-fg` `--chip-line` `--chip-shadow`；hover `--chip-hover-bg` `--chip-hover-fg`；选中 `--chip-on-bg` `--chip-on-fg` `--chip-on-line`；实心变体 `--chip-solid-bg` |
 | 输入框 | `.input` `textarea` | `--bg-elev` `--line-strong` `--fg` `--radius-md`；聚焦 `--accent`；占位 `--dim` |
 | **开关** | `.switch` | `--switch-w` `--switch-h` `--switch-pad` `--switch-knob-size` `--switch-travel` `--switch-radius` `--switch-knob-radius` `--switch-off` `--switch-on` `--switch-knob` `--switch-knob-off` `--switch-knob-shadow` `--switch-dur` `--switch-ease` |
 | **单选点** | `.radio` | `--radio-size` `--radio-ring` `--radio-radius` `--radio-dot` `--radio-dot-radius` `--radio-line` `--radio-line-on` `--radio-dot-fill` |
 | **主题色色板** | `.swatch` | `--swatch-size` `--swatch-radius` `--swatch-ring` `--swatch-check-w` `--swatch-check-h` `--swatch-check-stroke` `--swatch-check-on` |
-| 分段按钮 | `.segmented` `.sc-view-nav button` | `--seg-h` `--seg-pad-x` `--seg-radius` `--seg-font` `--seg-bg` `--seg-fg` `--seg-on-bg` `--seg-on-fg` |
+| **筛选切换**（关注页标签与筛选项、观看记录「记录 / 统计」与周月年、SC「正在显示 / 历史」）| `.chip` `.segmented button` `.follow-mode button` `.sc-view-nav button` | 同「胶囊按钮」一行 |
 | 自绘下拉按钮 | `.select-btn` | `--radius-sm` `--muted` `--surface-2` |
 | 下拉菜单 | `.menu` `.menu-item` | `--surface-menu` `--line-strong` `--shadow-2` `--panel-blur` `--radius` `--radius-sm`；选中 `--accent` |
 | 弹窗 | `.modal` | `--surface-overlay` `--line-strong` `--radius-lg` `--shadow-3` `--panel-blur`；遮罩 `--scrim` `--blur-overlay` |
@@ -54,6 +54,7 @@
 | 组件 | 选择器 | 变量 |
 | --- | --- | --- |
 | 分组容器 | `.settings-group` | `--card-bg` `--card-border` `--card-radius` `--card-shadow` |
+| 设置两栏 | `.settings-side` `.settings-pane` | `--card-*`（左右各一张卡片，各自滚动） |
 | 分组里的行 | `.setting-row` | `--row-divider` `--row-pad-x` `--row-pad-y` `--row-min-h` `--row-hover` |
 | 一级设置项 | `.settings-item` | `--card-*` `--row-hover` |
 | 工具卡 / 动作卡 / 统计卡 | `.tool-card` `.settings-action-card` `.stats-card` | `--card-*` `--card-gap` |
@@ -74,9 +75,6 @@
 | 头像 | `.avatar` `.avatar-text` | `--avatar-fg` `--avatar-sat` `--avatar-light`；色相 `--avatar-hue`（运行时） |
 | 直播中圆点 | `.dot-live` `.chat-follow-dot` | `--success` `--success-soft`（尺寸固定，属几何） |
 | 骨架屏 | `.skeleton` | `--surface` `--shimmer` `--radius-2xs` |
-| **筛选分段**（关注页「按状态 / 按平台」）| `.follow-mode` / `.follow-mode button` | 槽 `--seg-bg` `--seg-inset` `--seg-gap` `--seg-track-radius` `--seg-track-line`；按钮 `--seg-h` `--seg-pad-x` `--seg-radius` `--seg-font` `--seg-fg` `--seg-hover-fg`；选中 `--seg-pick-bg` `--seg-pick-fg` `--seg-pick-shadow` |
-| **视图分段**（观看记录「记录 / 统计」、统计的周月年）| `.segmented` / `.segmented button` | 同上一行 |
-| **胶囊标签**（关注页的「全部 / 直播中」、分类与搜索的快捷标签）| `.chip` `.chip.active` `.chip.solid` | `--chip-h` `--chip-pad-x` `--chip-radius` `--chip-font` `--chip-bg` `--chip-fg` `--chip-line` `--chip-shadow`；hover `--chip-hover-bg` `--chip-hover-fg`；选中 `--chip-on-bg` `--chip-on-fg` `--chip-on-line`；实心变体 `--chip-solid-bg` |
 
 ## 五、直播间
 
@@ -102,7 +100,7 @@
 | --- | --- | --- |
 | 聊天里的 SC 条 | `.chat-line.sc` | `--sc-msg-radius` `--sc-msg-pad-y` `--sc-msg-pad-x` `--sc-border-w` `--sc-shade` `--sc-chat-fg` `--sc-line`；底色 `--sc-bg`（运行时，平台档位色） |
 | SC 大卡 | `.sc-card` | `--sc-radius` `--shadow-1` `--on-sc` `--on-sc-strong` `--on-sc-weak` `--on-sc-ring` `--on-sc-hover` `--on-sc-shadow` |
-| 正在显示 / 历史 | `.sc-view-nav button` | `--seg-*` |
+| 正在显示 / 历史 | `.sc-view-nav button` | `--chip-*` |
 | 历史条目 | `.sc-history-item` | `--card-*` `--fg-subtle` |
 
 `--sc-shade` 是压在平台档位色上的遮罩：深色主题给一层黑（不然浅金浅粉在暗聊天区里像戳了个白洞），
@@ -148,8 +146,8 @@ SC 浮卡的文字不走 `--media-*`：卡片底色是平台档位色，字色�
 列表行与设置行的箭头、控制条的播放/音量/弹幕/小窗/全屏、画面上的更多/分享/关注、
 聊天栏标签页、`settings.js` 里各分组的小图标。**换图形只改 `ICON_PATHS`，不要动这些组件。**
 
-可以覆盖的名字以 `web/js/icons.js` 的 `PATHS` 为准（`home` `follow` `followFilled` `grid`
-`settings` `search` `back` `chevron` `refresh` `play` `volume` `fullscreen` `screen`
+可以覆盖的名字以 `web/js/icons.js` 的 `PATHS` 为准（`home` `follow` `followFilled` `category`
+`categoryFilled` `settings` `search` `back` `chevron` `refresh` `play` `volume` `fullscreen` `screen`
 `danmaku` `more` `share` `link` `copy` `send` `star` `tag` `close` `check` `history`
 `account` `sync` `moon` `sun` `contrast` `download` `upload` `shield` `info` `live`…）。
 写了不存在的名字不会生效，`check-skin` 会直接报错。
@@ -190,29 +188,28 @@ SC 浮卡的文字不走 `--media-*`：卡片底色是平台档位色，字色�
 
 分组自动变成「一条分隔线接一条」，`.tool-card` / `.stats-card` / `.info-table` 一起跟着变。
 
-### 2. 分段控件做成两种流派
+### 2. 筛选胶囊做成两种流派
 
 ```css
-/* iOS 式：灰槽 + 白色滑块 + 轻投影 */
---seg-bg: rgba(118, 118, 128, 0.12);
---seg-track-line: 1px solid transparent;
---seg-track-radius: 12px;
---seg-radius: 9px;
---seg-pick-bg: #ffffff;
---seg-pick-fg: #1d1d1f;
---seg-pick-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+/* iOS 式：白底、微投影，选中换淡蓝底 + 蓝描边 */
+--chip-bg: #ffffff;
+--chip-line: 1.5px solid transparent;
+--chip-radius: 10px;
+--chip-on-bg: rgba(0, 113, 227, 0.12);
+--chip-on-fg: #0071e3;
+--chip-on-line: 1.5px solid var(--accent);
 
-/* 工具式：透明槽 + 选中用主题色填充 */
---seg-bg: transparent;
---seg-track-line: 1px solid var(--line);
---seg-track-radius: 2px;
---seg-radius: 2px;
---seg-pick-bg: var(--accent);
---seg-pick-fg: var(--accent-on);
---seg-pick-shadow: none;
+/* 工具式：透明底 + 灰描边，选中换主题色文字与描边 */
+--chip-bg: transparent;
+--chip-line: 1.5px solid var(--line-strong);
+--chip-radius: 999px;
+--chip-on-bg: var(--accent-soft);
+--chip-on-fg: var(--accent);
+--chip-on-line: 1.5px solid var(--accent);
 ```
 
-想让标签也一样方，把 `--chip-radius` 调到同一个值、`--chip-line` 留住描边即可。
+`--chip-line` 与 `--chip-on-line` 的描边宽度要一致，选中时盒子尺寸才不会跳。
+关注页标签、观看记录的「记录 / 统计」与周月年、SC 的「正在显示 / 历史」都吃这一套。
 
 ### 3. 首页/分类的图卡也做成带底框的卡片
 

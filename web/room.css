@@ -692,30 +692,8 @@ body.is-resizing-chat .room-chat {
   z-index: 2;
   flex: none;
   display: flex;
-  gap: 6px;
   padding: 8px 10px 6px;
   background: var(--bg-elev);
-}
-
-.sc-view-nav button {
-  height: var(--seg-h);
-  padding: 0 var(--seg-pad-x);
-  border-radius: var(--seg-radius);
-  display: inline-flex;
-  align-items: center;
-  font-size: var(--seg-font);
-  color: var(--seg-fg);
-  background: var(--seg-bg);
-  transition: all var(--dur-fast) var(--ease);
-}
-
-.sc-view-nav button:hover {
-  color: var(--fg);
-}
-
-.sc-view-nav button.active {
-  color: var(--seg-on-fg);
-  background: var(--seg-on-bg);
 }
 
 .sc-history-item {
