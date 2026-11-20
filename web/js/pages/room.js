@@ -41,9 +41,9 @@ const REFRESH_INFO_INTERVAL = 5 * 60 * 1000;
 const SC_BACKFILL_MIN_MS = 10_000;
 
 // 浮动卡「时长均衡化」的最短停留时间。
-const SC_FLOAT_MIN_MS = 5_000;
-// 平台没给 `end_time` 时的兜底停留时间。
-const SC_FLOAT_FALLBACK_MS = 10_000;
+const SC_FLOAT_MIN_MS = 8_000;
+// 均衡化按金额取停留时长，到这个金额就停到上限。
+const SC_PRICE_FULL = 500;
 // 均衡化停留上限档位，默认 20 秒。
 const SC_FLOAT_MAX_CHOICES = [[15, '15 秒'], [20, '20 秒']];
 const SC_FLOAT_MAX_DEFAULT = 20;
@@ -576,13 +576,16 @@ export function renderRoom(ctx, params = {}) {
     renderScOverlay();
   }
 
-  /// 浮动卡停留时长（毫秒）。关闭均衡化返回 0；开启时限制在 [5s, 上限]。
-  function scFloatLifetime(sc, now) {
+  /// 浮动卡停留时长（毫秒）。关闭均衡化返回 0，交给平台到期时间。
+  /// 开启时只看金额：按对数曲线落在 [下限, 上限]，低价 SC 不会一闪而过。
+  function scFloatLifetime(sc) {
     if (state.settings.player.superChatBalance === false) return 0;
-    const end = Number(sc?.end_time) || 0;
-    const raw = end > 0 ? end * 1000 - now : SC_FLOAT_FALLBACK_MS;
-    const max = Number(state.settings.player.superChatMax) || SC_FLOAT_MAX_DEFAULT;
-    return Math.min(Math.max(raw, SC_FLOAT_MIN_MS), max * 1000);
+    const max = (Number(state.settings.player.superChatMax) || SC_FLOAT_MAX_DEFAULT) * 1000;
+    const min = SC_FLOAT_MIN_MS;
+    if (max <= min) return max;
+    const price = Math.max(0, Number(sc?.price) || 0);
+    const ratio = Math.min(1, Math.log1p(price) / Math.log1p(SC_PRICE_FULL));
+    return Math.round(min + (max - min) * ratio);
   }
 
   /// 安排浮动卡撤下时间；只影响悬浮层，SC 页签仍按平台到期时间。
@@ -590,7 +593,7 @@ export function renderRoom(ctx, params = {}) {
     clearScFloatTimer(entry);
     // 手动关闭过的卡不再恢复。
     if (entry.floatDismissed) return;
-    const lifetime = entry.sc && !entry.historical ? scFloatLifetime(entry.sc, Date.now()) : 0;
+    const lifetime = entry.sc && !entry.historical ? scFloatLifetime(entry.sc) : 0;
     if (!lifetime) {
       // 不做额外限制时回到平台到期时间；已过期的保持撤下。
       const end = Number(entry.sc?.end_time) || 0;
@@ -1104,7 +1107,7 @@ export function renderRoom(ctx, params = {}) {
         <div class="chat-setting-row"><span>浮动卡默认折叠</span><button class="switch" id="cs-sc-fold" aria-checked="${state.settings.player.superChatFold !== false}"></button></div>
         <div class="chat-setting-row"><span>浮动时长均衡</span><button class="switch" id="cs-sc-balance" aria-checked="${state.settings.player.superChatBalance !== false}"></button></div>
         <div class="chat-setting-row"><span>最长停留</span>${picker('cs-sc-max', 'superChatMax', fixedChoices(SC_FLOAT_MAX_CHOICES, state.settings.player.superChatMax || SC_FLOAT_MAX_DEFAULT), true, 'player')}</div>
-        <p class="chat-settings-note">「浮动卡默认折叠」只决定新卡的初始状态，两种状态下都能点头部来回切；「浮动时长均衡」开着时按金额压到 5 秒～上限，关掉则按平台给的到期时间。浮动卡上的 × 只把卡片从视频上撤下，SC 页签那条仍在「正在显示」里，要点它自己的 × 才进历史。</p>
+        <p class="chat-settings-note">「浮动卡默认折叠」只决定新卡的初始状态，两种状态下都能点头部来回切；「浮动时长均衡」开着时只看金额，停留时间落在 8 秒～上限之间（金额越高越久），关掉则按平台给的到期时间。浮动卡上的 × 只把卡片从视频上撤下，SC 页签那条仍在「正在显示」里，要点它自己的 × 才进历史。</p>
       </div>`;
     target.appendChild(wrap);
 

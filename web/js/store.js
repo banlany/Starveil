@@ -86,7 +86,7 @@ export const DEFAULT_SETTINGS = {
     superChatAutoRemove: true,
     // 悬浮层新卡的初始折叠状态。
     superChatFold: true,
-    // 浮动卡停留时长是否按金额均衡化到 [5s, superChatMax]。
+    // 浮动卡停留时长按金额落在 [8s, superChatMax]，与平台到期时间无关。
     superChatBalance: true,
     // 均衡化时的上限（秒）。只有 15 / 20 两档。
     superChatMax: 20,
