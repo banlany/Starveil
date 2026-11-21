@@ -1992,12 +1992,7 @@ function openLogPanel() {
     <div class="log-bar">
       <span class="log-path"></span>
       <div class="log-actions">
-        <select class="log-level" aria-label="日志级别">
-          <option value="debug">调试</option>
-          <option value="info">信息</option>
-          <option value="warn">警告</option>
-          <option value="error">错误</option>
-        </select>
+        <button class="select-btn log-level" aria-haspopup="menu" aria-label="日志级别"><span class="log-level-value">信息</span>${icon('chevron', 14)}</button>
         <button class="btn small ghost log-copy">复制</button>
         <button class="btn small ghost log-export">${IS_MOBILE ? '分享' : '打开目录'}</button>
         <button class="btn small ghost danger log-clear">清空</button>
@@ -2018,6 +2013,7 @@ function openLogPanel() {
   const reload = () => {
     api.readLog(300).then(paint).catch((error) => paint(String(error)));
   };
+  reload();
 
   api.logPath()
     .then((path) => {
@@ -2025,18 +2021,34 @@ function openLogPanel() {
       pathLabel.title = path || '';
     })
     .catch(() => {});
-  api.logLevel()
-    .then((value) => { level.value = value; })
-    .catch(() => {});
-  reload();
+  // 级别用自绘菜单，与二级页的 select 行同一套（菜单会挂进弹窗，不受遮罩影响）。
+  const LEVELS = { debug: '调试', info: '信息', warn: '警告', error: '错误' };
+  const levelText = level.querySelector('.log-level-value');
+  let levelValue = 'info';
+  const paintLevel = (value) => {
+    levelValue = LEVELS[value] ? value : 'info';
+    levelText.textContent = LEVELS[levelValue];
+  };
+  api.logLevel().then(paintLevel).catch(() => {});
 
-  level.addEventListener('change', async () => {
-    try {
-      toast(`日志级别：${await api.setLogLevel(level.value)}`, 'success');
-      reload();
-    } catch (error) {
-      toast(String(error), 'error');
-    }
+  level.addEventListener('click', () => {
+    openMenu(
+      level,
+      Object.entries(LEVELS).map(([value, label]) => ({
+        label,
+        active: value === levelValue,
+        onClick: async () => {
+          if (value === levelValue) return;
+          try {
+            paintLevel(await api.setLogLevel(value));
+            toast(`日志级别：${LEVELS[levelValue]}`, 'success');
+            reload();
+          } catch (error) {
+            toast(String(error), 'error');
+          }
+        },
+      }))
+    );
   });
 
   body.querySelector('.log-copy').addEventListener('click', async () => {

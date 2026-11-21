@@ -1314,15 +1314,12 @@ textarea.input {
   gap: 6px;
 }
 
-.log-level {
-  height: 30px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  color: var(--fg);
-  font-family: inherit; /* skin:allow 下拉框跟随界面字体 */
-  font-size: 12px;
+/* 外观来自 .select-btn，这里只把尺寸对齐同一行的 ghost 小按钮。 */
+.log-bar .log-level {
+  height: var(--btn-small-h);
+  padding: 0 var(--btn-small-pad-x);
+  border-radius: var(--btn-small-radius);
+  font-size: var(--btn-small-font);
 }
 
 .log-view {
