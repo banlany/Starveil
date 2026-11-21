@@ -1066,11 +1066,27 @@ body.is-resizing-chat .room-chat {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 13px 14px;
+  position: relative;
+  scroll-behavior: smooth;
+}
+
+/* 聊天栏内容层：滚动由 .chat-list 承担，翻页时整层平移。 */
+.chat-pane {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  scroll-behavior: smooth;
+  min-height: 100%;
+  padding: 8px 13px 14px;
+}
+
+/* 横滑时相邻页签的预览层，垫在当前层外侧。 */
+.chat-peek {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  will-change: transform;
 }
 
 /* 弹幕连接状态条，底色随状态变化。 */

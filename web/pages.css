@@ -36,6 +36,25 @@
   box-shadow: 0 0 0 3px var(--success-soft);
 }
 
+/* 请求失败：红灯 + 灯后跟错误摘要，占位卡片不动。 */
+.home-status.is-error .dot-live {
+  color: var(--muted);
+}
+
+.home-status.is-error .dot-live::before {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.home-status .status-retry {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.home-status .status-retry[hidden] {
+  display: none;
+}
+
 .home-status .sort {
   display: flex;
   align-items: center;

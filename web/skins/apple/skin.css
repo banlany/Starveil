@@ -293,11 +293,11 @@ html[data-skin="apple"][data-theme="light"] {
   --radius-scale: 1.25;
   --radius: 12px;
 
-  /* -------------------------------------------------- 字体：SF Pro → Segoe UI，中文 PingFang → 微软雅黑 */
-  /* 苹方/SF 只存在于苹果系统；后面的「HarmonyOS Sans SC」是内置字体（见 fonts.css），
-     安卓和 Windows 靠它兜底，否则会掉到 Roboto 或雅黑，和苹果的观感差一截。 */
-  --font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
-  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  /* -------------------------------------------------- 字体：只用系统字体 */
+  /* SF Pro / 苹方走苹果系统，其余系统依次退到 Segoe UI、微软雅黑、系统默认， */
+  /* 都取不到才用 system-ui 兜底。 */
+  --font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
   /* -------------------------------------------------- 图标

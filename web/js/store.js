@@ -182,8 +182,9 @@ export const state = {
   previous: null,
   detailKey: null,
   categoryRoomsContext: null,
-  home: { items: [], page: 0, loading: false, done: false, error: '', loadedAt: 0 },
-  category: { tree: [], expanded: {}, loading: false, error: '' },
+  // 每个平台各留一份列表数据：切平台、进出二级页都不清空，切回来内容还在。
+  homes: {},
+  categories: {},
   categoryRooms: { items: [], page: 0, loading: false, done: false, title: '', parentId: '', subId: '', error: '' },
   search: { keyword: '', mode: 'room', results: [], anchors: [], loading: false, error: '', recent: loadSearch() },
   room: null,
@@ -195,6 +196,22 @@ export const state = {
   unlistenDanmaku: null,
   unlistenDanmakuStatus: null,
 };
+
+/// 某个平台的首页数据槽（没有就新建）。
+export function homeSlot(platform = state.platform) {
+  if (!state.homes[platform]) {
+    state.homes[platform] = { platform, items: [], page: 0, loading: false, done: false, error: '', loadedAt: 0 };
+  }
+  return state.homes[platform];
+}
+
+/// 某个平台的分类数据槽（没有就新建）。
+export function categorySlot(platform = state.platform) {
+  if (!state.categories[platform]) {
+    state.categories[platform] = { platform, tree: [], expanded: {}, loading: false, error: '' };
+  }
+  return state.categories[platform];
+}
 
 /// 深合并：对象逐层递归，其它类型（含数组、null）直接覆盖。
 export function merge(base, patch) {

@@ -396,7 +396,7 @@ export function createDanmakuLayer(container, video, config = null) {
     } catch {
       /* 取不到就用下面的兜底 */
     }
-    return '"Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", sans-serif';
+    return '"Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif';
   }
 
   function buildRenderConfig() {

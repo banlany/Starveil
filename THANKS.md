@@ -58,7 +58,6 @@ Starveil 本身以 **GPL-3.0** 发布（见 [LICENSE](LICENSE)）。
 | [serde](https://github.com/serde-rs/serde) / [serde_json](https://github.com/serde-rs/json) | MIT / Apache-2.0 | 序列化 | 全局 |
 | [brotli](https://github.com/dropbox/rust-brotli) / [flate2](https://github.com/rust-lang/flate2-rs) | MIT / Apache-2.0 | B 站弹幕压缩包解压 | `live_core` |
 | [base64](https://github.com/marshallpierce/rust-base64) / [md5](https://github.com/stainless-steel/md5) | MIT / Apache-2.0 | 签名计算 | `live_core` |
-| [HarmonyOS Sans SC](https://developer.harmonyos.com/cn/docs/design/font-0000001157868583) | 华为自有字体许可（免费商用） | 内置正文字体，补齐安卓/iOS 上没有的苹方 | `web/assets/fonts/harmonyos-sans/` |
 
 完整的传递依赖清单见 `src-tauri/Cargo.lock`，各库许可可在 crates.io 对应页查得。
 

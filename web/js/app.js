@@ -4,6 +4,7 @@ import { icon, PLATFORM_META } from './icons.js';
 import {
   ACCOUNT_PLATFORMS,
   applyTheme,
+  categorySlot,
   followKey,
   isFollowing,
   loadFollow,
@@ -27,9 +28,10 @@ import { importData } from './importer.js';
 import { installLogForwarding } from './log.js';
 import { initTitlebar } from './titlebar.js';
 import { bindHorizontalSwipe } from './swipe.js';
+import { createPageSlider } from './page-slide.js';
 import { initTooltips } from './tooltip.js';
 import { applyPlatformFlags, IS_MOBILE } from './platform.js';
-import { addEnterClass, scrollBehavior, currentMotion } from './motion.js';
+import { addEnterClass, currentMotion, scrollBehavior } from './motion.js';
 
 const view = document.getElementById('view');
 const rail = document.getElementById('rail');
@@ -55,8 +57,9 @@ let roomRoot = 'home';
 let roomRootParams = {};
 // 进入直播间时的返回栈深度；退出时恢复到该深度。
 let roomStackDepth = 0;
-let cleanup = null;
 let currentKey = '';
+// 整页横滑层：移动端跟手拖动，两端都能由平台标签点击驱动。
+let slider = null;
 const scrollPositions = new Map();
 let timerHandle = 0;
 // 定时关闭的到点时刻，供「更多」菜单显示剩余时间。
@@ -65,12 +68,14 @@ let timerDeadline = 0;
 let homeRefreshHandler = null;
 // 信息流页面注册的下拉刷新动作（首页 / 关注 / 分类列表各自提供）。
 let pullRefreshHandler = null;
+// 缓存页回到前台时的回调。
+let pageActivate = null;
 
 const ctx = {
   go,
   back,
   exitRoom,
-  refresh: () => render({ keepScroll: false }),
+  refresh: () => render({ keepScroll: false, fresh: true }),
   route: () => state.page,
   params: () => state.routeParams,
   selectPlatform,
@@ -90,6 +95,10 @@ const ctx = {
   /// 注册/清除当前页面的下拉刷新动作（页面 cleanup 时传 null）。
   setPullRefresh(handler) {
     pullRefreshHandler = typeof handler === 'function' ? handler : null;
+  },
+  /// 缓存页重新回到前台时的回调（数据过期检查这类事，不重画页面）。
+  setPageActivate(handler) {
+    pageActivate = typeof handler === 'function' ? handler : null;
   },
 };
 
@@ -159,7 +168,7 @@ function openRoom(platform, roomId) {
   saveSettings();
   if (platformChanged) {
     // 切换平台时清掉上一平台的列表缓存。
-    resetPlatformCaches();
+    resetSearchState();
     syncPlatformTabs();
   }
   go('room', { platform, roomId: String(roomId) });
@@ -185,10 +194,8 @@ function showPlatformLocked(platform) {
   });
 }
 
-/// 切平台后清掉上一平台的列表缓存。
-function resetPlatformCaches() {
-  state.home = { items: [], page: 0, loading: false, done: false, error: '' };
-  state.category = { tree: [], expanded: {}, loading: false, error: '' };
+/// 切平台只清搜索页的临时结果：首页与分类页各自按平台留着，切回来内容还在。
+function resetSearchState() {
   state.search.results = [];
   state.search.keyword = '';
 }
@@ -199,15 +206,59 @@ function selectPlatform(platform, options = {}) {
     return false;
   }
   if (state.platform === platform) return true;
+  if (options.slide && canSlidePlatform()) {
+    const direction = platformDirection(platform);
+    const cached = cachedPageOf(state.page, platform);
+    if (direction && slider.glide(state.page, platform, direction, (target) => applyPlatform(target), cached)) {
+      return true;
+    }
+  }
+  applyPlatform(platform);
+  return true;
+}
+
+/// 目标平台留在缓存里的页面，滑动时直接拿它当预览，切过去不会又变回骨架。
+function cachedPageOf(route, platform) {
+  const entry = pageCache.get(`${route}:${platform}`);
+  return entry ? { node: entry.node, scroll: entry.scroll || 0 } : null;
+}
+
+/// 平台在标签条上的方位：目标在后就是左滑（页面向左退出），在前就右滑。
+function platformDirection(platform) {
+  const order = ALL_PLATFORMS.filter((item) => isPlatformEnabled(item));
+  const from = order.indexOf(state.platform);
+  const to = order.indexOf(platform);
+  if (from < 0 || to < 0 || from === to) return '';
+  return to > from ? 'left' : 'right';
+}
+
+/// 整页滑动切平台的前提：有滑动层、动效没关、停在可切页的列表页、没有浮层。
+function canSlidePlatform() {
+  if (!slider || slider.isBusy() || currentMotion() === 'off') return false;
+  if (state.page !== 'home' && state.page !== 'category') return false;
+  return !document.querySelector('.modal-overlay, .menu-overlay:not(.closing)');
+}
+
+/// 真正落地切平台：写设置、刷新标签条，列表页从缓存接上或现渲染。
+function applyPlatform(platform) {
   state.platform = platform;
   state.settings.home.platform = platform;
   saveSettings();
-  resetPlatformCaches();
+  resetSearchState();
   syncPlatformTabs();
   if (state.page === 'home' || state.page === 'category') {
-    render({ keepScroll: false, swipe: options.swipe || '' });
+    // 位移已由横滑层走完，这里不再叠入场动画。
+    render({ keepScroll: false, animate: false });
   }
-  return true;
+}
+
+/// 平台标签下方色条的左右缩进。
+function underlineInset() {
+  return parseFloat(getComputedStyle(platformTabs).getPropertyValue('--tab-underline-inset')) || 0;
+}
+
+function platformTabElement(platform) {
+  return platformTabs.querySelector(`.platform-tab[data-platform="${platform}"]`);
 }
 
 /// 把平台标签下方的主色条移到当前标签下。
@@ -215,7 +266,7 @@ let platformUnderlineReady = false;
 function placePlatformUnderline(active) {
   const underline = platformTabs.querySelector('.tab-underline');
   if (!underline || !active) return;
-  const inset = parseFloat(getComputedStyle(platformTabs).getPropertyValue('--tab-underline-inset')) || 0;
+  const inset = underlineInset();
   if (!platformUnderlineReady) underline.style.transition = 'none';
   underline.style.width = `${Math.max(0, active.offsetWidth - inset * 2)}px`;
   underline.style.transform = `translateX(${active.offsetLeft + inset}px)`;
@@ -225,6 +276,46 @@ function placePlatformUnderline(active) {
     underline.style.transition = '';
     platformUnderlineReady = true;
   }
+}
+
+/// 标签条的滚动位置：让目标标签尽量居中，两端夹住。
+function tabScrollFor(tab) {
+  const max = Math.max(0, platformTabs.scrollWidth - platformTabs.clientWidth);
+  const center = tab.offsetLeft + tab.offsetWidth / 2 - platformTabs.clientWidth / 2;
+  return Math.max(0, Math.min(center, max));
+}
+
+/// 滑动中让标签条跟上页面进度：色条在两标签之间插值，文字颜色按进度混合，
+/// 窄屏溢出时把目标标签一并滚进视野。ms 为 0 时跟手不补过渡，与页面位移同步。
+let tabScrollFrom = 0;
+function syncTabProgress(progress, ms, platform) {
+  const underline = platformTabs.querySelector('.tab-underline');
+  const from = platformTabElement(state.platform);
+  const to = platformTabElement(platform);
+  if (!underline || !from || !to) return;
+  if (!ms && progress === 0) tabScrollFrom = platformTabs.scrollLeft;
+  const inset = underlineInset();
+  const width = from.offsetWidth + (to.offsetWidth - from.offsetWidth) * progress;
+  const left = from.offsetLeft + (to.offsetLeft - from.offsetLeft) * progress;
+  underline.style.transition = ms ? `transform ${ms}ms var(--ease), width ${ms}ms var(--ease)` : 'none';
+  underline.style.width = `${Math.max(0, width - inset * 2)}px`;
+  underline.style.transform = `translateX(${left + inset}px)`;
+  const leaving = Math.round((1 - progress) * 100);
+  from.style.color = leaving === 100 ? '' : `color-mix(in srgb, var(--accent) ${leaving}%, var(--muted))`;
+  to.style.color = `color-mix(in srgb, var(--accent) ${Math.round(progress * 100)}%, var(--muted))`;
+  if (progress === 0 && ms) {
+    // 没滑过去：标签条滚回起步位置。
+    platformTabs.scrollTo({ left: tabScrollFrom, behavior: scrollBehavior() });
+  } else {
+    platformTabs.scrollLeft = tabScrollFrom + (tabScrollFor(to) - tabScrollFrom) * progress;
+  }
+}
+
+/// 滑动层收起：交还过渡与文字颜色，位置留给 syncPlatformTabs 重设。
+function endTabSlide() {
+  const underline = platformTabs.querySelector('.tab-underline');
+  if (underline) underline.style.transition = '';
+  for (const tab of platformTabs.querySelectorAll('.platform-tab')) tab.style.color = '';
 }
 
 /// 重新测量并移动色条：ResizeObserver 观察标签条，resize/orientationchange 兜底，debounce 120ms。
@@ -265,31 +356,40 @@ function renderPlatformTabs() {
     return `<button class="platform-tab${active ? ' active' : ''}${envEnabled ? '' : ' is-disabled'}" data-platform="${platform}" role="tab" aria-selected="${active}" title="${escapeHtml(meta.name)}${envEnabled ? '' : '（即将支持）'}"><span>${escapeHtml(label)}</span></button>`;
   }).join('') + '<span class="tab-underline" aria-hidden="true"></span>';
   for (const tab of platformTabs.querySelectorAll('.platform-tab')) {
-    tab.addEventListener('click', () => selectPlatform(tab.dataset.platform));
+    tab.addEventListener('click', () => selectPlatform(tab.dataset.platform, { slide: true }));
   }
 }
 
-/// 按已启用平台顺序翻一页，到两端停住；返回是否发生切换。
-function cyclePlatform(direction) {
+/// 相邻平台：按已启用平台顺序取前一个/后一个，到两端返回空串。
+function neighbourPlatform(direction) {
   const list = ALL_PLATFORMS.filter((platform) => isPlatformEnabled(platform));
-  if (list.length < 2) return false;
   const index = list.indexOf(state.platform);
-  if (index < 0) return false;
-  const next = list[index + (direction === 'left' ? 1 : -1)];
-  if (!next) return false;
-  return selectPlatform(next, { silent: true, swipe: direction });
+  if (index < 0) return '';
+  return list[index + (direction === 'left' ? 1 : -1)] || '';
 }
 
-/// 左右滑动切平台，仅首页与分类页。
-function initSwipe() {
+/// 整页横滑：跟手拖动当前页，同时把相邻平台的骨架页从侧边推出来。
+/// 抬起后按位移/速度决定是接上还是弹回。手势只在移动端绑定，
+/// 点击平台标签在桌面与移动端都走同一层滑动。
+function initPageSlider() {
+  slider = createPageSlider(view, { onProgress: syncTabProgress, onFinish: endTabSlide });
   if (!IS_MOBILE) return;
-  bindHorizontalSwipe(view, (direction) => {
-    if (state.page !== 'home' && state.page !== 'category') return false;
-    // 有浮层时手势归浮层，别在下面偷偷切平台。
-    if (document.querySelector('.modal-overlay, .menu-overlay:not(.closing)')) return false;
-    if (!cyclePlatform(direction)) return false;
-    // 入场动画由 render() 负责，这里不再叠加。
-    return true;
+  bindHorizontalSwipe(view, {
+    canStart: () => {
+      // 点击滑动正在跑时，别再插一手拖动。
+      if (slider.isBusy()) return false;
+      if (state.page !== 'home' && state.page !== 'category') return false;
+      // 有浮层时手势归浮层，别在下面偷偷切平台。
+      return !document.querySelector('.modal-overlay, .menu-overlay:not(.closing)');
+    },
+    onStart: (direction) => {
+      const platform = neighbourPlatform(direction);
+      if (!platform) return false;
+      return slider.begin(state.page, platform, direction, cachedPageOf(state.page, platform));
+    },
+    onMove: (dx) => slider.move(dx),
+    onEnd: (_, commit) => slider.settle(commit, (platform) => applyPlatform(platform)),
+    onCancel: () => slider.settle(false),
   });
 }
 
@@ -316,46 +416,151 @@ function renderChrome() {
   syncPlatformTabs();
 }
 
-function render({ keepScroll = false, dir = 'forward', swipe = '' } = {}) {
+// 一级列表页按平台各留一份 DOM：切平台、进出二级页都不重建，卡片与滚动位置原样留着。
+const CACHED_PAGES = new Set(['home', 'category']);
+const pageCache = new Map();
+// 5 个平台 × 2 个列表页，再多就淘汰最早的一份。
+const CACHE_LIMIT = 8;
+// 当前页：{ route, node, cleanup, scroll, homeRefresh, pullRefresh }。
+let currentPage = null;
+
+/// 可缓存页面的槽键；其余页面用完即弃。
+function cacheKeyOf(route, platform = state.platform) {
+  return CACHED_PAGES.has(route) ? `${route}:${platform}` : '';
+}
+
+/// 执行页面的清理钩子。keepHandlers 为真时把当前的刷新注册原样还回去：
+/// 淘汰后台缓存不能把前台页面的顶栏按钮与下拉刷新一起清掉。
+function runCleanup(fn, keepHandlers = false) {
+  if (!fn) return;
+  const saved = keepHandlers
+    ? { home: homeRefreshHandler, pull: pullRefreshHandler, activate: pageActivate }
+    : null;
+  if (keepHandlers) {
+    homeRefreshHandler = null;
+    pullRefreshHandler = null;
+    pageActivate = null;
+  }
+  try {
+    fn();
+  } catch (error) {
+    console.error('cleanup', error);
+  }
+  if (saved) {
+    homeRefreshHandler = saved.home;
+    pullRefreshHandler = saved.pull;
+    pageActivate = saved.activate;
+  }
+}
+
+/// 把当前页从 view 上摘下来：可缓存的连同监听与刷新入口一起留着，其余销毁。
+function stashPage() {
+  const leaving = currentPage;
+  currentPage = null;
+  if (!leaving) return;
+  // 按页面自己所属的平台归档：此刻 state.platform 已经是切换后的目标平台。
+  const cacheKey = cacheKeyOf(leaving.route, leaving.platform);
+  if (!cacheKey || !leaving.node) {
+    runCleanup(leaving.cleanup);
+    return;
+  }
+  leaving.scroll = view.scrollTop;
+  // 页面注册的刷新动作跟着页面走，切回时还给顶栏按钮与下拉手势。
+  leaving.homeRefresh = homeRefreshHandler;
+  leaving.pullRefresh = pullRefreshHandler;
+  leaving.activate = pageActivate;
+  homeRefreshHandler = null;
+  pullRefreshHandler = null;
+  pageActivate = null;
+  // 同一槽位已有旧页面时先销毁它，别让它挂在缓存里没人管。
+  const stale = pageCache.get(cacheKey);
+  if (stale && stale !== leaving) runCleanup(stale.cleanup, true);
+  pageCache.set(cacheKey, leaving);
+  trimPageCache();
+}
+
+function trimPageCache() {
+  while (pageCache.size > CACHE_LIMIT) {
+    const oldest = pageCache.keys().next().value;
+    const entry = pageCache.get(oldest);
+    pageCache.delete(oldest);
+    runCleanup(entry.cleanup, true);
+  }
+}
+
+/// 强制重画时丢掉目标页的缓存，连同它的监听一起清掉。
+function dropCachedPage(cacheKey) {
+  const entry = pageCache.get(cacheKey);
+  if (!entry) return;
+  pageCache.delete(cacheKey);
+  runCleanup(entry.cleanup, true);
+}
+
+function render({ keepScroll = false, dir = 'forward', animate = true, fresh = false } = {}) {
   // 路由切换时关掉可能还没关的浮层菜单，避免它跟着进入下一个页面。
   for (const overlay of document.querySelectorAll('.menu-overlay')) overlay.remove();
-  if (cleanup) {
-    try {
-      cleanup();
-    } catch (error) {
-      console.error('cleanup', error);
-    }
-    cleanup = null;
-  }
-  if (currentKey) scrollPositions.set(currentKey, view.scrollTop);
+  const leavingScroll = view.scrollTop;
+  stashPage();
+  if (currentKey) scrollPositions.set(currentKey, leavingScroll);
   currentKey = routeKey(state.page, state.routeParams);
   renderChrome();
-  view.innerHTML = '';
-  view.scrollTop = 0;
-  const config = PAGES[state.page] || PAGES.home;
-  try {
-    cleanup = config.render(ctx, state.routeParams) || null;
-  } catch (error) {
-    console.error(error);
-    view.innerHTML = `<div class="page-error" style="margin:40px"><span>页面渲染失败：${escapeHtml(error)}</span><button class="btn small" id="render-retry">回到首页</button></div>`;
-    view.querySelector('#render-retry')?.addEventListener('click', () => {
-      backStack.length = 0;
-      go('home', {}, { replace: true });
-    });
+  const cacheKey = cacheKeyOf(state.page);
+  if (fresh) dropCachedPage(cacheKey);
+  const cached = cacheKey ? pageCache.get(cacheKey) : null;
+  if (cached) {
+    pageCache.delete(cacheKey);
+    view.replaceChildren(cached.node);
+    // 挂回文档会重播仍在队列里的入场动画，先统一摘干净。
+    cached.node.classList.remove('page-enter', 'back');
+    for (const card of cached.node.querySelectorAll('.card-enter')) card.classList.remove('card-enter');
+    homeRefreshHandler = cached.homeRefresh || null;
+    pullRefreshHandler = cached.pullRefresh || null;
+    pageActivate = cached.activate || null;
+    currentPage = cached;
+    // 页面没离开过，退回原来的滚动位置。
+    view.scrollTop = cached.scroll || 0;
+    // 回到前台的页面自己判断要不要补数据，不重画整页。
+    pageActivate?.();
+  } else {
+    view.innerHTML = '';
+    view.scrollTop = 0;
+    const config = PAGES[state.page] || PAGES.home;
+    let pageCleanup = null;
+    let pageFailed = false;
+    try {
+      pageCleanup = config.render(ctx, state.routeParams) || null;
+    } catch (error) {
+      pageFailed = true;
+      console.error(error);
+      view.innerHTML = `<div class="page-error" style="margin:40px"><span>页面渲染失败：${escapeHtml(error)}</span><button class="btn small" id="render-retry">回到首页</button></div>`;
+      view.querySelector('#render-retry')?.addEventListener('click', () => {
+        backStack.length = 0;
+        go('home', {}, { replace: true });
+      });
+    }
+    currentPage = {
+      route: state.page,
+      platform: state.platform,
+      // 渲染失败的错误页不进缓存，下次进来重新试。
+      node: pageFailed ? null : view.firstElementChild,
+      cleanup: pageCleanup,
+      scroll: 0,
+    };
+    if (keepScroll) {
+      const target = scrollPositions.get(currentKey) || 0;
+      requestAnimationFrame(() => {
+        view.scrollTop = target;
+      });
+    }
   }
-  if (keepScroll) {
-    const target = scrollPositions.get(currentKey) || 0;
-    requestAnimationFrame(() => {
-      view.scrollTop = target;
-    });
-  }
-  // 页面入场动画；直播间跳过。返回从上方落下，触屏左右滑则跟着手势方向横移。
+  // 页面入场动画；直播间跳过，返回时从上方落下。切平台的位移由横滑层自己做。
   const pageEl = view.firstElementChild;
-  if (pageEl && state.page !== 'room') {
+  if (animate && pageEl && state.page !== 'room') {
     addEnterClass(pageEl, 'page-enter');
     if (dir === 'back') addEnterClass(pageEl, 'back');
-    else if (swipe === 'left') addEnterClass(pageEl, 'swipe-left');
-    else if (swipe === 'right') addEnterClass(pageEl, 'swipe-right');
+  } else if (pageEl) {
+    // 从缓存取回的页面带着上次的入场 class，挂回文档会重播，这里摘掉。
+    pageEl.classList.remove('page-enter', 'back');
   }
 }
 
@@ -797,7 +1002,7 @@ async function autoPullSync() {
     state.settings.sync.lastSyncAt = Date.now();
     saveSettings();
     toast('已从云端同步数据', 'success');
-    render({ keepScroll: true });
+    render({ keepScroll: true, fresh: true });
   } catch (error) {
     console.warn('自动拉取云端同步失败', error);
   }
@@ -835,7 +1040,7 @@ function init() {
   renderPlatformTabs();
   initGlobalShortcuts();
   initPullRefresh();
-  initSwipe();
+  initPageSlider();
   initOrientationLayout();
   initUnderlineTracking();
   state.page = 'home';
@@ -855,17 +1060,17 @@ function init() {
   setTimeout(autoPullSync, 1500);
   // 预加载分类树，切换分类页更快
   setTimeout(() => {
-    if (!state.category.tree.length && !state.category.loading) {
-      // 记录发起时的平台，避免回包写到已切换的平台。
-      const platform = state.platform;
-      state.category.loading = true;
-      api.categories(platform).then((tree) => {
-        if (platform !== state.platform) return;
-        if (!state.category.tree.length) state.category.tree = tree;
-      }).catch(() => {}).finally(() => {
-        state.category.loading = false;
+    const slot = categorySlot();
+    if (slot.tree.length || slot.loading) return;
+    slot.loading = true;
+    api.categories(slot.platform)
+      .then((tree) => {
+        if (!slot.tree.length) slot.tree = tree;
+      })
+      .catch(() => {})
+      .finally(() => {
+        slot.loading = false;
       });
-    }
   }, 1200);
 }
 

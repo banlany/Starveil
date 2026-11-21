@@ -165,25 +165,31 @@ SC 到期与停留、控制栏空闲等待、定时关闭、轮询与窗口保�
 `--ease`，较长的循环写 `calc(var(--dur-base) * N)`。`tools/check-skin.mjs`
 会拦回潮；档位覆盖与 `0.01ms` 兜底只放在 `skins/motion.css`。
 
-触屏左右滑切平台时 `render({ swipe })` 把方向带进入场 class，
-`page-in-swipe-next` / `page-in-swipe-prev` 让页面跟着手势横移；`reduced`
-收敛为淡入，`off` 不入场。首页卡片由 `ui.js::roomGrid()` 写入
-`--card-delay`，间隔随序号收窄、总时延收敛，卡片再多也依次浮起。
+触屏左右滑切平台走跟手拖动：`swipe.js` 的拖拽接口在确认横向意图后回调位移，
+`page-slide.js` 把当前页 `translateX(dx)`、把目标页贴在另一侧，抬起后按位移与速度
+决定接上还是回弹。点平台标签在移动端与桌面端都走同一层滑动，按标签顺序决定往左
+还是往右；`off` 档直接落位、不建预览层。
 
-### 字体：把要用的字体排进 `--font`，别指望系统装了什么
+首页与分类页按平台缓存 DOM（`app.js` 的 `pageCache`），切平台或进出二级页都不重建，
+卡片、滚动位置与刷新入口一起留着；横滑时侧边露出的是该平台缓存的那一页，没有才画骨架
+（`swipe-peek.js`）。页面数据也按平台分槽（`state.homes` / `state.categories`），
+页面绑定自己的槽，在后台也能继续收数据。缓存页回到前台时只调它注册的
+`ctx.setPageActivate()` 补数据，不重画。
 
-`--font` 是一整条 **font-family 栈**，按顺序 fallback。应用内置了一份
-**HarmonyOS Sans SC**（`web/fonts.css` + `web/assets/fonts/harmonyos-sans/`，
-GB2312 子集、三个字重），所以栈里可以放心写它：
+直播间聊天栏的页签用同一套手感：`.chat-list` 只负责滚动，内容在 `.chat-pane` 里，
+翻页时整层平移、相邻页签画进 `.chat-peek` 跟进（`room.js` 的 `chatSlide*`）。
 
-- 系统真有的优先（macOS 的 `-apple-system` / 苹方、Windows 的雅黑），
-- 没有的落到 `"HarmonyOS Sans SC"` —— 安卓两样都没有，以前直接掉到 Roboto，
-  中文观感和苹方差一截，现在用的是随包的这份；
-- 兜底再写 `system-ui, sans-serif`。
+首页卡片由 `ui.js::roomGrid()` 写入 `--card-delay`，间隔随序号收窄、总时延收敛，
+卡片再多也依次浮起。
+
+### 字体：只排系统字体
+
+`--font` 是一整条 **font-family 栈**，按顺序 fallback，应用不随包附带字体文件。
+栈里只写各平台自带的中文字体与通用的 `system-ui, sans-serif` 兜底：
+macOS / iOS 走苹方，Windows 走雅黑，安卓用系统默认中文。
 
 弹幕走 canvas，拿不到 CSS 变量，`danmaku.js` 会读 `getComputedStyle(document.body).fontFamily`
 当作画布字体，所以**没单独设弹幕字体时，改皮肤就等于改弹幕字体**。
-生僻字仍由系统字体逐字兜底（内置字体只到 GB2312），不会出现方块。
 
 ### 用户字体：两个运行时变量，皮肤里不要定义
 

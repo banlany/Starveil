@@ -311,6 +311,21 @@ img {
   overflow: hidden;
 }
 
+/* 整页横滑的相邻页预览：垫在当前页下面，横向裁剪交给 #view。 */
+.swipe-peek {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* 拖动中的当前页浮起来，和相邻页之间有一道浅影，层次才分得开。 */
+.view > .is-swiping {
+  box-shadow: 0 0 24px rgba(var(--shadow-rgb), var(--shadow-a1)); /* skin:allow 阴影色由皮肤变量组成 */
+}
+
 /* ------------------------------------------------------------ 通用控件 */
 
 .icon-btn {
@@ -1086,6 +1101,7 @@ textarea.input {
 .menu {
   position: fixed;
   min-width: 178px;
+  max-width: calc(100vw - 16px);
   /* 菜单限高并内部滚动，避免超出视口无法触达。 */
   max-height: calc(100vh - 16px);
   overflow-y: auto;
@@ -1294,11 +1310,12 @@ textarea.input {
 .log-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
 .log-path {
-  flex: 1;
+  flex: 1 1 160px;
   min-width: 0;
   overflow: hidden;
   color: var(--dim);
@@ -1312,6 +1329,8 @@ textarea.input {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 窄屏换行后靠右，别让按钮从路径那一行的左边跟过来。 */
+  margin-left: auto;
 }
 
 /* 外观来自 .select-btn，这里只把尺寸对齐同一行的 ghost 小按钮。 */
@@ -1612,33 +1631,8 @@ body.is-fullscreen .resize-handle,
   animation-name: page-in-back;
 }
 
-/* 触屏左右滑切平台：入场方向跟着手势。 */
-@keyframes page-in-swipe-next {
-  from {
-    opacity: 0;
-    transform: translateX(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes page-in-swipe-prev {
-  from {
-    opacity: 0;
-    transform: translateX(-18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.page-enter.swipe-left { animation-name: page-in-swipe-next; }
-.page-enter.swipe-right { animation-name: page-in-swipe-prev; }
-
-/* 卡片入场；骨架卡不参与。 */
+/* 卡片入场；只给刚建出来的卡片加 .card-enter，骨架卡不参与。
+   播完 ui.js 会摘掉这个类，缓存的页面再挂回文档时不会整片重淡入。 */
 @keyframes card-in {
   from {
     opacity: 0;
@@ -1646,7 +1640,7 @@ body.is-fullscreen .resize-handle,
   }
 }
 
-.room-grid > .room-card:not(.skeleton-card) {
+.room-card.card-enter {
   animation: card-in var(--dur-slow) var(--ease) backwards;
   animation-delay: calc(var(--dur-base) * var(--card-delay, 0));
 }

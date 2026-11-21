@@ -71,6 +71,13 @@ export function roomCard(room, options = {}) {
       <span class="room-online">${icon('flame', 12)}${formatOnline(room.online)}</span>
     </div>`;
   bindImageFallback(card);
+  // 入场动画只播一次：播完摘掉标记，页面被换到别处再挂回时不会重播一遍。
+  card.classList.add('card-enter');
+  card.addEventListener('animationend', (event) => {
+    if (event.target !== card) return;
+    card.classList.remove('card-enter');
+    card.style.removeProperty('--card-delay');
+  });
   const open = () => options.onOpen?.(room);
   card.addEventListener('click', open);
   card.addEventListener('keydown', (event) => {
@@ -115,6 +122,21 @@ export function skeletonGrid(count = 12) {
     grid.appendChild(card);
   }
   return grid;
+}
+
+/// 分类页的骨架：两段标题 + 图标网格。加载态与横滑预览共用。
+export function skeletonCategoryLines() {
+  const wrap = document.createElement('div');
+  const items = Array.from(
+    { length: 14 },
+    () => '<div class="category-item"><div class="category-icon skeleton"></div><div class="skeleton skeleton-line" style="width:56px;height:10px;margin-top:2px"></div></div>'
+  ).join('');
+  wrap.innerHTML = `
+    <div class="skeleton skeleton-line" style="width:120px;height:24px;margin:24px 0 22px"></div>
+    <div class="category-grid">${items}</div>
+    <div class="skeleton skeleton-line" style="width:100px;height:22px;margin:42px 0 20px"></div>
+    <div class="category-grid">${items}</div>`;
+  return wrap;
 }
 
 export function emptyState({ iconName = 'spark', title, text, actionLabel, onAction, compact = false }) {
@@ -325,6 +347,14 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
   } else if (box.bottom > window.innerHeight - pad) {
     menu.style.bottom = `${pad}px`;
     menu.style.top = 'auto';
+  }
+  // 横向同理：右对齐的按钮贴着左边缘时，菜单会整块跑到屏幕外。
+  if (box.left < pad) {
+    menu.style.left = `${pad}px`;
+    menu.style.right = 'auto';
+  } else if (box.right > window.innerWidth - pad) {
+    menu.style.right = `${pad}px`;
+    menu.style.left = 'auto';
   }
   setTimeout(() => {
     document.addEventListener('mousedown', outside, true);

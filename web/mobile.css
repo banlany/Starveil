@@ -698,16 +698,3 @@ html.is-mobile .pull-refresh {
 }
 
 /* ------------------------------------------------------------ 左右滑动翻页 */
-/* 切聊天标签时的淡入，只用 opacity。 */
-html.is-mobile .chat-list.swipe-in {
-  animation: swipe-fade var(--dur-fast) var(--ease);
-}
-
-@keyframes swipe-fade {
-  from {
-    opacity: 0.45;
-  }
-  to {
-    opacity: 1;
-  }
-}

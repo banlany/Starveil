@@ -32,7 +32,7 @@ import {
   promptDialog,
   toast,
 } from '../ui.js';
-import { addEnterClass, scrollBehavior } from '../motion.js';
+import { currentMotion, motionDelay, scrollBehavior } from '../motion.js';
 
 const MAX_MESSAGES = 360;
 const QUALITY_KEY = 'simple-live.quality.';
@@ -161,7 +161,7 @@ export function renderRoom(ctx, params = {}) {
           <span class="tab-underline chat-tab-underline" aria-hidden="true"></span>
         </div>
         <div class="chat-status" id="chat-status" hidden></div>
-        <div class="chat-list" id="chat-list"></div>
+        <div class="chat-list" id="chat-list"><div class="chat-pane" id="chat-pane"></div></div>
         <form class="chat-composer hidden" id="chat-composer" autocomplete="off">
           <input class="chat-input" id="chat-input" type="text" maxlength="100" placeholder="发个弹幕…" />
           <button class="chat-send" type="submit" title="发送">${icon('send', 17)}</button>
@@ -192,6 +192,8 @@ export function renderRoom(ctx, params = {}) {
   // 控制条中段；宽度不足时只压缩这里，两端音量与全屏不动。
   const pcMid = $('pc-mid');
   const chatList = $('chat-list');
+  // 聊天栏的内容层：滚动仍由 chat-list 承担，翻页时只平移这一层。
+  const chatPane = $('chat-pane');
   const chat = $('room-chat');
   const chatToBottom = $('chat-to-bottom');
   const composer = $('chat-composer');
@@ -379,21 +381,21 @@ export function renderRoom(ctx, params = {}) {
   $('chat-tabs').addEventListener('click', (event) => {
     const tab = event.target.closest('.chat-tab')?.dataset.tab;
     if (!tab) return;
-    setChatTab(tab);
+    setChatTab(tab, { slide: true });
   });
   chatList.addEventListener('scroll', updateChatToBottom, { passive: true });
-  // 聊天栏左右滑动切标签，仅移动端。
+  // 聊天栏左右滑动切标签，仅移动端：跟手拖动，相邻页签从侧边跟进。
   if (IS_MOBILE) {
-    const swipeTabs = ['chat', 'sc', 'follow', 'settings'];
-    bindHorizontalSwipe(chat, (direction) => {
-      const index = swipeTabs.indexOf(session.tab);
-      if (index < 0) return;
-      const next = swipeTabs[index + (direction === 'left' ? 1 : -1)];
-      if (!next) return;
-      setChatTab(next);
-      chatList.classList.remove('swipe-in');
-      void chatList.offsetWidth;
-      addEnterClass(chatList, 'swipe-in');
+    bindHorizontalSwipe(chatPane, {
+      canStart: () => !chatSlide,
+      onStart: (direction) => {
+        const tab = neighbourChatTab(direction);
+        if (!tab) return false;
+        return chatSlideBegin(tab, direction);
+      },
+      onMove: (dx) => chatSlideMove(dx),
+      onEnd: (_, commit) => chatSlideSettle(commit),
+      onCancel: () => chatSlideSettle(false),
     });
   }
   chatToBottom.addEventListener('click', () => scrollChatToBottom(true));
@@ -859,13 +861,13 @@ export function renderRoom(ctx, params = {}) {
     }
     // 每帧最多插入的行数，避免长任务掉帧。
     const batch = pendingChatLines.splice(0, CHAT_LINES_PER_FRAME);
-    chatList.querySelector('.chat-placeholder')?.remove();
+    chatPane.querySelector('.chat-placeholder')?.remove();
     // 贴不贴底必须在插入之前量。
     const pinned = chatGapToBottom() < CHAT_PIN_GAP;
     const fragment = document.createDocumentFragment();
     for (const message of batch) fragment.appendChild(buildChatLine(message));
-    chatList.appendChild(fragment);
-    while (chatList.childElementCount > MAX_CHAT_LINES) chatList.firstElementChild?.remove();
+    chatPane.appendChild(fragment);
+    while (chatPane.childElementCount > MAX_CHAT_LINES) chatPane.firstElementChild?.remove();
     if (pinned) chatList.scrollTop = chatList.scrollHeight;
     updateChatToBottom();
     if (pendingChatLines.length) chatFlushHandle = requestAnimationFrame(flushChatLines);
@@ -878,10 +880,10 @@ export function renderRoom(ctx, params = {}) {
   }
 
   /// 整表重画时用：消息都从 session.messages 来，一条一条同步插入即可。
-  function appendChatLine(message) {
-    chatList.querySelector('.chat-placeholder')?.remove();
-    chatList.appendChild(buildChatLine(message));
-    while (chatList.childElementCount > MAX_CHAT_LINES) chatList.firstElementChild?.remove();
+  function appendChatLine(message, target = chatPane) {
+    target.querySelector('.chat-placeholder')?.remove();
+    target.appendChild(buildChatLine(message));
+    while (target.childElementCount > MAX_CHAT_LINES) target.firstElementChild?.remove();
   }
 
   function placeholder(text, iconName = 'danmaku') {
@@ -903,7 +905,7 @@ export function renderRoom(ctx, params = {}) {
   /// 状态变化时就地改占位文案（不整页重绘，免得把滚动位置和输入框弄乱）。
   function refreshChatPlaceholder() {
     if (session.tab !== 'chat' || session.messages.length) return;
-    const label = chatList.querySelector('.chat-placeholder > div');
+    const label = chatPane.querySelector('.chat-placeholder > div');
     if (!label) return;
     const text = chatPlaceholderText();
     if (label.textContent !== text) label.textContent = text;
@@ -914,7 +916,7 @@ export function renderRoom(ctx, params = {}) {
     const list = loadFollow();
     if (!list.length) return;
     session.followRefreshing = true;
-    const button = chatList.querySelector('#chat-follow-refresh');
+    const button = chatPane.querySelector('#chat-follow-refresh');
     button?.classList.add('is-loading');
     let cursor = 0;
     const worker = async () => {
@@ -941,25 +943,26 @@ export function renderRoom(ctx, params = {}) {
     toast('关注直播状态已刷新', 'success');
   }
 
-  function renderChatTab() {
+  /// 画某个页签的内容到 target（默认当前内容层）。
+  /// options.scroll 为 false 时只画内容、不动滚动，供横滑时预渲染相邻页签。
+  function renderChatTab(target = chatPane, tab = session.tab, options = {}) {
     // 记录滚动位置，重渲染后还原。
     const keepScroll = chatList.scrollTop;
-    // 从这里开始整表重画，攒着的聊天行也一起作废（消息本身都在 session.messages 里）。
-    cancelChatFlush();
-    chatList.innerHTML = '';
-    // 换标签页或重画时先收起悬浮按钮，聊天分支画完再按实际位置决定要不要露出。
-    chatToBottom.classList.remove('is-shown');
-    if (session.tab === 'chat') {
-      if (!session.messages.length) {
-        chatList.appendChild(placeholder(chatPlaceholderText(), 'danmaku'));
-        return;
-      }
-      for (const message of session.messages) appendChatLine(message);
-      chatList.scrollTop = chatList.scrollHeight;
-      updateChatToBottom();
-      return;
+    // 只有重画当前层才作废攒着的聊天行；横滑时预渲染邻页不影响正在显示的聊天。
+    if (options.scroll !== false) {
+      cancelChatFlush();
+      // 换标签页或重画时先收起悬浮按钮，聊天分支画完再按实际位置决定要不要露出。
+      chatToBottom.classList.remove('is-shown');
     }
-    if (session.tab === 'sc') {
+    // 从这里开始整表重画，消息本身都在 session.messages 里。
+    target.innerHTML = '';
+    if (tab === 'chat') {
+      if (!session.messages.length) {
+        target.appendChild(placeholder(chatPlaceholderText(), 'danmaku'));
+      } else {
+        for (const message of session.messages) appendChatLine(message, target);
+      }
+    } else if (tab === 'sc') {
       // 一次只渲染一个 SC 列表。
       const nav = document.createElement('div');
       nav.className = 'sc-view-nav';
@@ -972,42 +975,37 @@ export function renderRoom(ctx, params = {}) {
           renderChatTab();
         });
       });
-      chatList.appendChild(nav);
+      target.appendChild(nav);
 
       if (session.scView === 'history') {
         if (!session.scHistory.length) {
-          chatList.appendChild(placeholder('还没有归档的 SC', 'history'));
-          return;
-        }
-        for (const message of session.scHistory) {
-          const row = document.createElement('div');
-          row.className = 'sc-history-item';
-          const ended = new Date(message.endedAt);
-          const clock = `${String(ended.getHours()).padStart(2, '0')}:${String(ended.getMinutes()).padStart(2, '0')}`;
-          row.innerHTML = `
+          target.appendChild(placeholder('还没有归档的 SC', 'history'));
+        } else {
+          for (const message of session.scHistory) {
+            const row = document.createElement('div');
+            row.className = 'sc-history-item';
+            const ended = new Date(message.endedAt);
+            const clock = `${String(ended.getHours()).padStart(2, '0')}:${String(ended.getMinutes()).padStart(2, '0')}`;
+            row.innerHTML = `
             <span class="sc-history-time" title="${message.reason === 'manual' ? '手动结束' : '到期自动结束'}">${clock}</span>
             <span class="sc-history-main">
               <b>${escapeHtml(message.user || 'B 站用户')}</b>
               <em>¥${Number(message.sc?.price) || 0}</em>
               <span class="sc-history-text">${escapeHtml(message.text)}</span>
             </span>`;
-          chatList.appendChild(row);
+            target.appendChild(row);
+          }
         }
-        chatList.scrollTop = keepScroll;
-        return;
-      }
-
-      if (!session.scMessages.length) {
-        chatList.appendChild(placeholder('当前没有正在显示的 SC', 'spark'));
-        return;
-      }
-      for (const message of session.scMessages.slice().reverse()) {
-        const card = document.createElement('div');
-        card.className = 'sc-card';
-        card.dataset.end = String(message.sc.end_time ?? '');
-        const { top, bottom } = scTierColors(message.sc);
-        card.style.backgroundColor = top;
-        card.innerHTML = `
+      } else if (!session.scMessages.length) {
+        target.appendChild(placeholder('当前没有正在显示的 SC', 'spark'));
+      } else {
+        for (const message of session.scMessages.slice().reverse()) {
+          const card = document.createElement('div');
+          card.className = 'sc-card';
+          card.dataset.end = String(message.sc.end_time ?? '');
+          const { top, bottom } = scTierColors(message.sc);
+          card.style.backgroundColor = top;
+          card.innerHTML = `
           <div class="sc-card-head">
             ${avatarHtml(message.user, message.sc.avatar, 32)}
             <b>${escapeHtml(message.user || 'B 站用户')}</b>
@@ -1015,15 +1013,13 @@ export function renderRoom(ctx, params = {}) {
             <button class="sc-card-close" title="结束这条 SC">${icon('close', 13)}</button>
           </div>
           <div class="sc-card-text">${escapeHtml(message.text)}</div>`;
-        card.querySelector('.sc-card-text').style.backgroundColor = bottom;
-        card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message, 'manual'));
-        chatList.appendChild(card);
+          card.querySelector('.sc-card-text').style.backgroundColor = bottom;
+          card.querySelector('.sc-card-close').addEventListener('click', () => removeScMessage(message, 'manual'));
+          target.appendChild(card);
+        }
+        bindImageFallback(target);
       }
-      bindImageFallback(chatList);
-      chatList.scrollTop = keepScroll;
-      return;
-    }
-    if (session.tab === 'follow') {
+    } else if (tab === 'follow') {
       // 只列正在直播的关注，副标题只保留平台名，直播状态用左侧圆点表达。
       const all = loadFollow();
       const follows = all.filter((item) => item.live).slice(0, 40);
@@ -1031,38 +1027,40 @@ export function renderRoom(ctx, params = {}) {
       toolbar.className = 'chat-follow-toolbar';
       toolbar.innerHTML = `<span>${follows.length} 位正在直播</span><button class="btn small" id="chat-follow-refresh">${icon('refresh', 13)} 刷新状态</button>`;
       toolbar.querySelector('#chat-follow-refresh').addEventListener('click', refreshRoomFollowStatus);
-      chatList.appendChild(toolbar);
+      target.appendChild(toolbar);
       if (!follows.length) {
-        chatList.appendChild(placeholder(all.length ? '关注的主播都还没开播' : '你还没有关注其他主播', 'follow'));
-        return;
-      }
-      const grid = document.createElement('div');
-      grid.className = 'chat-follow-grid';
-      for (const item of follows) {
-        const card = document.createElement('button');
-        card.type = 'button';
-        card.className = 'chat-follow-card';
-        card.innerHTML = `
+        target.appendChild(placeholder(all.length ? '关注的主播都还没开播' : '你还没有关注其他主播', 'follow'));
+      } else {
+        const grid = document.createElement('div');
+        grid.className = 'chat-follow-grid';
+        for (const item of follows) {
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className = 'chat-follow-card';
+          card.innerHTML = `
           ${avatarHtml(item.user_name, item.avatar || item.cover, 38)}
           <span class="chat-follow-info">
             <b title="${escapeHtml(item.user_name || '未知主播')}">${escapeHtml(item.user_name || '未知主播')}</b>
             <small><i class="chat-follow-dot live"></i>${escapeHtml(PLATFORM_META[item.platform]?.short || item.platform)}</small>
           </span>`;
-        card.addEventListener('click', () => ctx.openRoom(item.platform, item.room_id));
-        grid.appendChild(card);
+          card.addEventListener('click', () => ctx.openRoom(item.platform, item.room_id));
+          grid.appendChild(card);
+        }
+        target.appendChild(grid);
+        bindImageFallback(grid);
       }
-      chatList.appendChild(grid);
-      bindImageFallback(grid);
-      return;
+    } else if (tab === 'settings') {
+      renderChatSettings(target);
     }
-    if (session.tab === 'settings') {
-      renderChatSettings();
-      // 从聊天切过来时会沿用聊天的滚动位置，面板直接从中间开始显示、顶上的开关看不见。
-      chatList.scrollTop = 0;
-    }
+    if (options.scroll === false) return;
+    // 聊天停在最新一条，设置从头开始，SC 与关注保持原来的滚动位置。
+    if (tab === 'chat') chatList.scrollTop = chatList.scrollHeight;
+    else if (tab === 'settings') chatList.scrollTop = 0;
+    else chatList.scrollTop = keepScroll;
+    updateChatToBottom();
   }
 
-  function renderChatSettings(target = chatList) {
+  function renderChatSettings(target = chatPane) {
     const config = state.settings.danmaku;
     const wrap = document.createElement('div');
     wrap.className = 'chat-settings';
@@ -1259,14 +1257,115 @@ export function renderRoom(ctx, params = {}) {
     updateChatToBottom();
   }
 
-  function setChatTab(tab) {
+  // ------------------------------------------------------------ 聊天栏翻页
+
+  // 四个页签的固定顺序，决定横滑方向与相邻页。
+  const CHAT_TABS = ['chat', 'sc', 'follow', 'settings'];
+  const CHAT_SETTLE_MS = 220;
+  let chatSlide = null;
+
+  function chatDirection(tab) {
+    const from = CHAT_TABS.indexOf(session.tab);
+    const to = CHAT_TABS.indexOf(tab);
+    if (from < 0 || to < 0 || from === to) return '';
+    return to > from ? 'left' : 'right';
+  }
+
+  /// 相邻页签：left 是下一个。
+  function neighbourChatTab(direction) {
+    const index = CHAT_TABS.indexOf(session.tab);
+    if (index < 0) return '';
+    return CHAT_TABS[index + (direction === 'left' ? 1 : -1)] || '';
+  }
+
+  function chatSlideApply(dx, ms) {
+    const { peek, width, sign } = chatSlide;
+    const transition = ms ? `transform ${ms}ms var(--ease)` : 'none';
+    chatPane.style.transition = transition;
+    peek.style.transition = transition;
+    chatPane.style.transform = `translateX(${dx}px)`;
+    // 预览层贴在当前层的外侧：左划从右边进来，右划从左边。
+    peek.style.transform = `translateX(${sign * width + dx}px)`;
+  }
+
+  function chatSlideRelease() {
+    const { peek } = chatSlide;
+    chatPane.style.transition = '';
+    chatPane.style.transform = '';
+    chatPane.style.willChange = '';
+    peek.remove();
+    chatSlide = null;
+  }
+
+  /// 开一层聊天栏翻页：目标页签先画进侧边的预览层，点开时直接滑到位。
+  function chatSlideBegin(tab, direction) {
+    if (chatSlide) return false;
+    const width = chatList.clientWidth;
+    if (!width) return false;
+    const peek = document.createElement('div');
+    peek.className = 'chat-peek';
+    peek.style.height = `${chatList.clientHeight}px`;
+    peek.style.top = `${chatList.scrollTop}px`;
+    const inner = document.createElement('div');
+    inner.className = 'chat-pane';
+    peek.appendChild(inner);
+    renderChatTab(inner, tab, { scroll: false });
+    chatList.appendChild(peek);
+    chatPane.style.willChange = 'transform';
+    chatSlide = { peek, inner, tab, width, sign: direction === 'left' ? 1 : -1 };
+    chatSlideApply(0, 0);
+    return true;
+  }
+
+  function chatSlideMove(dx) {
+    if (!chatSlide) return;
+    const { width } = chatSlide;
+    const clamped = Math.abs(dx) <= width ? dx : Math.sign(dx) * (width + (Math.abs(dx) - width) * 0.35);
+    chatSlide.peek.style.top = `${chatList.scrollTop}px`;
+    chatSlideApply(clamped, 0);
+  }
+
+  /// 收尾：提交时把预览层的内容整块换进来，回弹就丢掉。
+  function chatSlideSettle(commit) {
+    if (!chatSlide) return;
+    const { sign, width, inner, tab } = chatSlide;
+    const ms = motionDelay(CHAT_SETTLE_MS);
+    chatSlideApply(commit ? -sign * width : 0, ms);
+    const done = () => {
+      if (!chatSlide) return;
+      chatSlideRelease();
+      if (!commit) return;
+      // 内容已经在预览层里画好，直接搬进来，不重画也不会闪。
+      chatPane.replaceChildren(...inner.childNodes);
+      applyChatTab(tab);
+      chatList.scrollTop = tab === 'chat' ? chatList.scrollHeight : 0;
+      updateChatToBottom();
+    };
+    if (ms) setTimeout(done, ms);
+    else done();
+  }
+
+  /// 只改状态与视觉，不碰内容。
+  function applyChatTab(tab) {
     session.tab = tab;
     for (const button of page.querySelectorAll('.chat-tab')) {
       button.classList.toggle('active', button.dataset.tab === tab);
     }
-    renderChatTab();
     syncChatTabUnderline();
     updateComposer();
+  }
+
+  /// options.slide：点标签时走一次滑动；横滑手势自己开层。
+  function setChatTab(tab, options = {}) {
+    if (tab === session.tab) return;
+    const direction = chatDirection(tab);
+    if (options.slide && direction && currentMotion() !== 'off' && chatSlideBegin(tab, direction)) {
+      // 先让起始位移落一帧，过渡才有起点。
+      requestAnimationFrame(() => chatSlideSettle(true));
+      return;
+    }
+    applyChatTab(tab);
+    renderChatTab(chatPane, tab);
   }
 
   // 标签下方的主色条，切换标签或计数变化时重新量宽度。

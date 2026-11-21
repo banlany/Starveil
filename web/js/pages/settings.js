@@ -180,16 +180,9 @@ function renderSettingsList(ctx) {
     for (const item of group.items) {
       const row = document.createElement('button');
       row.className = 'settings-item';
-      const value =
-        item.key === 'appearance'
-          ? themeLabel(getSetting('appearance.theme'))
-          : item.key === 'danmaku'
-            ? `${getSetting('danmaku.font', 20)} px`
-            : '';
       row.innerHTML = `
       <span class="item-icon">${icon(item.icon, 22)}</span>
       <span class="item-label">${escapeHtml(item.label)}</span>
-      ${value ? `<span class="item-value">${escapeHtml(value)}</span>` : ''}
       <span class="chev">${icon('chevron', 17)}</span>`;
       row.addEventListener('click', () => ctx.go('settingsDetail', { key: item.key }));
       list.appendChild(row);
@@ -1077,10 +1070,6 @@ function detailSections(key, ctx, repaint) {
   }
 }
 
-function themeLabel(theme) {
-  return theme === 'light' ? '浅色' : theme === 'system' ? '跟随系统' : '深色';
-}
-
 function applyCardSize(size) {
   document.body.dataset.cardSize = size;
 }
@@ -1821,7 +1810,7 @@ function paintLink(content, ctx) {
   card.innerHTML = `
     <h3>直播间链接解析</h3>
     <p>粘贴哔哩哔哩、斗鱼、虎牙的直播间链接，或直接输入房间号，解析后进入直播间。</p>
-    <input class="input" id="link-input" placeholder="https://live.bilibili.com/21452505" />
+    <input class="input" id="link-input" placeholder="粘贴直播间链接或输入房间号" />
     <div class="tool-actions">
       <button class="btn primary" id="link-go">${icon('link', 16)} 解析并进入</button>
     </div>
