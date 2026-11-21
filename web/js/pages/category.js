@@ -3,6 +3,7 @@ import { api, categoryImage } from '../api.js';
 import { icon } from '../icons.js';
 import { state } from '../store.js';
 import { emptyState, escapeHtml, skeletonGrid, toast } from '../ui.js';
+import { scrollBehavior } from '../motion.js';
 
 const COLLAPSED_COUNT = 15;
 
@@ -94,7 +95,7 @@ export function renderCategory(ctx) {
           renderTree();
           if (!expanded) {
             // 展开后把这一节滚到可见区域
-            setTimeout(() => title.scrollIntoView({ block: 'start', behavior: 'smooth' }), 20);
+            setTimeout(() => title.scrollIntoView({ block: 'start', behavior: scrollBehavior() }), 20);
           }
         });
         grid.appendChild(more);

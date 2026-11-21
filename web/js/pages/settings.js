@@ -28,6 +28,7 @@ import {
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
 import { SKINS, accentForMode, skinAccents, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
 import { OVERRIDE_GROUPS, formatOverride } from '../../skins/overrides.js';
+import { addEnterClass } from '../motion.js';
 import { installSkinPack, removeSkinPack, templatePack } from '../../skins/pack.js';
 // 外部数据导入（starveil 备份 / 中立同步包）与同步包构建。
 import { buildBundle, bundleScope, importData } from '../importer.js';
@@ -810,6 +811,18 @@ function detailSections(key, ctx, repaint) {
           : []),
         { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' } }] },
         {
+          label: '动效',
+          rows: [{
+            type: 'radioGroup',
+            key: 'appearance.motion',
+            options: [
+              { label: '完整', value: 'full', desc: '保留全部过渡、入场与加载动画' },
+              { label: '精简', value: 'reduced', desc: '过渡减半，去掉入场位移与循环动画' },
+              { label: '关闭', value: 'off', desc: '只关界面动效，不影响弹幕与播放' },
+            ],
+          }],
+        },
+        {
           label: '高级外观',
           rows: [
             ...OVERRIDE_GROUPS.flatMap((group) => group.items.map((item) => ({
@@ -1107,7 +1120,7 @@ function paintHistory(content, ctx) {
     // 重放动画 class 以重新触发过渡。
     content.classList.remove('pane-in');
     void content.offsetWidth;
-    content.classList.add('pane-in');
+    addEnterClass(content, 'pane-in');
   };
 
   function paintRecords() {

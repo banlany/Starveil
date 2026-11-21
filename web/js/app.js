@@ -28,6 +28,7 @@ import { initTitlebar } from './titlebar.js';
 import { bindHorizontalSwipe } from './swipe.js';
 import { initTooltips } from './tooltip.js';
 import { applyPlatformFlags, IS_MOBILE } from './platform.js';
+import { addEnterClass, scrollBehavior, currentMotion } from './motion.js';
 
 const view = document.getElementById('view');
 const rail = document.getElementById('rail');
@@ -203,7 +204,7 @@ function selectPlatform(platform, options = {}) {
   resetPlatformCaches();
   syncPlatformTabs();
   if (state.page === 'home' || state.page === 'category') {
-    render({ keepScroll: false });
+    render({ keepScroll: false, swipe: options.swipe || '' });
   }
   return true;
 }
@@ -249,7 +250,7 @@ function syncPlatformTabs() {
     if (current) active = tab;
   }
   // 切页后把当前标签滚入视野（移动端标签条可横向滚动）。
-  if (IS_MOBILE) active?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  if (IS_MOBILE) active?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: scrollBehavior() });
   placePlatformUnderline(active);
 }
 
@@ -275,7 +276,7 @@ function cyclePlatform(direction) {
   if (index < 0) return false;
   const next = list[index + (direction === 'left' ? 1 : -1)];
   if (!next) return false;
-  return selectPlatform(next, { silent: true });
+  return selectPlatform(next, { silent: true, swipe: direction });
 }
 
 /// 左右滑动切平台，仅首页与分类页。
@@ -314,7 +315,7 @@ function renderChrome() {
   syncPlatformTabs();
 }
 
-function render({ keepScroll = false, dir = 'forward' } = {}) {
+function render({ keepScroll = false, dir = 'forward', swipe = '' } = {}) {
   // 路由切换时关掉可能还没关的浮层菜单，避免它跟着进入下一个页面。
   for (const overlay of document.querySelectorAll('.menu-overlay')) overlay.remove();
   if (cleanup) {
@@ -347,12 +348,13 @@ function render({ keepScroll = false, dir = 'forward' } = {}) {
       view.scrollTop = target;
     });
   }
-  // 页面入场动画；直播间跳过。
+  // 页面入场动画；直播间跳过。返回从上方落下，触屏左右滑则跟着手势方向横移。
   const pageEl = view.firstElementChild;
   if (pageEl && state.page !== 'room') {
-    pageEl.classList.add('page-enter');
-    // 返回上一层从上方落下，前进则从下方浮起，方向对得上操作。
-    if (dir === 'back') pageEl.classList.add('back');
+    addEnterClass(pageEl, 'page-enter');
+    if (dir === 'back') addEnterClass(pageEl, 'back');
+    else if (swipe === 'left') addEnterClass(pageEl, 'swipe-left');
+    else if (swipe === 'right') addEnterClass(pageEl, 'swipe-right');
   }
 }
 
@@ -378,7 +380,7 @@ function initRail() {
     button.addEventListener('click', () => {
       const route = button.dataset.nav;
       if (state.page === route) {
-        view.scrollTo({ top: 0, behavior: 'smooth' });
+        view.scrollTo({ top: 0, behavior: scrollBehavior() });
         return;
       }
       // 一级导航作为新起点，清空返回栈
@@ -619,7 +621,7 @@ function initPullRefresh() {
     }
     // 0.5 的阻尼：拖一屏只走半屏，手感接近原生下拉。
     distance = Math.min(MAX, delta * 0.5);
-    indicator.style.transform = `translate(-50%, ${distance}px)`;
+    if (currentMotion() !== 'off') indicator.style.transform = `translate(-50%, ${distance}px)`;
     const ready = distance >= THRESHOLD;
     indicator.classList.toggle('ready', ready);
     label.textContent = ready ? '松开刷新' : '下拉刷新';

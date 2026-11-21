@@ -688,7 +688,7 @@ html.is-mobile .pull-refresh {
 }
 
 .pull-refresh.loading .pull-arrow {
-  animation: pull-spin 0.8s linear infinite;
+  animation: pull-spin calc(var(--dur-base) * 4) linear infinite;
 }
 
 @keyframes pull-spin {

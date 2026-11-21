@@ -243,8 +243,8 @@ img {
   /* 用强调色，不用 --fg。 */
   background: var(--tab-underline-bg);
   transition:
-    transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+    transform calc(var(--dur-base) * 1.3) var(--ease),
+    width calc(var(--dur-base) * 1.3) var(--ease);
   pointer-events: none;
 }
 
@@ -522,7 +522,7 @@ textarea.input {
 
 /* 带 is-loading 的按钮图标旋转。 */
 .is-loading .ico {
-  animation: spin 1s linear infinite;
+  animation: spin calc(var(--dur-base) * 5) linear infinite;
 }
 
 @keyframes spin {
@@ -788,7 +788,7 @@ textarea.input {
   inset: 0;
   background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
   transform: translateX(-100%);
-  animation: shimmer 1.4s infinite;
+  animation: shimmer calc(var(--dur-base) * 7) infinite;
 }
 
 @keyframes shimmer {
@@ -871,7 +871,7 @@ textarea.input {
   border-radius: 50%;
   border: 2px solid var(--surface-3);
   border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite;
+  animation: spin calc(var(--dur-base) * 4) linear infinite;
 }
 
 .load-more {
@@ -1555,14 +1555,40 @@ body.is-fullscreen .resize-handle,
 }
 
 .page-enter {
-  animation: page-in 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  animation: page-in calc(var(--dur-base) * 1.1) var(--ease) backwards;
 }
 
 .page-enter.back {
   animation-name: page-in-back;
 }
 
-/* 前 10 张卡片依次浮起；骨架卡不参与。 */
+/* 触屏左右滑切平台：入场方向跟着手势。 */
+@keyframes page-in-swipe-next {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes page-in-swipe-prev {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.page-enter.swipe-left { animation-name: page-in-swipe-next; }
+.page-enter.swipe-right { animation-name: page-in-swipe-prev; }
+
+/* 卡片入场；骨架卡不参与。 */
 @keyframes card-in {
   from {
     opacity: 0;
@@ -1571,39 +1597,17 @@ body.is-fullscreen .resize-handle,
 }
 
 .room-grid > .room-card:not(.skeleton-card) {
-  animation: card-in 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  animation: card-in var(--dur-slow) var(--ease) backwards;
+  animation-delay: calc(var(--dur-base) * var(--card-delay, 0));
 }
-
-.room-grid > .room-card:not(.skeleton-card):nth-child(2) { animation-delay: 0.025s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(3) { animation-delay: 0.05s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(4) { animation-delay: 0.075s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(5) { animation-delay: 0.1s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(6) { animation-delay: 0.125s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(7) { animation-delay: 0.15s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(8) { animation-delay: 0.175s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(9) { animation-delay: 0.2s; }
-.room-grid > .room-card:not(.skeleton-card):nth-child(10) { animation-delay: 0.225s; }
 
 /* 关注页卡片统一淡入，不排队。 */
 .follow-grid > .follow-card,
 .follow-list-view > .follow-card {
-  animation: card-in 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  animation: card-in calc(var(--dur-base) * 1.3) var(--ease) backwards;
 }
 
 /* 触屏按下回馈。 */
 .room-card:active {
   transform: scale(0.985);
-}
-
-/* 减弱动态效果时关闭装饰动画；用 0.01ms 以保留 animationend。 */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-delay: 0ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
 }

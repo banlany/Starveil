@@ -50,7 +50,7 @@
   filter: var(--stage-backdrop);
   transform: scale(1.06);
   z-index: 0;
-  transition: opacity 0.4s ease;
+  transition: opacity calc(var(--dur-base) * 2) var(--ease);
 }
 
 .stage-bg.hidden {
@@ -134,7 +134,7 @@
   border-radius: 50%;
   border: 2.5px solid var(--media-line);
   border-top-color: var(--media-accent);
-  animation: spin 0.8s linear infinite;
+  animation: spin calc(var(--dur-base) * 4) linear infinite;
 }
 
 /* ------------------------------------------------------------ 顶部浮层 */
@@ -899,7 +899,7 @@ body.is-resizing-chat .room-chat {
   align-items: center;
   color: var(--on-sc-weak);
   font-style: normal;
-  transition: transform 0.18s ease;
+  transition: transform calc(var(--dur-fast) * 1.3) var(--ease);
 }
 
 .sc-float-card.expanded .sc-caret {
@@ -1122,7 +1122,7 @@ body.is-resizing-chat .room-chat {
 
 .chat-status.is-connecting .chat-status-dot {
   background: var(--warning);
-  animation: status-pulse 1.1s ease-in-out infinite;
+  animation: status-pulse calc(var(--dur-base) * 5.5) ease-in-out infinite;
 }
 
 .chat-status.is-connected .chat-status-dot {

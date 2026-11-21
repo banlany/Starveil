@@ -1,6 +1,8 @@
 // 自绘悬停提示：把 `title` 搬进 `data-tip`，悬停时画 `.app-tip`。
 // 只响应指针悬停；气泡是 fixed 层，不受父元素 overflow 影响。
 
+import { motionDelay } from './motion.js';
+
 const SHOW_DELAY = 420;
 const HIDE_DELAY = 40;
 const GAP = 8;
@@ -89,7 +91,9 @@ function onLeave(event) {
   // 在元素内部从一个子节点移到另一个子节点不算离开。
   if (event.relatedTarget && el.contains(event.relatedTarget)) return;
   window.clearTimeout(showTimer);
-  hideTimer = window.setTimeout(hide, HIDE_DELAY);
+  const delay = motionDelay(HIDE_DELAY);
+  if (delay) hideTimer = window.setTimeout(hide, delay);
+  else hide();
 }
 
 /// 页面里大多数按钮是渲染出来的，`title` 也是运行时写的，所以监听整棵 DOM。

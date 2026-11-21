@@ -1,6 +1,7 @@
 // 通用 UI：卡片、提示、弹窗、空态、骨架屏。
 import { avatarImage, canonicalImage, coverImage, formatOnline } from './api.js';
 import { icon, platformIcon } from './icons.js';
+import { motionDelay, showOnNextFrame } from './motion.js';
 
 export function escapeHtml(value) {
   return String(value ?? '')
@@ -92,7 +93,12 @@ export function roomCard(room, options = {}) {
 export function roomGrid(rooms, options = {}) {
   const grid = document.createElement('div');
   grid.className = `room-grid ${options.className || ''}`.trim();
-  for (const room of rooms) grid.appendChild(roomCard(room, options));
+  for (const [index, room] of rooms.entries()) {
+    const card = roomCard(room, options);
+    // 间隔随序号收窄，总时延收敛到 var(--dur-base) * 2.5；卡片再多也依次浮起。
+    card.style.setProperty('--card-delay', (2.5 * (1 - Math.pow(0.95, index))).toFixed(4));
+    grid.appendChild(card);
+  }
   return grid;
 }
 
@@ -130,10 +136,12 @@ export function toast(message, type = 'info', duration = 2400) {
   item.className = `toast toast-${type}`;
   item.innerHTML = `${icon(type === 'error' ? 'info' : type === 'success' ? 'check' : 'spark', 16)}<span>${escapeHtml(message)}</span>`;
   root.appendChild(item);
-  requestAnimationFrame(() => item.classList.add('show'));
+  showOnNextFrame(item);
   setTimeout(() => {
     item.classList.remove('show');
-    setTimeout(() => item.remove(), 220);
+    const exit = motionDelay(220);
+    if (exit) setTimeout(() => item.remove(), exit);
+    else item.remove();
   }, duration);
 }
 
@@ -169,7 +177,9 @@ export function openModal({ title = '', subtitle = '', body, actions = [], width
   const actionNode = panel.querySelector('.modal-actions');
   const close = () => {
     overlay.classList.remove('show');
-    setTimeout(() => overlay.remove(), 160);
+    const exit = motionDelay(160);
+    if (exit) setTimeout(() => overlay.remove(), exit);
+    else overlay.remove();
     document.removeEventListener('keydown', onKey);
     onClose?.();
   };
@@ -199,7 +209,7 @@ export function openModal({ title = '', subtitle = '', body, actions = [], width
   document.addEventListener('keydown', onKey);
   overlay.appendChild(panel);
   root.appendChild(overlay);
-  requestAnimationFrame(() => overlay.classList.add('show'));
+  showOnNextFrame(overlay);
   return { close, panel };
 }
 
@@ -294,7 +304,9 @@ export function openMenu(anchor, items, { align = 'end', placement = 'bottom', g
     document.removeEventListener('keydown', onKey);
     // 先播退场再摘节点；closing 期间该 overlay 不计入「有菜单打开」。
     overlay.classList.add('closing');
-    setTimeout(() => overlay.remove(), 140);
+    const exit = motionDelay(140);
+    if (exit) setTimeout(() => overlay.remove(), exit);
+    else overlay.remove();
   };
   const outside = (event) => {
     if (!menu.contains(event.target)) close();

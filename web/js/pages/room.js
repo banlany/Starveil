@@ -32,6 +32,7 @@ import {
   promptDialog,
   toast,
 } from '../ui.js';
+import { addEnterClass, scrollBehavior } from '../motion.js';
 
 const MAX_MESSAGES = 360;
 const QUALITY_KEY = 'simple-live.quality.';
@@ -392,7 +393,7 @@ export function renderRoom(ctx, params = {}) {
       setChatTab(next);
       chatList.classList.remove('swipe-in');
       void chatList.offsetWidth;
-      chatList.classList.add('swipe-in');
+      addEnterClass(chatList, 'swipe-in');
     });
   }
   chatToBottom.addEventListener('click', () => scrollChatToBottom(true));
@@ -1253,7 +1254,7 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function scrollChatToBottom(smooth = true) {
-    if (smooth) chatList.scrollTo({ top: chatList.scrollHeight, behavior: 'smooth' });
+    if (smooth) chatList.scrollTo({ top: chatList.scrollHeight, behavior: scrollBehavior() });
     else chatList.scrollTop = chatList.scrollHeight;
     updateChatToBottom();
   }

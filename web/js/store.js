@@ -4,6 +4,7 @@ import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
 import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAccents, skinBase, skinHref, skinModes } from '../skins/registry.js';
 import { resolvedOverrides, sanitizeOverrides } from '../skins/overrides.js';
+import { defaultMotion, sanitizeMotion } from './motion.js';
 import { loadSkinPacks, packCss } from '../skins/pack.js';
 
 // 注册本机皮肤包，loadSettings() 里校验 appearance.skin 时才能认出它们。
@@ -69,6 +70,8 @@ export const DEFAULT_SETTINGS = {
     // 主题色是否跟随皮肤；用户自选后不再被皮肤覆盖。
     accentSource: 'skin',
     density: 'comfortable',
+    // 界面动效档位：full / reduced / off，首次启动跟随系统偏好。
+    motion: defaultMotion(),
     // 用户覆盖的皮肤变量，键为变量名，只存改过的项。
     overrides: {},
     // 界面字体家族名；空串表示用皮肤自带的字体栈。仅默认皮肤提供这项。
@@ -234,6 +237,7 @@ function loadSettings() {
   }
   settings.appearance.skin = getSkin(settings.appearance.skin).id;
   settings.appearance.overrides = sanitizeOverrides(settings.appearance.overrides);
+  settings.appearance.motion = sanitizeMotion(settings.appearance.motion, defaultMotion());
   const bakedAccent = skinAccent(settings.appearance.skin);
   if (!settings.appearance.accentSource) {
     settings.appearance.accentSource = settings.appearance.accent === bakedAccent ? 'skin' : 'user';
@@ -433,6 +437,7 @@ export function applyTheme() {
   else delete root.dataset.skinPack;
   root.dataset.theme = effective;
   root.dataset.themeMode = mode;
+  root.dataset.motion = sanitizeMotion(appearance.motion, defaultMotion());
   ensureSkinStyle(skin);
 
   // 存原值，落到 DOM 时按当前明暗档换算。
@@ -456,7 +461,7 @@ export function applyTheme() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (bg && meta) meta.setAttribute('content', bg);
   if (bg) syncSystemBar(effective, bg);
-  rememberBootPaint(effective, skin, overrides);
+  rememberBootPaint(effective, skin, overrides, root.dataset.motion);
   window.dispatchEvent(new CustomEvent('simple-live:theme'));
 }
 
@@ -489,14 +494,14 @@ function syncSystemBar(effective, color) {
   api.setSystemBar(color, effective === 'light').catch(() => {});
 }
 
-/// 首帧预涂缓存（theme / 基底皮肤 / 皮肤包 CSS / overrides），不参与备份与同步。
+/// 首帧预涂缓存（theme / 基底皮肤 / 皮肤包 CSS / overrides / motion），不参与备份与同步。
 const BOOT_KEY = 'starveil.boot.v1';
 
-function rememberBootPaint(theme, skin, overrides = {}) {
+function rememberBootPaint(theme, skin, overrides = {}, motion = 'full') {
   try {
     const prev = localStorage.getItem(BOOT_KEY);
     const pack = skin.base ? { id: skin.id, css: packCss(skin) } : null;
-    const next = JSON.stringify({ theme, skin: skinBase(skin), pack, overrides });
+    const next = JSON.stringify({ theme, skin: skinBase(skin), pack, overrides, motion });
     if (prev !== next) localStorage.setItem(BOOT_KEY, next);
   } catch {
     /* 隐私模式/配额满：只是丢一次预涂，不影响功能 */

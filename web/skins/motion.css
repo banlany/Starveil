@@ -1,0 +1,66 @@
+/* 动效档位：--motion-scale 由这里写入，--dur-* 已在 base.css 乘上它。 */
+
+html[data-motion="reduced"] {
+  --motion-scale: 0.5;
+}
+
+html[data-motion="off"] {
+  --motion-scale: 0;
+}
+
+/* 精简：去掉入场位移与错峰，只留短淡入。 */
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+}
+
+html[data-motion="reduced"] .page-enter,
+html[data-motion="reduced"] .page-enter.back,
+html[data-motion="reduced"] .page-enter.swipe-left,
+html[data-motion="reduced"] .page-enter.swipe-right,
+html[data-motion="reduced"] .pane-in,
+html[data-motion="reduced"] .room-grid > .room-card:not(.skeleton-card),
+html[data-motion="reduced"] .follow-grid > .follow-card,
+html[data-motion="reduced"] .follow-list-view > .follow-card {
+  animation-name: motion-fade-in;
+  animation-delay: 0ms;
+}
+
+/* 精简与关闭：装饰性循环停掉，状态点保持静态。 */
+html:is([data-motion="reduced"], [data-motion="off"]) .is-loading .ico,
+html:is([data-motion="reduced"], [data-motion="off"]) .spinner,
+html:is([data-motion="reduced"], [data-motion="off"]) .big-spinner,
+html:is([data-motion="reduced"], [data-motion="off"]) .skeleton::after,
+html:is([data-motion="reduced"], [data-motion="off"]) .chat-status.is-connecting .chat-status-dot,
+html:is([data-motion="reduced"], [data-motion="off"]) .pull-refresh.loading .pull-arrow {
+  animation: none;
+}
+
+html:is([data-motion="reduced"], [data-motion="off"]) .chat-list {
+  scroll-behavior: auto;
+}
+
+/* 关闭：压掉变量派生时长、inline style 与皮肤自带的时长。0.01ms 保留 animationend。 */
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+
+/* 首帧还没写入档位时跟随系统偏好。 */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion]),
+  html:not([data-motion]) *,
+  html:not([data-motion]) *::before,
+  html:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

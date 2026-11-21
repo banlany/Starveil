@@ -44,6 +44,12 @@
         }
         if (boot.theme === 'light' || boot.theme === 'dark') root.dataset.theme = boot.theme;
         root.dataset.themeMode = boot.theme || 'dark';
+        var motion = boot.motion;
+        if (motion !== 'full' && motion !== 'reduced' && motion !== 'off') {
+          motion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+            ? 'reduced' : 'full';
+        }
+        root.dataset.motion = motion;
         if (boot.overrides && typeof boot.overrides === 'object') {
           for (var key in boot.overrides) {
             var val = boot.overrides[key];
@@ -79,6 +85,8 @@
   <link rel="stylesheet" href="room.css" />
   <!-- 移动端覆盖层：只在 <html class="is-mobile"> 下生效，桌面不受影响 -->
   <link rel="stylesheet" href="mobile.css" />
+  <!-- 动效档位覆盖层排在组件之后：按 <html data-motion> 改写 --motion-scale 并兜底关闭档 -->
+  <link rel="stylesheet" href="skins/motion.css" />
 </head>
 <body>
   <!-- 自绘标题栏：跟随主题色，关闭按钮悬停变红；拖动区交给系统处理窗口移动

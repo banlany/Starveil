@@ -1480,7 +1480,7 @@
 }
 
 .pane-in {
-  animation: pane-in 0.2s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  animation: pane-in var(--dur-base) var(--ease) backwards;
 }
 
 /* 分段控件的外观在 styles.css（与关注页 chip、SC 页签共用）。

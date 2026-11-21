@@ -8,7 +8,7 @@
 //      非变量字体就报错；确有必要的行尾写 `/* skin:allow 原因 */` 放行。
 //   2. 内置皮肤的 skin.css 必须存在，且定义了自己 id 对应的两块作用域。
 //   3. 组件里 `var(--x)` 用到的每个变量，在 base.css + 皮肤合并后必须有定义。
-//   4. 控件几何、图标表、用户覆盖层白名单与皮肤包契约。
+//   4. 控件几何、图标表、用户覆盖层白名单、动效档位契约与皮肤包契约。
 //
 // 只依赖 node 内置模块，接 CI 直接加一步 `node tools/check-skin.mjs`。
 
@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OVERRIDE_KEYS } from '../web/skins/overrides.js';
+import { MOTION_MODES, sanitizeMotion } from '../web/js/motion.js';
 import { BUILTIN_SKINS, TITLEBAR_MODES } from '../web/skins/registry.js';
 import { PACK_FORMAT, PACK_VERSION, packCss, sanitizeSkinPack } from '../web/skins/pack.js';
 
@@ -50,6 +51,8 @@ const RUNTIME_VARS = new Set([
   '--mask-solid',
   // room.js 的 applyStageSize 按视频比例量出来的竖屏舞台高度
   '--stage-h',
+  // ui.js::roomGrid 按卡片序号注入的入场延迟系数
+  '--card-delay',
 ]);
 
 const problems = [];
@@ -84,6 +87,7 @@ function eachLine(source, fn) {
 
 // ---------------------------------------------------------------- 1. 字面量
 
+const TIME_LITERAL = /\b\d*\.?\d+(?:s|ms)\b/;
 const COLOR_PATTERN = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/;
 const RADIUS_PATTERN = /border-radius:\s*(?!var\()\s*(-?[\d.]+)(px|rem|em)?/;
 // 0 或 50% / 100% 这类几何值不是「风格量」，换皮肤也不需要变
@@ -112,6 +116,12 @@ for (const name of COMPONENT_FILES) {
     }
     if (STROKE_PATTERN.test(line)) {
       problems.push(`${where}  图标线宽/端点写死，改用 --icon-stroke / --icon-cap / --icon-join： ${line.trim()}`);
+    }
+    if (TIME_LITERAL.test(line)) {
+      problems.push(`${where}  动效时长写死，改用 --dur-* 派生： ${line.trim()}`);
+    }
+    if (/cubic-bezier\s*\(/.test(line)) {
+      problems.push(`${where}  缓动写死，改用 var(--ease)： ${line.trim()}`);
     }
     if (/data-skin=/.test(line)) {
       problems.push(`${where}  组件样式里不许出现 data-skin 选择器，皮肤差异只该由变量体现`);
@@ -267,7 +277,29 @@ for (const entry of entries) {
     if (!/^--[a-zA-Z0-9-]+\s*:|^color-scheme\s*:|^\}/.test(trimmed)) {
       problems.push(`web/skins/${entry.id}/skin.css:${lineNumber}  皮肤文件里只准声明变量： ${trimmed}`);
     }
+    if (TIME_LITERAL.test(trimmed)) {
+      problems.push(`web/skins/${entry.id}/skin.css:${lineNumber}  动效时长写死，改用 --dur-* 派生： ${trimmed}`);
+    }
   });
+}
+
+// ---------------------------------------------------------------- 2b. 动效契约
+
+if (MOTION_MODES.join(',') !== 'full,reduced,off') {
+  problems.push('web/js/motion.js: MOTION_MODES 必须是 full / reduced / off');
+}
+if (sanitizeMotion('nope', 'full') !== 'full' || sanitizeMotion('off') !== 'off') {
+  problems.push('web/js/motion.js: sanitizeMotion 没有收敛非法档位');
+}
+const baseSource = fs.existsSync(baseFile) ? read(baseFile) : '';
+for (const name of ['--dur-fast', '--dur-base', '--dur-slow']) {
+  const line = baseSource.split('\n').find((text) => text.trim().startsWith(`${name}:`)) || '';
+  if (!line.includes('--motion-scale')) {
+    problems.push(`web/skins/base.css: ${name} 没乘 --motion-scale`);
+  }
+}
+if (!fs.existsSync(path.join(WEB, 'skins', 'motion.css'))) {
+  problems.push('web/skins/motion.css 不存在');
 }
 
 // ---------------------------------------------------------------- 3. 变量闭环

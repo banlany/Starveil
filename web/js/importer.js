@@ -4,6 +4,7 @@
 import { canonicalImage, ENABLED_PLATFORMS, normalizePlatform, roomUrl } from './api.js';
 import { hasSkin } from '../skins/registry.js';
 import { sanitizeOverrides } from '../skins/overrides.js';
+import { sanitizeMotion } from './motion.js';
 import {
   ACCOUNT_PLATFORMS,
   applyTheme,
@@ -261,6 +262,11 @@ function importBundle(data, options = {}) {
       }
       if (patch.appearance.overrides !== undefined) {
         patch.appearance.overrides = sanitizeOverrides(patch.appearance.overrides);
+      }
+      if (patch.appearance.motion !== undefined) {
+        const motion = sanitizeMotion(patch.appearance.motion, '');
+        if (motion) patch.appearance.motion = motion;
+        else delete patch.appearance.motion;
       }
     }
     // 剔除已废弃的 danmaku.blockUsers；30 帧上限已移除。

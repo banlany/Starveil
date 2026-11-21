@@ -15,6 +15,7 @@ web/
     overrides.js         用户变量覆盖层白名单
     pack.js              皮肤包格式、清洗与 CSS 生成
     base.css             圆角 / 时长 / 阴影的阶梯派生层
+    motion.css           动效档位覆盖层
     default/
       skin.css           默认皮肤「星幕」：深色 + 浅色
     apple/
@@ -24,11 +25,13 @@ web/
   pages.css              一级页面
   room.css               直播间
   mobile.css             移动端布局
+  js/
+    motion.js            动效档位数据与 JS 分支 helper
 ```
 
 `web/index.html` 在首帧前按 `skins/<base>/skin.css` 的约定插入基底样式表，
-并先读 `localStorage` 里的预涂缓存定下 `data-theme` / `data-skin` / `data-skin-pack`、
-注入变量覆盖与皮肤包差异样式，避免启动时闪一帧默认配色。
+并先读 `localStorage` 里的预涂缓存定下 `data-theme` / `data-skin` / `data-skin-pack` /
+`data-motion`，注入变量覆盖与皮肤包差异样式，避免启动时闪一帧默认配色或动画。
 
 ## 两个维度
 
@@ -113,7 +116,7 @@ html[data-skin="apple"][data-theme="light"] {
 | 图标 | `--icon-stroke` `--icon-cap` `--icon-join` `--icon-stroke-thin` |
 | 圆角 | `--radius-2xs` `--radius-xs` `--radius-sm` `--radius-md` `--radius` `--radius-lg` `--radius-xl` `--radius-pill`（base.css） |
 | 字体 | `--font` `--font-display` `--font-mono` |
-| 动效 | `--dur-fast` `--dur-base` `--dur-slow`（base.css）`--ease`（皮肤） |
+| 动效 | `--dur-fast` `--dur-base` `--dur-slow`（base.css）`--motion-scale`（motion.css）`--ease`（皮肤） |
 
 ### 阶梯派生层
 
@@ -123,7 +126,8 @@ html[data-skin="apple"][data-theme="light"] {
 --radius-scale: 1;
 --radius-sm: calc(8px * var(--radius-scale));
 --dur-scale: 1;
---dur-fast: calc(0.14s * var(--dur-scale));
+--motion-scale: 1;
+--dur-fast: calc(0.14s * var(--dur-scale) * var(--motion-scale));
 --shadow-scale: 1;
 --shadow-rgb: 0, 0, 0;
 --shadow-a1: 0.22;
@@ -139,6 +143,32 @@ html[data-skin="apple"][data-theme="light"] {
 - `calc()` 里的 `var()` 在使用处展开，`html[data-skin=...]` 上的系数会参与求值；
   用户覆盖层写进 `<html>` 的 inline style，优先级最高。
 - 派生值是 `calc()` 文本，设置页滑杆用探针元素读取浏览器算出的长度/时长。
+
+### 动效三档
+
+`appearance.motion` 取 `full` / `reduced` / `off`，首次启动按
+`prefers-reduced-motion` 推导；首帧脚本写 `<html data-motion>`，`applyTheme()`
+每次重算，`starveil.boot.v1` 带档位，启动时不会先闪一帧动画。
+
+| 档位 | 行为 |
+| --- | --- |
+| `full` | `--motion-scale: 1`，保留过渡、入场、错峰与加载动画 |
+| `reduced` | `--motion-scale: 0.5`，入场只留淡入，去掉错峰与装饰性无限循环 |
+| `off` | `--motion-scale: 0`，全局 `0.01ms !important` 兜底；JS 同步加 show、直接移除浮层节点、不加入场 class |
+
+`web/js/motion.js` 是档位唯一取值来源：`currentMotion()` 读
+`document.documentElement.dataset.motion`，`motionDelay()` / `showOnNextFrame()` /
+`addEnterClass()` / `scrollBehavior()` 供 JS 分支使用。弹幕画布、播放重连、
+SC 到期与停留、控制栏空闲等待、定时关闭、轮询与窗口保存是功能性计时，不归动效档。
+
+组件 CSS 与 skin.css 不写死时长或缓动：`--dur-*` 由 `base.css` 派生，缓动走
+`--ease`，较长的循环写 `calc(var(--dur-base) * N)`。`tools/check-skin.mjs`
+会拦回潮；档位覆盖与 `0.01ms` 兜底只放在 `skins/motion.css`。
+
+触屏左右滑切平台时 `render({ swipe })` 把方向带进入场 class，
+`page-in-swipe-next` / `page-in-swipe-prev` 让页面跟着手势横移；`reduced`
+收敛为淡入，`off` 不入场。首页卡片由 `ui.js::roomGrid()` 写入
+`--card-delay`，间隔随序号收窄、总时延收敛，卡片再多也依次浮起。
 
 ### 字体：把要用的字体排进 `--font`，别指望系统装了什么
 
