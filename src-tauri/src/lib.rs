@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(windows)]
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -21,6 +23,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 mod flv;
+mod logging;
 mod webdav;
 
 // 系统字体清单：设置页的界面字体与弹幕字体用它，非 Windows 返回空表。
@@ -693,7 +696,7 @@ fn start_proxy() -> (u16, Arc<Mutex<HashMap<String, ProxyTarget>>>) {
             let stream = match stream {
                 Ok(stream) => stream,
                 Err(error) => {
-                    eprintln!("[proxy] accept 失败：{error}");
+                    logging::error("proxy", format!("accept 失败：{error}"));
                     std::thread::sleep(Duration::from_millis(200));
                     continue;
                 }
@@ -763,13 +766,23 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
         .ok()
         .and_then(|map| map.get(token).cloned());
     let Some(target) = target else {
-        eprintln!("[proxy] 未知 token：{}", preview(path));
+        logging::warn("proxy", format!("未知 token：{}", preview(path)));
         let _ = write!(
             socket,
             "HTTP/1.1 404 Not Found\r\n{cors}Connection: close\r\nContent-Length: 0\r\n\r\n"
         );
         return;
     };
+
+    logging::debug(
+        "proxy",
+        format!(
+            "连接 token={} ← {} 纯音频={}",
+            token,
+            preview(&target.url),
+            target.audio_only
+        ),
+    );
 
     let Some(client) = upstream_client() else {
         let _ = write!(
@@ -795,12 +808,15 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     let mut response = match response {
         Ok(response) if response.status().is_success() => response,
         Ok(response) => {
-            eprintln!(
-                "[proxy] 上游 HTTP {} ← {}\n        目标 {}\n        referer {}",
-                response.status().as_u16(),
-                preview(&target.url),
-                target.url,
-                target.referer
+            logging::warn(
+                "proxy",
+                format!(
+                    "上游 HTTP {} ← {}\n目标 {}\nreferer {}",
+                    response.status().as_u16(),
+                    preview(&target.url),
+                    target.url,
+                    target.referer
+                ),
             );
             let _ = write!(
                 socket,
@@ -809,7 +825,10 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
             return;
         }
         Err(error) => {
-            eprintln!("[proxy] 上游请求失败 ← {}：{error}", preview(&target.url));
+            logging::warn(
+                "proxy",
+                format!("上游请求失败 ← {}：{error}", preview(&target.url)),
+            );
             let _ = write!(
                 socket,
                 "HTTP/1.1 502 Bad Gateway\r\n{cors}Connection: close\r\nContent-Length: 0\r\n\r\n"
@@ -840,6 +859,8 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
     let mut spliced = false;
     // 同屏播放时 A 那一路只要声音：视频 tag 在这里就丢掉，下游是纯音频 FLV。
     let mut audio_filter = target.audio_only.then(AudioOnlyFilter::new);
+    // 整条响应体收到的字节数：为 0 说明上游给了 200 却什么都没发（抖音限流就是这样）。
+    let mut total = 0u64;
     'stream: loop {
         let mut received = 0u64;
         loop {
@@ -884,6 +905,7 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
         if received > 0 {
             reconnects = 0;
         }
+        total += received;
         // 上游断开且地址已更新时原地重连，播放器侧的 HTTP 流不中断。
         if reconnects >= 3 {
             break;
@@ -905,7 +927,7 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
             .send();
         match fetched {
             Ok(next_response) if next_response.status().is_success() => {
-                eprintln!("[proxy] 地址已续签，静默接上第 {reconnects} 次");
+                logging::info("proxy", format!("地址已续签，静默接上第 {reconnects} 次"));
                 current = next;
                 splicer.begin_segment();
                 spliced = true;
@@ -914,27 +936,36 @@ fn proxy_connection(stream: TcpStream, targets: Arc<Mutex<HashMap<String, ProxyT
                 continue 'stream;
             }
             Ok(next_response) => {
-                eprintln!(
-                    "[proxy] 续签地址 HTTP {}",
-                    next_response.status().as_u16()
+                logging::warn(
+                    "proxy",
+                    format!("续签地址 HTTP {}", next_response.status().as_u16()),
                 );
                 break;
             }
             Err(error) => {
-                eprintln!("[proxy] 续签地址请求失败：{error}");
+                logging::warn("proxy", format!("续签地址请求失败：{error}"));
                 break;
             }
         }
     }
+    if total == 0 {
+        logging::warn(
+            "proxy",
+            format!("上游断开且一个字节都没给 ← {}", preview(&current.url)),
+        );
+    }
     if spliced {
-        eprintln!(
-            "[proxy] 续接结束，共接上 {} 个 tag（关键帧{}）",
-            splicer.emitted(),
-            if splicer.has_base() { "已找到" } else { "没等到" }
+        logging::info(
+            "proxy",
+            format!(
+                "续接结束，共接上 {} 个 tag（关键帧{}）",
+                splicer.emitted(),
+                if splicer.has_base() { "已找到" } else { "没等到" }
+            ),
         );
     }
     if let Some(filter) = audio_filter.as_ref() {
-        eprintln!("[proxy] 纯音频输出 {} 个音频 tag", filter.emitted());
+        logging::info("proxy", format!("纯音频输出 {} 个音频 tag", filter.emitted()));
     }
     let _ = socket.flush();
 }
@@ -981,9 +1012,13 @@ async fn recommend(
     a_bogus: Option<String>,
 ) -> Result<Vec<LiveRoomItem>, String> {
     let platform = parse_platform(&platform)?;
+    let tag = format!("recommend {platform:?} 第 {} 页", page.unwrap_or(1));
     let sign = live_core::QuerySign::new(ms_token.unwrap_or_default(), a_bogus.unwrap_or_default());
     let core = state.core(platform);
-    blocking(move || core.recommend(platform, page.unwrap_or(1), &sign)).await
+    traced(
+        &tag,
+        blocking(move || core.recommend(platform, page.unwrap_or(1), &sign)).await,
+    )
 }
 
 #[tauri::command]
@@ -995,9 +1030,13 @@ async fn search(
     a_bogus: Option<String>,
 ) -> Result<Vec<LiveRoomItem>, String> {
     let platform = parse_platform(&platform)?;
+    let tag = format!("search {platform:?} {keyword}");
     let sign = live_core::QuerySign::new(ms_token.unwrap_or_default(), a_bogus.unwrap_or_default());
     let core = state.core(platform);
-    blocking(move || core.search(platform, &keyword, &sign)).await
+    traced(
+        &tag,
+        blocking(move || core.search(platform, &keyword, &sign)).await,
+    )
 }
 
 #[tauri::command]
@@ -1006,8 +1045,9 @@ async fn categories(
     platform: String,
 ) -> Result<Vec<live_core::LiveCategory>, String> {
     let platform = parse_platform(&platform)?;
+    let tag = format!("categories {platform:?}");
     let core = state.core(platform);
-    blocking(move || core.categories(platform)).await
+    traced(&tag, blocking(move || core.categories(platform)).await)
 }
 
 #[tauri::command]
@@ -1250,6 +1290,37 @@ fn call_activity_static_str(name: &str, value: &str) -> Result<bool, String> {
     })
 }
 
+/// 调用参数与返回值都是字符串的静态桥接方法：成功返回空串，失败返回原因。
+/// 分享类方法拿不到失败细节时调用方只能看到「失败」两个字，这里把原因带出来。
+#[cfg(target_os = "android")]
+fn call_activity_static_text(name: &str, value: &str) -> Result<String, String> {
+    with_jvm(|env| {
+        let class = activity_class(env)?;
+        let argument = env
+            .new_string(value)
+            .map_err(|error| format!("构造字符串参数失败：{error}"))?;
+        let result = env
+            .call_static_method(
+                class,
+                name,
+                "(Ljava/lang/String;)Ljava/lang/String;",
+                &[jni::objects::JValue::Object(&argument)],
+            )
+            .map_err(|error| format!("调用 MainActivity.{name} 失败：{error}"))?
+            .l()
+            .map_err(|error| format!("MainActivity.{name} 返回值异常：{error}"))?;
+        if result.is_null() {
+            return Ok(String::new());
+        }
+        // 同 `call_activity_static_string`：JString 必须先绑成变量再借用。
+        let text_ref = jni::objects::JString::from(result);
+        let text = env
+            .get_string(&text_ref)
+            .map_err(|error| format!("读取 MainActivity.{name} 返回的字符串失败：{error}"))?;
+        Ok(String::from(text))
+    })
+}
+
 /// 调用返回 Java String 的静态桥接方法（目前只有取设备机型用）。
 /// 拿不到就返回 `None`，调用方自己给一个兜底名字。
 #[cfg(target_os = "android")]
@@ -1345,6 +1416,28 @@ fn parse_argb(value: &str) -> Result<i32, String> {
 
 #[tauri::command]
 async fn open_room(
+    state: State<'_, AppState>,
+    platform: String,
+    room_id: String,
+) -> Result<RoomPayload, String> {
+    let tag = format!("open_room {platform} {room_id}");
+    let result = open_room_task(state, platform, room_id).await;
+    if let Ok(payload) = &result {
+        logging::info(
+            "room",
+            format!(
+                "进入 {} {}：{}（{} 个清晰度）",
+                payload.detail.platform.id(),
+                payload.detail.room_id,
+                payload.detail.title,
+                payload.qualities.len()
+            ),
+        );
+    }
+    traced(&tag, result)
+}
+
+async fn open_room_task(
     state: State<'_, AppState>,
     platform: String,
     room_id: String,
@@ -1484,6 +1577,20 @@ async fn douyu_qualities(
 
 #[tauri::command]
 async fn douyu_play(
+    state: State<'_, AppState>,
+    key: String,
+    index: usize,
+    signed_args: String,
+    audio_only: Option<bool>,
+) -> Result<PlayPayload, String> {
+    let tag = format!("douyu_play {key} #{index}");
+    traced(
+        &tag,
+        douyu_play_task(state, key, index, signed_args, audio_only).await,
+    )
+}
+
+async fn douyu_play_task(
     state: State<'_, AppState>,
     key: String,
     index: usize,
@@ -1630,6 +1737,16 @@ async fn play(
     index: usize,
     audio_only: Option<bool>,
 ) -> Result<PlayPayload, String> {
+    let tag = format!("play {key} #{index}");
+    traced(&tag, play_task(state, key, index, audio_only).await)
+}
+
+async fn play_task(
+    state: State<'_, AppState>,
+    key: String,
+    index: usize,
+    audio_only: Option<bool>,
+) -> Result<PlayPayload, String> {
     let (detail, quality) = {
         let sessions = state
             .sessions
@@ -1663,10 +1780,13 @@ async fn play(
     if flv_urls.is_empty() && hls_urls.is_empty() {
         return Err("这个清晰度没有可用的播放地址".to_string());
     }
-    eprintln!(
-        "[play] {key} 清晰度 {index}：FLV {} 条 / HLS {} 条",
-        flv_urls.len(),
-        hls_urls.len()
+    logging::info(
+        "play",
+        format!(
+            "{key} 清晰度 {index}：FLV {} 条 / HLS {} 条",
+            flv_urls.len(),
+            hls_urls.len()
+        ),
     );
     let referer = match platform {
         Platform::Bilibili => format!("https://live.bilibili.com/{room_id}"),
@@ -1705,6 +1825,15 @@ async fn send_danmaku(
     key: String,
     text: String,
 ) -> Result<(), String> {
+    let tag = format!("send_danmaku {key}");
+    traced(&tag, send_danmaku_task(state, key, text).await)
+}
+
+async fn send_danmaku_task(
+    state: State<'_, AppState>,
+    key: String,
+    text: String,
+) -> Result<(), String> {
     let detail = {
         let sessions = state
             .sessions
@@ -1722,6 +1851,20 @@ async fn send_danmaku(
 /// 启动弹幕会话；`signature` / `user_id` 仅抖音使用。
 #[tauri::command]
 async fn start_danmaku(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    key: String,
+    signature: Option<String>,
+    user_id: Option<String>,
+) -> Result<(), String> {
+    let tag = format!("start_danmaku {key}");
+    traced(
+        &tag,
+        start_danmaku_task(app, state, key, signature, user_id).await,
+    )
+}
+
+async fn start_danmaku_task(
     app: AppHandle,
     state: State<'_, AppState>,
     key: String,
@@ -2360,82 +2503,157 @@ fn webview_data_dir() -> PathBuf {
     }
 }
 
-/// 运行时日志目录：Windows 为 `%LOCALAPPDATA%\Starveil`，安卓为私有目录下的 `logs/`。
-static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-fn log_dir() -> Option<&'static Path> {
-    if let Some(dir) = LOG_DIR.get() {
-        return Some(dir.as_path());
-    }
-    // setup 之前（窗口还没建好就出错）也得能记下来，Windows 用老路径兜底。
+/// 运行时日志目录。Windows 用 `%LOCALAPPDATA%\Starveil`；安卓用私有目录下的
+/// `files/logs`，落在 FileProvider 的 files-path 里，分享不需要额外声明路径。
+fn log_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        static FALLBACK: OnceLock<PathBuf> = OnceLock::new();
-        let local = std::env::var("LOCALAPPDATA").ok()?;
-        Some(FALLBACK.get_or_init(|| Path::new(&local).join("Starveil")))
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            return Some(Path::new(&local).join("Starveil"));
+        }
+        Some(std::env::temp_dir().join("starveil"))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "android")]
+    {
+        android_files_dir().map(|dir| dir.join("logs"))
+    }
+    #[cfg(not(any(windows, target_os = "android")))]
     {
         None
     }
 }
 
-/// 运行时日志：写到 `%LOCALAPPDATA%\Starveil\starveil.log`（安卓在私有目录的 `logs/`），
-/// 出问题（比如窗口空白）时用户可以直接把这个文件发过来。
-fn log_line(message: &str) {
-    // 移动端同时打到标准输出，Android 上会进 logcat（`adb logcat -s RustStdoutStderr`）。
-    if cfg!(not(windows)) {
-        println!("[starveil] {message}");
+/// 应用私有的 `files/` 目录，日志要落在这里才能走 FileProvider 分享。
+#[cfg(target_os = "android")]
+fn android_files_dir() -> Option<PathBuf> {
+    with_jvm(|env| {
+        // ndk-context 里存的是 Activity 的全局引用，直接用，不要自己释放。
+        let context = unsafe {
+            jni::objects::JObject::from_raw(ndk_context::android_context().context().cast())
+        };
+        let dir = env
+            .call_method(&context, "getFilesDir", "()Ljava/io/File;", &[])
+            .map_err(|error| format!("取 files 目录失败：{error}"))?
+            .l()
+            .map_err(|error| format!("取 files 目录失败：{error}"))?;
+        let path = env
+            .call_method(&dir, "getAbsolutePath", "()Ljava/lang/String;", &[])
+            .map_err(|error| format!("取 files 路径失败：{error}"))?
+            .l()
+            .map_err(|error| format!("取 files 路径失败：{error}"))?;
+        // 先绑成变量：`get_string` 借的是 JString 的局部引用，
+        // 直接内联写 `&JString::from(path)` 会在语句结束就把临时值释放掉（E0716）。
+        let text_ref = jni::objects::JString::from(path);
+        let text = env
+            .get_string(&text_ref)
+            .map_err(|error| format!("读取 files 路径失败：{error}"))?;
+        Ok(PathBuf::from(String::from(text)))
+    })
+    .ok()
+}
+
+/// 命令失败统一记一条 warn，成功不记：前端只有一句提示，原因要留在日志里。
+fn traced<T>(command: &str, result: Result<T, String>) -> Result<T, String> {
+    if let Err(error) = &result {
+        logging::warn("cmd", format!("{command} 失败：{error}"));
     }
-    let Some(dir) = log_dir() else {
-        return;
-    };
-    let _ = std::fs::create_dir_all(dir);
-    let line = format!(
-        "[{}] {message}\n",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default()
-    );
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("starveil.log"))
-    {
-        use std::io::Write as _;
-        let _ = file.write_all(line.as_bytes());
-    }
+    result
 }
 
 /// 前端初始化完成后调用，便于确认页面真的跑起来了。
 #[tauri::command]
-fn frontend_log(message: String) {
-    log_line(&format!("[web] {message}"));
+fn frontend_log(level: Option<String>, module: Option<String>, message: String) {
+    let module = module.unwrap_or_else(|| "web".to_string());
+    match level.as_deref().unwrap_or("info") {
+        "debug" => logging::debug(&module, &message),
+        "warn" => logging::warn(&module, &message),
+        "error" => logging::error(&module, &message),
+        _ => logging::info(&module, &message),
+    }
+}
+
+/// 读最近的日志行给设置页展示。
+#[tauri::command]
+async fn read_log(lines: Option<usize>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || logging::read_tail(lines.unwrap_or(300)))
+        .await
+        .map_err(|error| format!("读取日志任务失败：{error}"))?
+}
+
+/// 清空当前日志与轮转出来的 `.1`。
+#[tauri::command]
+async fn clear_log() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(logging::clear)
+        .await
+        .map_err(|error| format!("清空日志任务失败：{error}"))?
+}
+
+/// 当前日志文件路径，供设置页显示。
+#[tauri::command]
+fn log_path() -> Option<String> {
+    logging::path().map(|path| path.to_string_lossy().into_owned())
+}
+
+/// 当前日志级别（`debug` / `info` / `warn` / `error`）。
+#[tauri::command]
+fn log_level() -> String {
+    logging::level_name().to_string()
+}
+
+/// 调整日志级别，只对本次运行生效，重启回到 info（或 `STARVEIL_LOG`）。
+#[tauri::command]
+fn set_log_level(level: String) -> Result<String, String> {
+    let parsed = logging::Level::parse(&level).ok_or_else(|| format!("未知日志级别：{level}"))?;
+    logging::set_level(parsed);
+    logging::info("app", format!("日志级别调整为 {}", logging::level_name()));
+    Ok(logging::level_name().to_string())
+}
+
+/// 安卓分享一段文本（日志面板的「分享」）；桌面端由前端复制到剪贴板。
+#[tauri::command]
+fn share_log_text(app: AppHandle, text: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let shared = run_on_main_activity(&app, move || call_activity_static_text("shareText", &text))?;
+        if shared.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("分享日志失败：{shared}"))
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (&app, text);
+        Err("当前平台不支持分享文本".to_string())
+    }
 }
 
 /// 打开运行日志：Windows 打开目录，Android 通过系统分享导出文件。
 #[tauri::command]
 fn open_log_dir(app: AppHandle) -> Result<String, String> {
-    let dir = log_dir().ok_or_else(|| "当前平台没有日志目录".to_string())?;
-    let _ = std::fs::create_dir_all(dir);
+    let file = logging::path().ok_or_else(|| "当前平台没有日志目录".to_string())?;
+    let dir = file
+        .parent()
+        .ok_or_else(|| "日志目录异常".to_string())?
+        .to_path_buf();
+    let _ = std::fs::create_dir_all(&dir);
+    // 文件还不存在时先写一行：否则安卓分享拿到空文件，桌面打开的是空文件夹。
+    if !file.exists() {
+        logging::info("app", "打开日志");
+    }
 
     #[cfg(target_os = "android")]
     {
-        let file = dir.join("starveil.log");
-        if !file.exists() {
-            return Err("还没有日志文件，用一会儿再来".to_string());
-        }
         let path = file.to_string_lossy().to_string();
         // 闭包要 move 一份进去（返回值里还要用 path），这里先克隆。
         let argument = path.clone();
-        let shared = run_on_main_activity(&app, move || {
-            call_activity_static_str("shareLog", &argument)
+        let reason = run_on_main_activity(&app, move || {
+            call_activity_static_text("shareLog", &argument)
         })?;
-        if shared {
+        if reason.is_empty() {
             Ok(path)
         } else {
-            Err("分享日志失败".to_string())
+            Err(format!("分享日志失败：{reason}"))
         }
     }
     #[cfg(not(target_os = "android"))]
@@ -2463,11 +2681,13 @@ async fn webdav_test(
     password: String,
     allow_insecure_tls: bool,
 ) -> Result<webdav::WebdavInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let tag = format!("webdav_test {url}");
+    let result = tauri::async_runtime::spawn_blocking(move || {
         webdav::probe(&url, &username, &password, allow_insecure_tls)
     })
     .await
-    .map_err(|error| format!("同步任务异常：{error}"))?
+    .map_err(|error| format!("同步任务异常：{error}"));
+    traced(&tag, result.and_then(std::convert::identity))
 }
 
 /// 把同步包整包上传（覆盖远端同名文件）。
@@ -2479,11 +2699,13 @@ async fn webdav_upload(
     allow_insecure_tls: bool,
     content: String,
 ) -> Result<webdav::WebdavInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let tag = format!("webdav_upload {url}");
+    let result = tauri::async_runtime::spawn_blocking(move || {
         webdav::upload(&url, &username, &password, allow_insecure_tls, &content)
     })
     .await
-    .map_err(|error| format!("同步任务异常：{error}"))?
+    .map_err(|error| format!("同步任务异常：{error}"));
+    traced(&tag, result.and_then(std::convert::identity))
 }
 
 /// 拉取远端同步包，返回原文由前端解析。
@@ -2494,11 +2716,13 @@ async fn webdav_download(
     password: String,
     allow_insecure_tls: bool,
 ) -> Result<webdav::WebdavDownload, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let tag = format!("webdav_download {url}");
+    let result = tauri::async_runtime::spawn_blocking(move || {
         webdav::download(&url, &username, &password, allow_insecure_tls)
     })
     .await
-    .map_err(|error| format!("同步任务异常：{error}"))?
+    .map_err(|error| format!("同步任务异常：{error}"));
+    traced(&tag, result.and_then(std::convert::identity))
 }
 
 // ---------------------------------------------------------------- 局域网同步
@@ -2542,12 +2766,13 @@ fn lan_device_name() -> String {
 #[tauri::command]
 async fn lan_sync_start(state: State<'_, AppState>) -> Result<lan_sync::Status, String> {
     let lan = state.lan.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         lan.start()?;
         Ok::<_, String>(lan.status())
     })
     .await
-    .map_err(|error| format!("同步任务异常：{error}"))?
+    .map_err(|error| format!("同步任务异常：{error}"));
+    traced("lan_sync_start", result.and_then(std::convert::identity))
 }
 
 #[tauri::command]
@@ -2580,9 +2805,11 @@ fn lan_sync_inbox(state: State<'_, AppState>) -> Vec<lan_sync::InboxItem> {
 
 #[tauri::command]
 async fn lan_sync_pull(address: String, port: u16) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || lan_sync::pull(&address, port))
+    let tag = format!("lan_sync_pull {address}:{port}");
+    let result = tauri::async_runtime::spawn_blocking(move || lan_sync::pull(&address, port))
         .await
-        .map_err(|error| format!("同步任务异常：{error}"))?
+        .map_err(|error| format!("同步任务异常：{error}"));
+    traced(&tag, result.and_then(std::convert::identity))
 }
 
 #[tauri::command]
@@ -2591,16 +2818,20 @@ async fn lan_sync_push(
     port: u16,
     content: String,
 ) -> Result<lan_sync::PushResult, String> {
-    tauri::async_runtime::spawn_blocking(move || lan_sync::push(&address, port, &content))
+    let tag = format!("lan_sync_push {address}:{port}");
+    let result = tauri::async_runtime::spawn_blocking(move || lan_sync::push(&address, port, &content))
         .await
-        .map_err(|error| format!("同步任务异常：{error}"))?
+        .map_err(|error| format!("同步任务异常：{error}"));
+    traced(&tag, result.and_then(std::convert::identity))
 }
 
 #[tauri::command]
 async fn lan_sync_probe(address: String, port: u16) -> Result<lan_sync::Peer, String> {
-    tauri::async_runtime::spawn_blocking(move || lan_sync::probe(&address, port))
+    let tag = format!("lan_sync_probe {address}:{port}");
+    let result = tauri::async_runtime::spawn_blocking(move || lan_sync::probe(&address, port))
         .await
-        .map_err(|error| format!("同步任务异常：{error}"))?
+        .map_err(|error| format!("同步任务异常：{error}"));
+    traced(&tag, result.and_then(std::convert::identity))
 }
 
 /// 准备 WebView2 数据目录，并经 `WEBVIEW2_USER_DATA_FOLDER` 交给 WebView2。
@@ -2668,13 +2899,13 @@ fn current_process_in_job() -> Option<bool> {
 fn apply_gpu_sandbox_workaround() {
     // 用户显式要求保留沙箱时不动。
     if std::env::var("STARVEIL_FORCE_GPU_SANDBOX").is_ok() {
-        log_line("GPU 沙箱：按环境变量要求保持开启");
+        logging::info("gpu", "沙箱：按环境变量要求保持开启");
         return;
     }
     // 用户显式要求关闭时直接关。
     if std::env::var("STARVEIL_DISABLE_GPU_SANDBOX").is_ok() {
         append_browser_args("--disable-gpu-sandbox");
-        log_line("GPU 沙箱：按环境变量要求关闭");
+        logging::info("gpu", "沙箱：按环境变量要求关闭");
         return;
     }
 
@@ -2682,7 +2913,7 @@ fn apply_gpu_sandbox_workaround() {
     if marker.exists() {
         // 之前已经判定为不可用，直接沿用结论。
         append_browser_args("--disable-gpu-sandbox");
-        log_line("GPU 沙箱：沿用上次的结论（已禁用）");
+        logging::info("gpu", "沙箱：沿用上次的结论（已禁用）");
         return;
     }
 
@@ -2692,13 +2923,13 @@ fn apply_gpu_sandbox_workaround() {
             let _ = std::fs::create_dir_all(starveil_data_dir());
             let _ = std::fs::write(&marker, b"1");
             append_browser_args("--disable-gpu-sandbox");
-            log_line("GPU 沙箱：检测到本进程处于 Job Object 中，GPU 沙箱将无法启动，已关闭");
+            logging::warn("gpu", "沙箱：进程处于 Job Object 中，GPU 沙箱无法启动，已关闭");
         }
         Some(false) => {
-            log_line("GPU 沙箱：未处于 Job Object 中，保持开启");
+            logging::info("gpu", "沙箱：未处于 Job Object 中，保持开启");
         }
         None => {
-            log_line("GPU 沙箱：无法判定 Job 状态，先按正常启动");
+            logging::warn("gpu", "沙箱：无法判定 Job 状态，先按正常启动");
         }
     }
 }
@@ -2739,7 +2970,7 @@ fn read_gpu_mode() -> String {
 fn apply_gpu_mode() {
     // 参数导致无法启动时的逃生门。
     if std::env::var("STARVEIL_DEFAULT_GPU").is_ok() {
-        log_line("GPU：按环境变量要求使用系统默认选择");
+        logging::info("gpu", "按环境变量要求使用系统默认选择");
         return;
     }
     let mode = read_gpu_mode();
@@ -2749,7 +2980,7 @@ fn apply_gpu_mode() {
         "high" => append_browser_args("--force_high_performance_gpu"),
         _ => return,
     }
-    log_line(&format!("GPU：按设置使用 {mode}"));
+    logging::info("gpu", format!("按设置使用 {mode}"));
 }
 
 /// GPU 选择只对 Windows 的 WebView2 有效。
@@ -2785,7 +3016,7 @@ fn set_gpu_mode(mode: String) -> Result<String, String> {
         if legacy_gpu_marker().exists() {
             let _ = std::fs::remove_file(legacy_gpu_marker());
         }
-        log_line(&format!("GPU：切换为 {mode}，重启生效"));
+        logging::info("gpu", format!("切换为 {mode}，重启生效"));
         Ok(mode)
     }
     #[cfg(not(windows))]
@@ -2815,7 +3046,19 @@ fn append_browser_args(extra: &str) {
 /// 桌面与移动端共用的唯一入口。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    log_line("==== 启动 ====");
+    // 日志目录在 Tauri 起来之前就定下来：首行（含 panic）才有地方落。
+    logging::init(log_dir());
+    logging::install_panic_hook();
+    // 协议层的日志也接到同一个文件里，别让它们只留在 stderr。
+    live_core::set_log_sink(|message| logging::warn("live_core", message));
+    logging::info(
+        "app",
+        format!(
+            "==== 启动 ==== 版本 {} {}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS
+        ),
+    );
     // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
     prepare_webview_data();
     // GPU 沙箱探测须在建窗之前完成，否则首启黑屏一次。
@@ -2842,30 +3085,21 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            // 日志目录在这里定下来：安卓是私有目录（分享出去），Windows 是老路径。
-            let log_dir = if cfg!(windows) {
-                std::env::var("LOCALAPPDATA")
-                    .ok()
-                    .map(|local| Path::new(&local).join("Starveil"))
-            } else {
-                app.path().app_data_dir().ok().map(|dir| dir.join("logs"))
-            };
-            if let Some(dir) = log_dir {
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = LOG_DIR.set(dir);
-            }
             // 启动后记录一次 webview 的真实状态，便于排查窗口空白之类的问题。
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(3));
                 match handle.get_webview_window("main") {
                     Some(window) => {
-                        log_line(&format!(
-                            "窗口可见={:?} 地址={:?}",
-                            window.is_visible(),
-                            window.url()
-                        ));
+                        logging::info(
+                            "app",
+                            format!(
+                                "窗口可见={:?} 地址={:?}",
+                                window.is_visible(),
+                                window.url()
+                            ),
+                        );
                     }
-                    None => log_line("找不到 main 窗口"),
+                    None => logging::warn("app", "找不到 main 窗口"),
                 }
             });
             Ok(())
@@ -2907,6 +3141,12 @@ pub fn run() {
             bili_qr_poll,
             frontend_log,
             open_log_dir,
+            read_log,
+            clear_log,
+            log_path,
+            log_level,
+            set_log_level,
+            share_log_text,
             webdav_test,
             webdav_upload,
             webdav_download,

@@ -29,3 +29,20 @@ pub use model::{
     QualityData, QuerySign,
 };
 pub use site::{LiveCore, LiveSite};
+
+/// 日志出口：主程序启动时注册，把这里的运行信息接到它自己的日志文件里。
+/// 没注册时退回标准错误，方便单独跑本 crate 的测试。
+static LOG_SINK: std::sync::OnceLock<Box<dyn Fn(&str) + Send + Sync>> = std::sync::OnceLock::new();
+
+/// 注册日志出口，重复调用只有第一次生效。
+pub fn set_log_sink(sink: impl Fn(&str) + Send + Sync + 'static) {
+    let _ = LOG_SINK.set(Box::new(sink));
+}
+
+/// 记录一条运行信息（协议层的异常路径、重连等），不承载业务数据。
+pub(crate) fn log(message: impl AsRef<str>) {
+    match LOG_SINK.get() {
+        Some(sink) => sink(message.as_ref()),
+        None => eprintln!("[live_core] {}", message.as_ref()),
+    }
+}

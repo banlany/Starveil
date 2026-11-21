@@ -142,21 +142,20 @@ class MainActivity : TauriActivity() {
         }
 
         /**
-         * 分享运行日志（对应设置里「分享日志文件」）。
+         * 分享运行日志（对应设置里「分享日志」）。
          *
          * 安卓没有「打开应用私有目录」的通用方式（Android 11 之后连 Android/data 都不让翻），
          * 所以这里落地成系统分享面板：文件通过 FileProvider 授权给接收方，
          * 用户可以直接发到微信 / 邮件，或存到本机文件。
          *
-         * path 必须落在 `res/xml/file_paths.xml` 声明的目录里（files/ 与 cache/），
-         * 否则 getUriForFile 会抛 IllegalArgumentException，这里一律吞掉返回 false，
-         * 由 Rust 侧转成一句「分享日志失败」。
+         * 日志落在 `filesDir/logs`（见 Rust 侧 `log_dir`），在 `file_paths.xml` 的
+         * `files-path` 内；失败时返回原因而不是布尔值，前端才能告诉用户卡在哪。
          */
         @JvmStatic
-        fun shareLog(path: String): Boolean {
-            val activity = instance ?: return false
+        fun shareLog(path: String): String {
+            val activity = instance ?: return "应用还没准备好"
             val file = java.io.File(path)
-            if (!file.exists()) return false
+            if (!file.exists()) return "日志文件不存在：$path"
             return try {
                 val uri = androidx.core.content.FileProvider.getUriForFile(
                     activity,
@@ -171,9 +170,32 @@ class MainActivity : TauriActivity() {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 activity.startActivity(Intent.createChooser(intent, "分享日志"))
-                true
+                ""
             } catch (error: Exception) {
-                false
+                // 多半是 FileProvider 路径没覆盖到，或没有能接收的应用。
+                "${error.javaClass.simpleName}: ${error.message ?: "未知原因"}"
+            }
+        }
+
+        /**
+         * 分享一段文本（日志面板的「分享」）。
+         *
+         * 文本比文件更容易被聊天工具接住，用户不必先存下来再发。
+         */
+        @JvmStatic
+        fun shareText(text: String): String {
+            val activity = instance ?: return "应用还没准备好"
+            if (text.isBlank()) return "没有可分享的内容"
+            return try {
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    putExtra(Intent.EXTRA_SUBJECT, "Starveil 日志")
+                }
+                activity.startActivity(Intent.createChooser(intent, "分享日志"))
+                ""
+            } catch (error: Exception) {
+                "${error.javaClass.simpleName}: ${error.message ?: "未知原因"}"
             }
         }
 

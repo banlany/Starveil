@@ -282,6 +282,34 @@ export const api = {
   openLogDir() {
     return call('open_log_dir');
   },
+  /// 前端异常转发；浏览器演示模式下没有后端，静默丢弃。
+  frontendLog(level, module, message) {
+    return call('frontend_log', { level, module, message }).catch(() => {});
+  },
+  /// 读最近若干行日志（纯文本）。
+  async readLog(lines = 300) {
+    const text = await call('read_log', { lines });
+    return typeof text === 'string' ? text : '';
+  },
+  clearLog() {
+    return call('clear_log');
+  },
+  async logPath() {
+    const path = await call('log_path');
+    return typeof path === 'string' ? path : '';
+  },
+  async logLevel() {
+    const level = await call('log_level');
+    return typeof level === 'string' ? level : 'info';
+  },
+  async setLogLevel(level) {
+    const next = await call('set_log_level', { level });
+    return typeof next === 'string' ? next : level;
+  },
+  /// 安卓分享一段文本；桌面端由调用方改成复制到剪贴板。
+  shareLogText(text) {
+    return call('share_log_text', { text });
+  },
   resolveInput(current, input) {
     return call('resolve_input', { current, input });
   },

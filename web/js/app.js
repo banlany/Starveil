@@ -24,6 +24,7 @@ import { renderSearch } from './pages/search.js';
 import { renderSettings, renderSettingsDetail, useWideSettings } from './pages/settings.js';
 import { renderRoom } from './pages/room.js';
 import { importData } from './importer.js';
+import { installLogForwarding } from './log.js';
 import { initTitlebar } from './titlebar.js';
 import { bindHorizontalSwipe } from './swipe.js';
 import { initTooltips } from './tooltip.js';
@@ -803,6 +804,8 @@ async function autoPullSync() {
 }
 
 function init() {
+  // 先装异常转发：后面初始化出的错也要能落到日志文件里。
+  installLogForwarding();
   // 平台标记须在任何渲染之前写入。
   applyPlatformFlags();
   // 禁用 WebView 默认右键菜单，避免露出浏览器菜单/刷新等开发项。
@@ -824,9 +827,7 @@ function init() {
       .catch(() => {});
   }
   // 写一行运行日志，便于确认页面真的执行了（出问题时看 starveil.log）。
-  window.__TAURI__?.core
-    ?.invoke('frontend_log', { message: '页面已初始化，rail=' + document.querySelectorAll('.rail-btn').length })
-    ?.catch(() => {});
+  api.frontendLog('info', 'web', `页面已初始化，rail=${document.querySelectorAll('.rail-btn').length}`);
   document.body.dataset.cardSize = state.settings.home?.cardSize || 'medium';
   state.platform = state.settings.home?.platform && isPlatformEnabled(state.settings.home.platform) ? state.settings.home.platform : 'bilibili';
   initRail();

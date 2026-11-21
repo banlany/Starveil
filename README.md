@@ -155,8 +155,11 @@ Starveil/
 - **窗口全黑**：部分环境下 WebView2 的 GPU 进程起不来。程序建窗前会检测进程是否处于 Job 中，
   是则自动关闭 GPU 沙箱并记住结论（`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`）。
   需要手动控制时用 `STARVEIL_FORCE_GPU_SANDBOX=1` 或 `STARVEIL_DISABLE_GPU_SANDBOX=1`。
-- **运行日志**：Windows 在 `%LOCALAPPDATA%\Starveil\starveil.log`，Android 在应用私有目录的
-  `logs/starveil.log`。设置 → 其他 → 维护里可直接打开。反馈问题时请附上。
+- **运行日志**：Windows 在 `%LOCALAPPDATA%\Starveil\starveil.log`，Android 在
+  `/data/data/com.banlany.starveil/files/logs/starveil.log`。设置 → 关于 → 运行日志里可以直接查看、
+  复制、分享或清空，也能临时切到「调试」级别；单文件超过 512KB 轮转为 `starveil.log.1`，
+  只保留上一份。记录内容含请求失败、播放器错误、弹幕断连、panic 与前端未捕获异常，
+  不含 Cookie。反馈问题时请附上。日志级别也可在启动前用 `STARVEIL_LOG=debug|info|warn|error` 指定。
 - **Chromium 自身日志**：设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging --v=1 --log-file=<路径>`。
 
 ## 许可与致谢

@@ -261,7 +261,7 @@ pub(crate) fn set_read_timeout(
         tungstenite::stream::MaybeTlsStream::Plain(stream) => {
             let _ = stream.set_read_timeout(TIMEOUT);
         }
-        _ => eprintln!("[danmaku] 未预期的 TLS 后端，读超时没有设置"),
+        _ => crate::log("danmaku: 未预期的 TLS 后端，读超时没有设置"),
     }
 }
 

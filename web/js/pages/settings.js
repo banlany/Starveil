@@ -1960,16 +1960,9 @@ function paintAbout(content, ctx) {
   logs.className = 'settings-action-card';
   logs.innerHTML = `
     <div class="action-icon">${icon('info', 20)}</div>
-    <div class="action-text"><h4>${IS_MOBILE ? '分享日志文件' : '运行日志'}</h4><p>${IS_MOBILE ? '通过系统分享发出去，便于反馈播放问题' : '打开运行日志所在的文件夹'}</p></div>
-    <button class="btn small">${IS_MOBILE ? '分享' : '打开'}</button>`;
-  logs.querySelector('button').addEventListener('click', async () => {
-    try {
-      const path = await api.openLogDir();
-      if (!IS_MOBILE) toast(`已打开：${path}`, 'success');
-    } catch (error) {
-      toast(String(error), 'error');
-    }
-  });
+    <div class="action-text"><h4>运行日志</h4><p>查看最近的记录；出问题时复制或分享出来</p></div>
+    <button class="btn small">查看</button>`;
+  logs.querySelector('button').addEventListener('click', () => openLogPanel());
   content.appendChild(logs);
 
   const reset = document.createElement('div');
@@ -1989,6 +1982,109 @@ function paintAbout(content, ctx) {
     ctx.go('settings');
   });
   content.appendChild(reset);
+}
+
+/// 运行日志面板：查看最近 300 行、切级别、复制 / 分享 / 打开目录、清空。
+function openLogPanel() {
+  const body = document.createElement('div');
+  body.className = 'log-panel';
+  body.innerHTML = `
+    <div class="log-bar">
+      <span class="log-path"></span>
+      <div class="log-actions">
+        <select class="log-level" aria-label="日志级别">
+          <option value="debug">调试</option>
+          <option value="info">信息</option>
+          <option value="warn">警告</option>
+          <option value="error">错误</option>
+        </select>
+        <button class="btn small ghost log-copy">复制</button>
+        <button class="btn small ghost log-export">${IS_MOBILE ? '分享' : '打开目录'}</button>
+        <button class="btn small ghost danger log-clear">清空</button>
+      </div>
+    </div>
+    <pre class="log-view"></pre>`;
+
+  const pathLabel = body.querySelector('.log-path');
+  const level = body.querySelector('.log-level');
+  const view = body.querySelector('.log-view');
+  let text = '';
+
+  const paint = (value) => {
+    text = value || '';
+    view.textContent = text || '还没有日志。';
+    view.scrollTop = view.scrollHeight;
+  };
+  const reload = () => {
+    api.readLog(300).then(paint).catch((error) => paint(String(error)));
+  };
+
+  api.logPath()
+    .then((path) => {
+      pathLabel.textContent = path || '当前平台没有日志文件';
+      pathLabel.title = path || '';
+    })
+    .catch(() => {});
+  api.logLevel()
+    .then((value) => { level.value = value; })
+    .catch(() => {});
+  reload();
+
+  level.addEventListener('change', async () => {
+    try {
+      toast(`日志级别：${await api.setLogLevel(level.value)}`, 'success');
+      reload();
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+  });
+
+  body.querySelector('.log-copy').addEventListener('click', async () => {
+    try {
+      await api.copyText(text);
+      toast('日志已复制', 'success');
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+  });
+
+  body.querySelector('.log-export').addEventListener('click', async () => {
+    try {
+      if (IS_MOBILE) {
+        await api.shareLogText(text);
+      } else {
+        toast(`已打开：${await api.openLogDir()}`, 'success');
+      }
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+  });
+
+  body.querySelector('.log-clear').addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: '清空日志',
+      text: '当前日志与上一份轮转文件都会删除，确定吗？',
+      okLabel: '清空',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.clearLog();
+      reload();
+      toast('日志已清空', 'success');
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+  });
+
+  openModal({
+    title: '运行日志',
+    subtitle: '最近 300 行；单文件超过 512KB 轮转为 .1，只留上一份',
+    width: IS_MOBILE ? 420 : 780,
+    className: 'log-modal',
+    body,
+    actions: [{ label: '关闭', kind: 'primary' }],
+  });
 }
 
 // 许可与致谢：内容与仓库根目录的 THANKS.md 保持一致，改一处要同步改另一处。
