@@ -2,7 +2,7 @@
 import { api, canonicalImage, roomUrl } from './api.js';
 import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
-import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAccents, skinBase, skinHref, skinModes } from '../skins/registry.js';
+import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAllowsAccent, skinAllowsFont, skinBase, skinHref, skinModes } from '../skins/registry.js';
 import { resolvedOverrides, sanitizeOverrides } from '../skins/overrides.js';
 import { defaultMotion, sanitizeMotion } from './motion.js';
 import { loadSkinPacks, packCss } from '../skins/pack.js';
@@ -74,7 +74,7 @@ export const DEFAULT_SETTINGS = {
     motion: defaultMotion(),
     // 用户覆盖的皮肤变量，键为变量名，只存改过的项。
     overrides: {},
-    // 界面字体家族名；空串表示用皮肤自带的字体栈。仅默认皮肤提供这项。
+    // 界面字体家族名；空串表示用皮肤自带的字体栈。皮肤锁定字体时不生效。
     font: '',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
     orientation: 'auto',
@@ -350,9 +350,9 @@ export function currentSkin() {
   return getSkin(state.settings.appearance?.skin);
 }
 
-/// 皮肤实际使用的主题色原值：只有该皮肤提供多个可选色时才认用户自选。
+/// 皮肤实际使用的主题色原值：皮肤锁定主题色时忽略用户自选。
 function resolveAccentValue(skin, appearance) {
-  return appearance.accentSource === 'user' && appearance.accent && skinAccents(skin.id).length > 1
+  return appearance.accentSource === 'user' && appearance.accent && skinAllowsAccent(skin.id)
     ? appearance.accent
     : skinAccent(skin.id);
 }
@@ -468,8 +468,8 @@ export function applyTheme() {
   const overrides = resolvedOverrides(appearance);
   applyOverrideVars(overrides);
 
-  // 界面字体只给声明了 allowUserFont 的皮肤用，切到别的皮肤时清掉覆盖。
-  const userFont = skin.allowUserFont ? String(appearance.font || '').trim() : '';
+  // 皮肤锁定字体时清掉覆盖，切回开放的皮肤再恢复原值。
+  const userFont = skinAllowsFont(skin.id) ? String(appearance.font || '').trim() : '';
   if (userFont) root.style.setProperty('--font-user', `"${userFont}", var(--font)`);
   else root.style.removeProperty('--font-user');
 

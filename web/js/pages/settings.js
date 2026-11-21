@@ -26,7 +26,7 @@ import {
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
-import { SKINS, accentForMode, skinAccents, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
+import { SKINS, accentForMode, skinAccents, skinAllowsAccent, skinAllowsFont, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
 import { OVERRIDE_GROUPS, formatOverride } from '../../skins/overrides.js';
 import { addEnterClass } from '../motion.js';
 import { installSkinPack, removeSkinPack, templatePack } from '../../skins/pack.js';
@@ -201,13 +201,6 @@ function renderSettingsWide(ctx, initialKey) {
   page.className = 'settings-page is-pane';
   page.innerHTML = `
     <aside class="settings-side">
-      <button class="side-brand" id="side-brand">
-        <img src="assets/logo.png" alt="" />
-        <span class="side-brand-text">
-          <b>Starveil</b>
-          <small>设置</small>
-        </span>
-      </button>
       <nav class="side-nav" id="side-nav"></nav>
     </aside>
     <div class="settings-pane" id="settings-pane">
@@ -252,7 +245,6 @@ function renderSettingsWide(ctx, initialKey) {
   }
 
   wideSelect = select;
-  page.querySelector('#side-brand').addEventListener('click', () => select('about'));
   document.getElementById('view').appendChild(page);
   select(startKey);
 
@@ -701,8 +693,11 @@ function currentRendererName() {
 function detailSections(key, ctx, repaint) {
   switch (key) {
     case 'appearance': {
-      const modes = skinModes(currentSkin().id);
+      const skinId = currentSkin().id;
+      const modes = skinModes(skinId);
       const locked = modes.length === 1;
+      const accentLocked = !skinAllowsAccent(skinId);
+      const fontLocked = !skinAllowsFont(skinId);
       const LOCKED_HINT = '当前皮肤只提供一套配色，明暗随皮肤固定；换一套支持双主题的皮肤即可切换';
       return [
         {
@@ -785,21 +780,24 @@ function detailSections(key, ctx, repaint) {
             },
           ],
         },
-        // 只有一套配色的皮肤不提供主题色选择。
-        ...(skinAccents(currentSkin().id).length > 1
-          ? [{ label: '主题颜色', rows: [{ type: 'colors' }] }]
-          : []),
-        // 界面字体只给声明了 allowUserFont 的皮肤。
-        ...(!IS_MOBILE && currentSkin().allowUserFont
+        {
+          label: '主题颜色',
+          rows: accentLocked
+            ? [{ type: 'info', title: '主题色', desc: '这套皮肤固定主题色，不提供色板与自定义色', value: skinAccents(skinId)[0].name }]
+            : [{ type: 'colors' }],
+        },
+        ...(!IS_MOBILE
           ? [{
             label: '界面字体',
-            rows: [{
-              type: 'font',
-              key: 'appearance.font',
-              title: '字体',
-              desc: '作用于整个界面与标题；字体里没有的字回落到皮肤自带字体',
-              followLabel: '跟随皮肤',
-            }],
+            rows: fontLocked
+              ? [{ type: 'info', title: '字体', desc: '这套皮肤固定字体，不提供界面字体选择', value: '跟随皮肤' }]
+              : [{
+                type: 'font',
+                key: 'appearance.font',
+                title: '字体',
+                desc: '作用于整个界面与标题；字体里没有的字回落到皮肤自带字体',
+                followLabel: '跟随皮肤',
+              }],
           }]
           : []),
         { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' } }] },

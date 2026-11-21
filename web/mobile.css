@@ -346,10 +346,6 @@ html.is-mobile .setting-row.clickable:active {
     padding: 8px 6px 12px;
   }
 
-  html.is-mobile .side-brand {
-    padding: 4px 6px 10px;
-  }
-
   html.is-mobile .side-item {
     min-height: 34px;
     font-size: 12.5px;

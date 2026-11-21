@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OVERRIDE_KEYS } from '../web/skins/overrides.js';
 import { MOTION_MODES, sanitizeMotion } from '../web/js/motion.js';
-import { BUILTIN_SKINS, TITLEBAR_MODES } from '../web/skins/registry.js';
+import { BUILTIN_SKINS, TITLEBAR_MODES, skinAllowsAccent, skinAllowsFont } from '../web/skins/registry.js';
 import { PACK_FORMAT, PACK_VERSION, packCss, sanitizeSkinPack } from '../web/skins/pack.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -197,6 +197,8 @@ const entries = BUILTIN_SKINS.map((skin) => ({
   titlebar: skin.titlebar || 'windows',
   // accents 数组是「皮肤提供的主题色」，第一个即默认色。
   accent: skin.accents?.[0]?.color || '',
+  allowAccent: skin.allowAccent,
+  allowUserFont: skin.allowUserFont,
 }));
 
 if (!entries.length) problems.push('web/skins/registry.js: BUILTIN_SKINS 里没有皮肤');
@@ -206,6 +208,17 @@ for (const entry of entries) {
   }
   if (!TITLEBAR_MODES.includes(entry.titlebar)) {
     problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 的 titlebar 不在 TITLEBAR_MODES 里`);
+  }
+  for (const key of ['allowAccent', 'allowUserFont']) {
+    if (entry[key] !== undefined && typeof entry[key] !== 'boolean') {
+      problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 的 ${key} 只能是布尔值或省略`);
+    }
+  }
+  if (skinAllowsAccent(entry.id) !== (entry.allowAccent !== false)) {
+    problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 的 allowAccent 与 skinAllowsAccent() 不一致`);
+  }
+  if (skinAllowsFont(entry.id) !== (entry.allowUserFont !== false)) {
+    problems.push(`web/skins/registry.js: 皮肤 "${entry.id}" 的 allowUserFont 与 skinAllowsFont() 不一致`);
   }
 }
 
@@ -415,6 +428,13 @@ if (!valid.ok) {
   if (!css.includes('--accent: #6f9dff')) {
     problems.push('web/skins/pack.js: packCss 没有补上首帧 --accent');
   }
+  if (valid.pack.allowAccent !== true || valid.pack.allowUserFont !== true) {
+    problems.push('web/skins/pack.js: 皮肤包缺省应开放主题色与界面字体');
+  }
+}
+const lockedPack = sanitizeSkinPack({ ...samplePack, allowAccent: false, allowUserFont: false });
+if (!lockedPack.ok || lockedPack.pack.allowAccent !== false || lockedPack.pack.allowUserFont !== false) {
+  problems.push('web/skins/pack.js: 皮肤包显式锁定主题色与字体没有生效');
 }
 
 for (const [label, raw] of [

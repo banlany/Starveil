@@ -110,7 +110,8 @@ export function sanitizeSkinPack(raw) {
     accents: cleanAccents(raw.accents),
     modes: cleanModes(raw.modes),
     titlebar: TITLEBAR_MODES.includes(raw.titlebar) ? raw.titlebar : 'windows',
-    allowUserFont: raw.allowUserFont === true,
+    allowAccent: raw.allowAccent !== false,
+    allowUserFont: raw.allowUserFont !== false,
     vars: { dark: cleanVars(raw.vars?.dark), light: cleanVars(raw.vars?.light) },
     icons: cleanIcons(raw.icons),
   };
@@ -186,7 +187,8 @@ export function templatePack(skin) {
     accents: skinAccents(skin.id).map((accent) => ({ ...accent })),
     modes: [...(skin.modes || ['dark'])],
     titlebar: TITLEBAR_MODES.includes(skin.titlebar) ? skin.titlebar : 'windows',
-    allowUserFont: skin.allowUserFont === true,
+    allowAccent: skin.allowAccent !== false,
+    allowUserFont: skin.allowUserFont !== false,
     vars: { dark: {}, light: {} },
     icons: {},
   };

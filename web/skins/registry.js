@@ -2,14 +2,16 @@
 // skin.css 只声明 CSS 变量（见 docs/skins.md）。
 //
 // 字段：
-//   id       目录名，写入 `<html data-skin>`，仅小写字母/数字/短横线
-//   name     设置页显示名
-//   desc     设置页说明
-//   accents  主题色清单，第一项为默认色；可选 `light` 指定浅色档下的替代色值
-//   modes    支持的明暗档位，只有一项时表示锁定该档
-//   icons    为 true 时加载 `skins/<id>/icons.js` 的 ICON_PATHS；皮肤包用图标表对象
-//   titlebar 'traffic' 表示 macOS 红绿灯，缺省为 Windows 右侧三键
-//   base     皮肤包专用的内置皮肤 id，变量基底来自它的 skin.css
+//   id             目录名，写入 `<html data-skin>`，仅小写字母/数字/短横线
+//   name           设置页显示名
+//   desc           设置页说明
+//   accents        主题色清单，第一项为默认色；可选 `light` 指定浅色档下的替代色值
+//   modes          支持的明暗档位，只有一项时表示锁定该档
+//   icons          为 true 时加载 `skins/<id>/icons.js` 的 ICON_PATHS；皮肤包用图标表对象
+//   titlebar       'traffic' 表示 macOS 红绿灯，缺省为 Windows 右侧三键
+//   allowAccent    缺省开放主题色；false 锁定为 accents 第一项
+//   allowUserFont  缺省开放界面字体；false 锁定为皮肤自带字体栈
+//   base           皮肤包专用的内置皮肤 id，变量基底来自它的 skin.css
 
 export const BUILTIN_SKINS = [
   {
@@ -28,13 +30,10 @@ export const BUILTIN_SKINS = [
     ],
     desc: '中性深灰打底，七种主题色可选。深色/浅色都支持，适合长时间挂着看。',
     modes: ['dark', 'light'],
-    // 字体栈是可替换的，允许「设置 → 外观 → 界面字体」覆盖。
-    allowUserFont: true,
   },
   {
     id: 'apple',
     name: '苹果',
-    // 这套皮肤只提供系统蓝，不提供主题色选择。
     accents: [{ id: 'blue', name: '系统蓝', color: '#0071e3' }],
     desc: '浅灰画布、白卡片、一支系统蓝。全圆角按钮与慢一档的动效，只提供浅色。',
     // 只有一套配色，明暗档锁定浅色。
@@ -42,6 +41,23 @@ export const BUILTIN_SKINS = [
     // 左侧 macOS 红绿灯，颜色由 skin.css 的 --traffic-* 决定。
     titlebar: 'traffic',
     // 自带 `skins/apple/icons.js` 图标表。
+    icons: true,
+    // 系统蓝与系统字体是这套皮肤的一部分，主题色与界面字体都固定。
+    allowAccent: false,
+    allowUserFont: false,
+  },
+  {
+    id: 'cinema',
+    name: 'OLED 影院',
+    accents: [
+      { id: 'xenon', name: '氙灯', color: '#7cc4ff' },
+      { id: 'tungsten', name: '钨丝', color: '#e8a13b' },
+      { id: 'neon', name: '荧光青', color: '#4fd1b5' },
+      { id: 'velvet', name: '幕布红', color: '#e0524f' },
+      { id: 'ivory', name: '象牙白', color: '#eae6dc' },
+    ],
+    desc: '纯黑画布、硬边细线；画面上的控件退成浮字，高亮跟随主题色。只提供深色。',
+    modes: ['dark'],
     icons: true,
   },
 ];
@@ -104,6 +120,16 @@ export function skinHref(id) {
 export function skinModes(id) {
   const modes = getSkin(id).modes || ['dark'];
   return modes.length ? modes : ['dark'];
+}
+
+/// 主题色是否可由用户更改；缺省开放，只有显式写 false 才锁定。
+export function skinAllowsAccent(id) {
+  return getSkin(id).allowAccent !== false;
+}
+
+/// 界面字体是否可由用户更改；缺省开放，只有显式写 false 才锁定。
+export function skinAllowsFont(id) {
+  return getSkin(id).allowUserFont !== false;
 }
 
 /// 主题色清单，至少一项；兼容旧的 `accent` 单值写法。

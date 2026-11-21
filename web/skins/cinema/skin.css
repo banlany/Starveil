@@ -1,0 +1,296 @@
+/* ============================================================
+   Starveil · 皮肤「OLED 影院」
+   本文件只允许出现 CSS 变量声明，不含组件选择器。
+   只提供深色，两个作用域写在一起。新增皮肤见 docs/skins.md。
+   ============================================================ */
+
+html[data-skin="cinema"],
+html[data-skin="cinema"][data-theme="light"] {
+  /* -------------------------------------------------- 主题色
+     首帧兜底，须与 registry.js 里 accents 的第一项一致。 */
+  --accent: #7cc4ff;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-on: #0a0a0c;
+  --accent-strong: color-mix(in srgb, var(--accent) 82%, #000);
+  --accent-glow: color-mix(in srgb, var(--accent) 28%, transparent);
+
+  /* -------------------------------------------------- 基础面 */
+  --bg: #000000;
+  --bg-elev: #050507;
+  --surface: #0a0a0d;
+  --surface-2: #121216;
+  --surface-3: #1b1b20;
+  --surface-overlay: #0d0d11;
+  --surface-menu: #101015;
+  --line: rgba(255, 255, 255, 0.065);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --wash-1: rgba(255, 255, 255, 0.03);
+  --wash-2: rgba(255, 255, 255, 0.06);
+  --wash-3: rgba(255, 255, 255, 0.1);
+  --wash-4: rgba(255, 255, 255, 0.16);
+
+  /* -------------------------------------------------- 文字 */
+  --fg: #f2eee6;
+  --fg-muted: #b9b5ad;
+  --fg-subtle: #8d8a84;
+  --muted: #a09c95;
+  --dim: #6f6c67;
+
+  /* -------------------------------------------------- 状态 */
+  --success: #5cdb93;
+  --success-soft: rgba(92, 219, 147, 0.14);
+  --warning: #e8a13b;
+  --warning-soft: rgba(232, 161, 59, 0.14);
+  --danger: #ff6b61;
+  --danger-soft: rgba(255, 107, 97, 0.14);
+  --danger-line: rgba(255, 107, 97, 0.32);
+  --info: #7cc4ff;
+
+  /* -------------------------------------------------- 按钮 */
+  --btn-h: 32px;
+  --btn-pad-x: 16px;
+  --btn-radius: var(--radius-2xs);
+  --btn-font: 13px;
+  --btn-weight: 500;
+  --btn-on-weight: 600;
+  --btn-small-h: 28px;
+  --btn-small-pad-x: 12px;
+  --btn-small-radius: var(--radius-2xs);
+  --btn-small-font: 12.5px;
+
+  /* -------------------------------------------------- 筛选切换 */
+  --chip-h: 28px;
+  --chip-pad-x: 13px;
+  --chip-radius: var(--radius-2xs);
+  --chip-font: 12.5px;
+  --chip-bg: transparent;
+  --chip-fg: var(--muted);
+  --chip-line: 1px solid var(--line-strong);
+  --chip-shadow: none;
+  --chip-hover-bg: var(--surface-2);
+  --chip-hover-fg: var(--fg);
+  --chip-on-bg: var(--accent-soft);
+  --chip-on-fg: var(--accent);
+  --chip-on-line: 1px solid var(--accent);
+  --chip-solid-bg: var(--surface-2);
+
+  /* -------------------------------------------------- 平台标签 */
+  --tab-pad-x: 16px;
+  --tab-font: 14px;
+  --tab-gap: 10px;
+  --tab-underline-h: 2px;
+  --tab-underline-bg: var(--accent);
+  --tab-underline-radius: 0;
+  --platform-logo-radius: 2px;
+
+  /* -------------------------------------------------- SC（醒目留言） */
+  --sc-radius: var(--radius-2xs);
+  --sc-msg-radius: 0;
+  --sc-msg-pad-y: 8px;
+  --sc-msg-pad-x: 10px;
+  --sc-border-w: 1px;
+  --sc-shade: rgba(0, 0, 0, 0.55);
+  --sc-chat-fg: var(--on-sc-strong);
+
+  /* -------------------------------------------------- 开关 */
+  --switch-w: 40px;
+  --switch-h: 22px;
+  --switch-pad: 3px;
+  --switch-knob-size: 16px;
+  --switch-travel: calc(var(--switch-w) - var(--switch-knob-size) - var(--switch-pad) * 2);
+  --switch-radius: var(--radius-2xs);
+  --switch-knob-radius: var(--radius-2xs);
+  --switch-off: #22222a;
+  --switch-on: var(--accent);
+  --switch-knob: #f2eee6;
+  --switch-knob-off: #8d8a84;
+  --switch-knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --switch-dur: var(--dur-fast);
+  --switch-ease: var(--ease);
+
+  /* -------------------------------------------------- 单选 */
+  --radio-size: 18px;
+  --radio-ring: 1.5px;
+  --radio-radius: 2px;
+  --radio-dot: 8px;
+  --radio-dot-radius: 1px;
+  --radio-line: var(--line-strong);
+  --radio-line-on: var(--accent);
+  --radio-dot-fill: var(--accent);
+
+  /* -------------------------------------------------- 色板 / 色点 */
+  --swatch-size: 32px;
+  --swatch-radius: var(--radius-2xs);
+  --swatch-ring: inset 0 0 0 1px var(--line-strong);
+  --swatch-check-w: 11px;
+  --swatch-check-h: 6px;
+  --swatch-check-stroke: 2px;
+  --swatch-check-on: var(--accent-on);
+  --skin-dot-size: 14px;
+  --skin-dot-radius: 2px;
+  --skin-dot-ring: inset 0 0 0 1px var(--line-strong);
+
+  /* -------------------------------------------------- 提示条 */
+  --toast-bg: rgba(10, 10, 13, 0.96);
+  --toast-fg: #f2eee6;
+  --toast-border: rgba(255, 255, 255, 0.1);
+
+  /* -------------------------------------------------- 悬停气泡 */
+  --tip-bg: rgba(10, 10, 13, 0.97);
+  --tip-fg: #f2eee6;
+  --tip-border: rgba(255, 255, 255, 0.09);
+  --tip-shadow: 0 8px 22px rgba(0, 0, 0, 0.7);
+  --tip-radius: var(--radius-2xs);
+  --tip-pad-x: 9px;
+  --tip-pad-y: 5px;
+  --tip-font: 12px;
+  --tip-max-w: 260px;
+
+  /* -------------------------------------------------- 阴影 / 遮罩 */
+  --shadow-scale: 0.6;
+  --shadow-rgb: 0, 0, 0;
+  --shadow-a1: 0.4;
+  --shadow-a2: 0.55;
+  --shadow-a3: 0.65;
+  --shadow-a-line: 0.9;
+  --scrim: rgba(0, 0, 0, 0.78);
+  --blur-overlay: blur(3px);
+  --panel-blur: blur(8px);
+
+  /* -------------------------------------------------- 媒体层
+     画面上的控件退成暖白浮字：胶囊底压到极淡，关掉模糊与长渐隐。
+     画面高亮跟随主题色。 */
+  --media-bg: #000000;
+  --media-fg: #f5f1e8;
+  --media-fg-muted: rgba(245, 241, 232, 0.8);
+  --media-fg-dim: rgba(245, 241, 232, 0.58);
+  --media-fg-faint: rgba(245, 241, 232, 0.38);
+  --media-chip: rgba(12, 9, 6, 0.28);
+  --media-chip-soft: rgba(245, 241, 232, 0.07);
+  --media-chip-hover: rgba(12, 9, 6, 0.55);
+  --media-chip-active: rgba(12, 9, 6, 0.66);
+  --media-surface: rgba(10, 8, 6, 0.88);
+  --media-surface-strong: rgba(6, 5, 4, 0.7);
+  --media-line: rgba(245, 241, 232, 0.14);
+  --media-line-strong: rgba(245, 241, 232, 0.26);
+  --media-shadow: 0 10px 28px rgba(0, 0, 0, 0.7);
+  --media-halo: rgba(0, 0, 0, 0.3);
+  --media-text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+  --media-track: rgba(245, 241, 232, 0.24);
+  --media-blur: none;
+  --media-topbar-bg: transparent;
+  --media-bar-line: transparent;
+  --media-accent: var(--accent);
+  --media-on-accent: var(--accent-on);
+  --media-surface-hover: color-mix(in srgb, var(--media-bg) 82%, transparent);
+  --stage-backdrop: blur(18px) brightness(0.2) saturate(0.9);
+  --media-fade-bottom: linear-gradient(0deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.32) 48%, transparent);
+  --media-fade-top: linear-gradient(180deg, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.3) 42%, transparent 100%);
+  --media-fade-side: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.5));
+
+  /* -------------------------------------------------- 直播间表面 */
+  --room-bg: #000000;
+  --room-panel: #08080b;
+  --room-bar: #050507;
+  --room-field: #101014;
+  --room-line: rgba(255, 255, 255, 0.055);
+  --room-float-bg: rgba(14, 14, 18, 0.92);
+  --room-float-fg: rgba(245, 241, 232, 0.88);
+  --room-float-line: rgba(255, 255, 255, 0.1);
+  --room-float-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+  --room-float-hover-bg: var(--wash-3);
+  --room-float-hover-fg: var(--fg);
+
+  /* -------------------------------------------------- SC 卡片 */
+  --on-sc: #2a1c0d;
+  --on-sc-strong: #ffffff;
+  --on-sc-weak: rgba(0, 0, 0, 0.45);
+  --on-sc-hover: rgba(0, 0, 0, 0.14);
+  --on-sc-ring: rgba(255, 255, 255, 0.55);
+  --on-sc-shadow: rgba(0, 0, 0, 0.4);
+  --sc-line: rgba(0, 0, 0, 0.1);
+
+  /* -------------------------------------------------- 封面与头像 */
+  --cover-bg-a: #1c1c21;
+  --cover-bg-b: #0c0c0f;
+  --cover-fallback-a: #23232a;
+  --cover-fallback-b: #0d0d11;
+  --cover-fallback-fg: rgba(245, 241, 232, 0.78);
+  --cover-scrim: linear-gradient(180deg, transparent 58%, rgba(0, 0, 0, 0.38));
+  --cover-chip: rgba(6, 5, 4, 0.7);
+  --cover-chip-fg: #f5f1e8;
+  --avatar-fg: #f5f1e8;
+  --logo-bg: #ffffff;
+  --qr-bg: #ffffff;
+  --avatar-sat: 38%;
+  --avatar-light: 34%;
+  --img-placeholder: #16161a;
+
+  /* -------------------------------------------------- 骨架屏 */
+  --shimmer: rgba(255, 255, 255, 0.045);
+  --scrollbar-thumb: #26262c;
+
+  /* -------------------------------------------------- 自绘标题栏 */
+  --titlebar-bg: #000000;
+  --titlebar-fg: var(--fg);
+  --titlebar-line: rgba(255, 255, 255, 0.07);
+  --titlebar-btn: var(--muted);
+  --titlebar-btn-hover: var(--surface-2);
+  --titlebar-btn-active: var(--surface-3);
+
+  /* -------------------------------------------------- 窗口按钮 */
+  --window-close-hover: #e81123;
+  --window-close-active: #f1707a;
+  --window-close-fg: #ffffff;
+
+  /* -------------------------------------------------- 红绿灯 */
+  --traffic-size: 12px;
+  --traffic-gap: 8px;
+  --traffic-close: #ff5f57;
+  --traffic-min: #febc2e;
+  --traffic-max: #28c840;
+  --traffic-edge: rgba(0, 0, 0, 0.12);
+  --traffic-glyph: rgba(0, 0, 0, 0.55);
+  --traffic-glyph-size: 8px;
+  --traffic-glyph-stroke: 1.35;
+
+  /* -------------------------------------------------- 容器形态 */
+  --card-bg: var(--surface);
+  --card-border: 1px solid var(--line);
+  --card-radius: var(--radius-sm);
+  --card-shadow: none;
+  --card-gap: 12px;
+  --group-gap: 18px;
+  --group-label-bottom: 9px;
+  --row-divider: 1px solid var(--line);
+  --row-pad-x: 16px;
+  --row-pad-y: 10px;
+  --row-min-h: 56px;
+  --item-min-h: 54px;
+  --row-hover: var(--surface-2);
+  --tile-bg: transparent;
+  --tile-border: none;
+  --tile-radius: var(--radius-sm);
+  --tile-shadow: none;
+
+  /* -------------------------------------------------- 阶梯系数 */
+  --radius-scale: 0.35;
+  --dur-scale: 1.15;
+
+  /* -------------------------------------------------- 字体
+     --font-user 由设置页写入，缺省时整条链走皮肤字体。 */
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  --font-display: var(--font-user, "Bahnschrift", "Segoe UI Variable Display", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif);
+  --font-mono: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+
+  /* -------------------------------------------------- 图标 */
+  --icon-stroke: 1.5;
+  --icon-cap: round;
+  --icon-join: round;
+  --icon-stroke-thin: 1.1;
+
+  /* -------------------------------------------------- 动效 */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: dark;
+}
