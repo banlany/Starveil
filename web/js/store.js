@@ -157,8 +157,9 @@ export const DEFAULT_SETTINGS = {
     once: false,
   },
   sync: {
-    // 同步包是否包含观看记录与登录信息（Cookie）。
+    // 同步包是否包含观看记录、外观设置与登录信息（Cookie）。
     includeHistory: true,
+    includeAppearance: true,
     includeAccounts: false,
     // WebDAV 配置；密码明文存于本机 localStorage。
     webdav: {

@@ -39,9 +39,13 @@ const PLATFORM_LABELS = {
 
 /// 同步包内容清单，设置页据此渲染说明；增删字段时同步修改。
 export function bundleScope() {
-  const { includeHistory, includeAccounts } = bundleOptions();
-  const included = ['设置（不含 WebDAV 口令）', '关注列表'];
+  const { includeHistory, includeAppearance, includeAccounts } = bundleOptions();
+  const settingsNote = includeAppearance
+    ? '设置（不含 WebDAV 口令）'
+    : '设置（不含皮肤与高级外观、WebDAV 口令）';
+  const included = [settingsNote, '关注列表'];
   if (includeHistory) included.push('观看记录');
+  if (includeAppearance) included.push('皮肤与高级外观');
   included.push('搜索历史', '观看统计');
   // 平台名从 ACCOUNT_PLATFORMS 派生。
   const accountNames = ACCOUNT_PLATFORMS.map((platform) => PLATFORM_LABELS[platform] || platform).join(' / ');
@@ -57,8 +61,9 @@ export function bundleScope() {
     // 按平台记的「第几档清晰度」：桌面存 1080 搬到手机上会直接卡死。
     '各平台记住的清晰度',
   ];
-  // 自己关掉的两项排在前面，免得用户以为漏了。
+  // 自己关掉的几项排在前面，免得用户以为漏了。
   if (!includeAccounts) excluded.unshift('登录 Cookie（已关闭）');
+  if (!includeAppearance) excluded.unshift('皮肤与高级外观（已关闭）');
   if (!includeHistory) excluded.unshift('观看记录（已关闭）');
   return { included, excluded };
 }
@@ -67,8 +72,9 @@ export function bundleScope() {
 function bundleOptions() {
   const sync = state.settings?.sync ?? {};
   return {
-    // 观看记录默认跟着走，只有显式关掉才不带。
+    // 观看记录与外观默认跟着走，只有显式关掉才不带。
     includeHistory: sync.includeHistory !== false,
+    includeAppearance: sync.includeAppearance !== false,
     // Cookie 默认不带，需用户显式开启。
     includeAccounts: sync.includeAccounts === true,
   };
@@ -86,7 +92,14 @@ export function buildBundle() {
   delete settings.disclaimerAccepted;
   delete settings.firstRun;
 
-  const { includeHistory, includeAccounts } = bundleOptions();
+  const { includeHistory, includeAppearance, includeAccounts } = bundleOptions();
+  // 关闭时摘掉外观段：导入侧没有这一段就不动本机皮肤与高级外观。
+  if (!includeAppearance) {
+    delete settings.appearance;
+    // 顶层 theme / accent 只是外观的镜像，一并摘掉。
+    delete settings.theme;
+    delete settings.accent;
+  }
   const bundle = {
     version: BUNDLE_VERSION,
     app: 'Starveil',

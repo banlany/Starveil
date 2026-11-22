@@ -1312,6 +1312,7 @@ function bundleScopeNote() {
 function paintSyncScope(content, repaint) {
   const scope = getSetting('sync', {}) || {};
   const historyOn = scope.includeHistory !== false;
+  const appearanceOn = scope.includeAppearance !== false;
   const accountsOn = scope.includeAccounts === true;
 
   const card = document.createElement('div');
@@ -1324,12 +1325,23 @@ function paintSyncScope(content, repaint) {
       <div class="sync-toggles">
         <div class="sync-toggle"><span>同步观看记录</span>
           <button class="switch" id="sync-inc-history" aria-checked="${historyOn}"></button></div>
+        <div class="sync-toggle"><span>同步皮肤与高级外观</span>
+          <button class="switch" id="sync-inc-appearance" aria-checked="${appearanceOn}"></button></div>
         <div class="sync-toggle"><span>同步登录信息（Cookie）</span>
           <button class="switch" id="sync-inc-accounts" aria-checked="${accountsOn}"></button></div>
       </div>
     </div>
+    <div id="sync-inc-note"></div>
     <div id="sync-inc-warn"></div>`;
   content.appendChild(card);
+
+  const note = card.querySelector('#sync-inc-note');
+  const paintNote = (on) => {
+    note.innerHTML = on
+      ? ''
+      : `<div class="pill-note">${icon('info', 16)}<div>外观不随包同步：对端保持自己的皮肤、明暗、主题色与高级外观。</div></div>`;
+  };
+  paintNote(appearanceOn);
 
   const warn = card.querySelector('#sync-inc-warn');
   const paintWarn = (on) => {
@@ -1349,6 +1361,14 @@ function paintSyncScope(content, repaint) {
     const next = button.getAttribute('aria-checked') !== 'true';
     button.setAttribute('aria-checked', String(next));
     setSetting('sync.includeHistory', next);
+    repaint();
+  });
+
+  card.querySelector('#sync-inc-appearance').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    const next = button.getAttribute('aria-checked') !== 'true';
+    button.setAttribute('aria-checked', String(next));
+    setSetting('sync.includeAppearance', next);
     repaint();
   });
 
@@ -1804,7 +1824,7 @@ function describeBundleContents(bundle) {
   if (rooms) parts.push(`观看统计 ${rooms} 个主播`);
   const accounts = bundle.accounts ? Object.keys(bundle.accounts).length : 0;
   if (accounts) parts.push(`登录信息 ${accounts} 个平台`);
-  if (bundle.settings) parts.push('设置一整份');
+  if (bundle.settings) parts.push(bundle.settings.appearance ? '设置一整份' : '设置（不含外观）');
   if (!parts.length) return '（空包）';
   return parts.join('、');
 }
