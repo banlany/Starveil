@@ -11,6 +11,8 @@ const MAX_TILT = 0.62;
 const COMMIT_RATIO = 0.28;
 const COMMIT_MIN = 96;
 const FLICK_VELOCITY = 0.35;
+// 拖动中多久没有任何触摸事件，就认为这段手势被系统截断了。
+const STALL_MS = 1200;
 
 // 旧接口：抬手指后再判，位移过阈值且明显偏横才翻页。
 const MIN_DISTANCE = 52;
@@ -89,13 +91,37 @@ function bindDragSwipe(target, hooks) {
   let lastAt = 0;
   let velocity = 0;
   let direction = 'left';
+  // 发起这次拖动的手指，别的触摸点一律不算。
+  let touchId = null;
+  let stallTimer = 0;
+
+  const findTouch = (list) => {
+    if (!list) return null;
+    if (touchId === null) return list[0] || null;
+    for (const item of list) if (item.identifier === touchId) return item;
+    return null;
+  };
+
+  /// 拖动中途 touchmove/touchend 全断（系统手势、切后台）时把位移收回去。
+  const armStall = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      if (!dragging) return;
+      tracking = false;
+      dragging = false;
+      hooks.onCancel?.();
+    }, STALL_MS);
+  };
 
   const onStart = (event) => {
+    // 拖动进行中又落下一根手指：不接管，也不清状态——
+    // 清掉的话这段拖动永远等不到收尾，位移会留在页面上。
+    if (dragging) return;
     tracking = false;
-    dragging = false;
     if (!canTrack(event, target)) return;
     if (hooks.canStart && !hooks.canStart()) return;
     const touch = event.touches[0];
+    touchId = touch.identifier ?? null;
     startX = touch.clientX;
     startY = touch.clientY;
     lastX = startX;
@@ -105,8 +131,9 @@ function bindDragSwipe(target, hooks) {
   };
 
   const onMove = (event) => {
-    if (!tracking || event.touches.length !== 1) return;
-    const touch = event.touches[0];
+    if (!tracking) return;
+    const touch = findTouch(event.touches);
+    if (!touch) return;
     const dx = touch.clientX - startX;
     const dy = touch.clientY - startY;
     if (!dragging) {
@@ -132,6 +159,7 @@ function bindDragSwipe(target, hooks) {
     if (dt > 0) velocity = (touch.clientX - lastX) / dt;
     lastX = touch.clientX;
     lastAt = now;
+    armStall();
     hooks.onMove?.(dx);
   };
 
@@ -140,10 +168,20 @@ function bindDragSwipe(target, hooks) {
       tracking = false;
       return;
     }
+    const touch = findTouch(event.changedTouches);
+    if (!touch) {
+      // 抬起的是另一根手指，这根还按着，拖动继续。
+      if (findTouch(event.touches)) return;
+      // 发起拖动的手指不知何时没了，直接弹回，别停在半路。
+      tracking = false;
+      dragging = false;
+      clearTimeout(stallTimer);
+      hooks.onCancel?.();
+      return;
+    }
     tracking = false;
     dragging = false;
-    const touch = event.changedTouches?.[0];
-    if (!touch) return;
+    clearTimeout(stallTimer);
     const dx = touch.clientX - startX;
     const width = target.clientWidth || window.innerWidth;
     // 甩得够快也算提交，但方向要和位移一致（先往回甩再放开不算）。
@@ -153,6 +191,7 @@ function bindDragSwipe(target, hooks) {
   };
 
   const onCancel = () => {
+    clearTimeout(stallTimer);
     if (!dragging) {
       tracking = false;
       return;

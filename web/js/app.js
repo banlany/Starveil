@@ -28,7 +28,7 @@ import { importData } from './importer.js';
 import { installLogForwarding } from './log.js';
 import { initTitlebar } from './titlebar.js';
 import { bindHorizontalSwipe } from './swipe.js';
-import { createPageSlider } from './page-slide.js';
+import { clearSwipeState, createPageSlider } from './page-slide.js';
 import { initTooltips } from './tooltip.js';
 import { applyPlatformFlags, IS_MOBILE } from './platform.js';
 import { addEnterClass, currentMotion, scrollBehavior } from './motion.js';
@@ -496,6 +496,8 @@ function dropCachedPage(cacheKey) {
 function render({ keepScroll = false, dir = 'forward', animate = true, fresh = false } = {}) {
   // 路由切换时关掉可能还没关的浮层，避免它跟着进入下一个页面。
   dismissOverlays();
+  // 重画前把滑动层收干净：手势被打断时它可能还挂着半屏位移。
+  slider?.reset();
   const leavingScroll = view.scrollTop;
   stashPage();
   if (currentKey) scrollPositions.set(currentKey, leavingScroll);
@@ -507,7 +509,8 @@ function render({ keepScroll = false, dir = 'forward', animate = true, fresh = f
   if (cached) {
     pageCache.delete(cacheKey);
     view.replaceChildren(cached.node);
-    // 挂回文档会重播仍在队列里的入场动画，先统一摘干净。
+    // 挂回文档会重播仍在队列里的入场动画、也可能带着上次被打断的位移，一并摘干净。
+    clearSwipeState(cached.node);
     cached.node.classList.remove('page-enter', 'back');
     for (const card of cached.node.querySelectorAll('.card-enter')) card.classList.remove('card-enter');
     homeRefreshHandler = cached.homeRefresh || null;

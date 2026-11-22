@@ -12,6 +12,17 @@ function glideMs(distance) {
   return Math.round(Math.min(GLIDE_MAX_MS, GLIDE_MIN_MS + distance * 0.15));
 }
 
+/// 摘掉整页横滑留下的内联样式与类名：位移、层级、预览层专用的过渡。
+export function clearSwipeState(node) {
+  if (!node) return;
+  node.classList.remove('is-swiping');
+  node.style.transition = '';
+  node.style.transform = '';
+  node.style.willChange = '';
+  node.style.position = '';
+  node.style.zIndex = '';
+}
+
 /// view：被滑动的滚动容器；返回的 begin/move/settle 由手势驱动，glide 由点击驱动。
 /// hooks.onProgress(progress, ms, platform)：位移进度 0→1，ms 为 0 表示跟手不补过渡；
 /// hooks.onFinish()：滑动层收起，供调用方清掉跟随进度的样式。
@@ -30,13 +41,9 @@ export function createPageSlider(view, hooks = {}) {
   };
 
   const release = () => {
+    if (!session) return;
     const { page, peek } = session;
-    page.style.transition = '';
-    page.style.transform = '';
-    page.style.willChange = '';
-    page.style.position = '';
-    page.style.zIndex = '';
-    page.classList.remove('is-swiping');
+    clearSwipeState(page);
     peek.remove();
     session = null;
     hooks.onFinish?.();
@@ -56,7 +63,8 @@ export function createPageSlider(view, hooks = {}) {
     peek.style.height = `${view.clientHeight}px`;
     peek.style.top = `${view.scrollTop}px`;
     const content = cached?.node || buildSwipePeek(route, platform);
-    // 节点从缓存里重新挂回文档会重播入场动画，预览层里只要静止的样子。
+    // 缓存节点可能带着上一次被打断的位移，先还原成静止的样子。
+    clearSwipeState(content);
     content.classList.remove('page-enter', 'back');
     for (const card of content.querySelectorAll('.card-enter')) card.classList.remove('card-enter');
     peek.appendChild(content);
@@ -111,5 +119,5 @@ export function createPageSlider(view, hooks = {}) {
     return true;
   };
 
-  return { begin, move, settle, glide, isBusy: () => Boolean(session) };
+  return { begin, move, settle, glide, reset: release, isBusy: () => Boolean(session) };
 }
