@@ -76,6 +76,41 @@
   z-index: 6;
 }
 
+/* 滑动调亮度：一层黑遮罩盖住画面，弹幕在它之上。 */
+.gesture-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* 手势操作时的数值提示。 */
+.gesture-hud {
+  position: absolute;
+  top: 16%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.66);
+  color: #fff;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+  z-index: 9;
+}
+
+.gesture-hud.show {
+  opacity: 1;
+}
+
 /* 弹幕层：显式宽高撑满，库会把容器改成 position: relative */
 .danmaku-canvas-host {
   position: relative;

@@ -18,6 +18,7 @@ use crate::util::{absolute, dig, strip_tags, text, u32_of, u64_of};
 use crate::wbi::WbiKeys;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -322,7 +323,8 @@ fn array_of<'a>(value: &'a Value, key: &str) -> &'a [Value] {
 
 pub struct BilibiliSite {
     buvid: Mutex<Option<(String, String)>>,
-    wbi: Mutex<Option<WbiKeys>>,
+    /// wbi 密钥与取到的时间：平台会轮换，不能一直用启动时那一份。
+    wbi: Mutex<Option<(WbiKeys, Instant)>>,
 }
 
 impl Default for BilibiliSite {
@@ -369,9 +371,14 @@ impl BilibiliSite {
     }
 
     /// wbi 密钥（nav 未登录也返回，只是 code=-101）。
+    ///
+    /// 密钥会随平台轮换，缓存半小时后重取：一直用旧密钥会让签名请求全部返回 -352。
     pub fn wbi(&self, http: &HttpSession) -> Result<WbiKeys, LiveError> {
-        if let Some(cached) = self.wbi.lock().expect("wbi 锁").clone() {
-            return Ok(cached);
+        const WBI_TTL: Duration = Duration::from_secs(30 * 60);
+        if let Some((keys, at)) = self.wbi.lock().expect("wbi 锁").clone()
+            && at.elapsed() < WBI_TTL
+        {
+            return Ok(keys);
         }
         let cookie = self.cookie_header(http)?;
         let value = http.get_json(
@@ -384,7 +391,7 @@ impl BilibiliSite {
             ],
         )?;
         let keys = WbiKeys::from_nav(&value)?;
-        *self.wbi.lock().expect("wbi 锁") = Some(keys.clone());
+        *self.wbi.lock().expect("wbi 锁") = Some((keys.clone(), Instant::now()));
         Ok(keys)
     }
 

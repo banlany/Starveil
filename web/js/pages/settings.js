@@ -295,9 +295,17 @@ export function renderSettingsDetail(ctx, params = {}) {
 
 /// 画一个二级分区的内容；scroller 是当前滚动容器，重绘后保持位置。
 function paintDetail(key, content, ctx, scroller) {
+  // 切到别的分区就停掉数据同步的轮询：定时器是页面级单例，
+  // 不停会继续发布数据、还会把「收到配置包」的确认框弹到别的分区上。
+  if (key !== 'sync') stopSyncTimers();
   const scrollTop = scroller ? scroller.scrollTop : 0;
+  content.dataset.key = key;
   content.innerHTML = '';
-  const repaint = () => paintDetail(key, content, ctx, scroller);
+  const repaint = () => {
+    // 内容容器是复用的：异步操作（换皮肤）回来时分区可能已经切走，不能再画回去。
+    if (content.dataset.key !== key) return;
+    paintDetail(key, content, ctx, scroller);
+  };
   const done = () => {
     if (scroller) scroller.scrollTop = scrollTop;
   };
@@ -954,7 +962,6 @@ function detailSections(key, ctx, repaint) {
             { type: 'switch', key: 'player.autoRefresh', title: '直播流自动刷新', desc: '长时间播放后重新获取直链，避免地址过期' },
             { type: 'switch', key: 'player.forceHttps', title: '强制 HTTPS', desc: '把平台下发的 http 链接改为 https（部分 CDN 不支持时请关闭）' },
             { type: 'select', key: 'player.scaleMode', title: '画面尺寸', valueMap: { contain: '适应', cover: '铺满', fill: '拉伸' }, onChange: (value) => applyScaleMode(value) },
-            { type: 'switch', key: 'player.showStats', title: '显示播放统计信息' },
           ],
         },
         {
@@ -964,7 +971,7 @@ function detailSections(key, ctx, repaint) {
             { type: 'switch', key: 'player.muteOnStart', title: '进入直播间默认静音' },
             { type: 'switch', key: 'live.autoSwitchNext', title: '关播后自动换下一个', desc: '当前房间确认下播后，自动切到关注列表里的下一个直播间' },
             { type: 'switch', key: 'live.allowBackground', title: '允许后台继续播放', desc: '窗口失去焦点时保持视频与弹幕连接' },
-            { type: 'switch', key: 'live.gesture', title: '滑动调节音量/亮度', desc: '播放页左右两侧上下滑动调节' },
+            { type: 'switch', key: 'live.gesture', title: '滑动调节音量/亮度', desc: '播放页左半屏上下滑调亮度；桌面右半屏调音量，移动端音量走系统音量键' },
             { type: 'switch', key: 'live.hideDanmakuOnMinimize', title: '最小化时隐藏弹幕' },
           ],
         },
@@ -1486,6 +1493,8 @@ function paintSync(content, ctx, repaint) {
   // 发现列表每 2 秒刷新，自身数据每 15 秒发布一次。
   let lastPublish = 0;
   let busy = false;
+  /// 手动填地址连上的设备：广播发现不到它，但要能对它拉取 / 发送。
+  let manualPeers = [];
   const publish = async () => {
     try {
       await api.lanSyncPublish(JSON.stringify(buildBundle()));
@@ -1496,12 +1505,19 @@ function paintSync(content, ctx, repaint) {
   };
 
   const renderPeers = (peers) => {
-    if (!peers.length) {
+    // 手动填地址连上的设备不在广播列表里，单独补进来，否则连完看不到按钮。
+    const merged = [...peers];
+    for (const peer of manualPeers) {
+      if (!merged.some((item) => item.address === peer.address && item.port === peer.port)) {
+        merged.push(peer);
+      }
+    }
+    if (!merged.length) {
       lanPeers.innerHTML = `<div class="lan-empty">正在搜索同一局域网内的设备…</div>`;
       return;
     }
     lanPeers.innerHTML = '';
-    for (const peer of peers) {
+    for (const peer of merged) {
       const row = document.createElement('div');
       row.className = 'lan-peer';
       row.innerHTML = `
@@ -1519,7 +1535,7 @@ function paintSync(content, ctx, repaint) {
       row.querySelector('[data-act="pull"]').addEventListener('click', async () => {
         showLanState(`正在从「${peerLabel}」拉取配置…`);
         try {
-          const payload = await api.lanSyncPull(peer.address, peer.port);
+          const payload = await api.lanSyncPull(peer.address, peer.port, peer.token);
           if (!payload) throw new Error('浏览器演示模式没有局域网服务');
           const bundle = JSON.parse(payload);
           const ok = await confirmDialog({
@@ -1550,7 +1566,12 @@ function paintSync(content, ctx, repaint) {
         if (!ok) return;
         showLanState(`正在发送给「${peerLabel}」…`);
         try {
-          const size = await api.lanSyncPush(peer.address, peer.port, JSON.stringify(outgoing));
+          const size = await api.lanSyncPush(
+            peer.address,
+            peer.port,
+            peer.token,
+            JSON.stringify(outgoing)
+          );
           setSetting('sync.lastSyncAt', Date.now());
           showLanState(`已发送，对端收到 ${formatBytes(size?.bytes)}`, 'success');
         } catch (error) {
@@ -1644,6 +1665,12 @@ function paintSync(content, ctx, repaint) {
     try {
       const peer = await api.lanSyncProbe(address, port);
       if (!peer) throw new Error('浏览器演示模式没有局域网服务');
+      if (!peer.token) throw new Error('对方版本过旧，没有配对令牌，请两边都升级');
+      // 逐个累积：连着连过几台设备时，广播发现不到的那几台都要留在列表里。
+      manualPeers = [
+        ...manualPeers.filter((item) => item.address !== peer.address || item.port !== peer.port),
+        peer,
+      ];
       showLanState(`已找到「${peer.name || address}」，它下面的按钮可以直接拉取或发送`, 'success');
       await tick();
     } catch (error) {
@@ -1806,10 +1833,12 @@ function describeImport(summary) {
   if (summary.stats) parts.push(`观看统计 ${summary.stats} 个主播`);
   if (summary.settings) parts.push(`设置 ${summary.settings} 项`);
   if (summary.accounts?.length) parts.push(`登录 ${summary.accounts.length} 个平台`);
-  const skipped = Object.entries(summary.skipped || {});
+  // `skin` 这个键不是平台，单独说一句，别混进「尚未支持该平台」里。
+  const skipped = Object.entries(summary.skipped || {}).filter(([key]) => key !== 'skin');
   if (skipped.length) {
     parts.push(`跳过 ${skipped.map(([platform, count]) => `${PLATFORM_META[platform]?.name || platform} ${count} 条`).join('、')}（尚未支持该平台）`);
   }
+  if (summary.skipped?.skin) parts.push('本机没装包里的皮肤，已保留原皮肤');
   if (summary.truncated) parts.push(`超出上限丢弃 ${summary.truncated} 条`);
   return `导入完成：${parts.length ? parts.join('，') : '没有可导入的内容'}`;
 }

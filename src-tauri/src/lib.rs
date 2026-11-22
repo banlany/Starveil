@@ -605,12 +605,21 @@ fn unescape_html(value: &str) -> String {
         .replace("&gt;", ">")
 }
 
+/// 把 http 直链换成 https。签名参数不区分协议，部分 CDN 只给 http。
+fn force_https_url(url: String) -> String {
+    match url.strip_prefix("http://") {
+        Some(rest) => format!("https://{rest}"),
+        None => url,
+    }
+}
+
 /// 代理出错时打印的 URL 片段。完整直链带签名且很长，日志里只留主机与路径开头。
 fn preview(url: &str) -> String {
     let cut = url.find(['?', '#']).unwrap_or(url.len());
     let base = &url[..cut];
-    if base.len() > 90 {
-        format!("{}…", &base[..90])
+    // 按字符截断：直链里出现中文时按字节切会落在多字节中间直接 panic。
+    if base.chars().count() > 90 {
+        format!("{}…", base.chars().take(90).collect::<String>())
     } else {
         base.to_string()
     }
@@ -618,9 +627,12 @@ fn preview(url: &str) -> String {
 
 /// 代理并发上限。每条连接一个线程，卡死的连接会一直占着线程不放，
 /// 这里加个闸：超了直接 503，让播放器立刻走换线，别把进程拖垮。
-const PROXY_MAX_CONNECTIONS: usize = 32;
+const PROXY_MAX_CONNECTIONS: usize = 64;
 
-/// 上游客户端只建一次；不使用 `read_timeout` 或 `.timeout()`，以免截断长连接。
+/// 上游客户端只建一次。
+///
+/// 不设 `read_timeout` 或 `.timeout()`：前者这个版本的 blocking 客户端不提供，
+/// 后者会把直播长连接按总时长掐断。上游挂起时靠并发上限兜底（超了立刻 503，前端换线）。
 fn upstream_client() -> Option<reqwest::blocking::Client> {
     static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
     CLIENT
@@ -1451,6 +1463,16 @@ async fn open_room_task(
         douyu_did: did.clone(),
     };
     if let Ok(mut sessions) = state.sessions.lock() {
+        // 斗鱼这里 qualities 还是空的，等前端算完签名再回填。同一房间重进
+        // （前端每 5 分钟刷一次详情）不能把上一份清掉，否则续签会报「清晰度不存在」。
+        let qualities = if qualities.is_empty() {
+            sessions
+                .get(&key)
+                .map(|session| session.qualities.clone())
+                .unwrap_or_default()
+        } else {
+            qualities
+        };
         sessions.insert(
             key,
             Session {
@@ -1552,11 +1574,12 @@ async fn douyu_play(
     index: usize,
     signed_args: String,
     audio_only: Option<bool>,
+    force_https: Option<bool>,
 ) -> Result<PlayPayload, String> {
     let tag = format!("douyu_play {key} #{index}");
     traced(
         &tag,
-        douyu_play_task(state, key, index, signed_args, audio_only).await,
+        douyu_play_task(state, key, index, signed_args, audio_only, force_https).await,
     )
 }
 
@@ -1566,6 +1589,7 @@ async fn douyu_play_task(
     index: usize,
     signed_args: String,
     audio_only: Option<bool>,
+    force_https: Option<bool>,
 ) -> Result<PlayPayload, String> {
     let (detail, quality, did) = {
         let sessions = state
@@ -1618,11 +1642,13 @@ async fn douyu_play_task(
                         last_error = "斗鱼播放地址缺少 rtmp_live".to_string();
                         continue;
                     };
-                    let url = format!(
-                        "{}/{}",
-                        rtmp_url.trim_end_matches('/'),
-                        unescape_html(rtmp_live)
-                    );
+                    let live_path = unescape_html(rtmp_live);
+                    // 少数 CDN 直接把完整地址放进 rtmp_live，再拼一次前缀会拼出打不开的 URL。
+                    let url = if live_path.starts_with("http://") || live_path.starts_with("https://") {
+                        live_path.clone()
+                    } else {
+                        format!("{}/{}", rtmp_url.trim_end_matches('/'), live_path.trim_start_matches('/'))
+                    };
                     // 档位与登录态决定 CDN 给哪一路流，降级时先看这行。
                     logging::info(
                         "douyu",
@@ -1656,6 +1682,11 @@ async fn douyu_play_task(
 
     let referer = format!("https://www.douyu.com/{}", detail.room_id);
     let expires_in = urls.iter().filter_map(|url| url_expire_secs(url)).min();
+    let urls = if force_https.unwrap_or(false) {
+        urls.into_iter().map(force_https_url).collect()
+    } else {
+        urls
+    };
     Ok(PlayPayload {
         urls: proxy_play_urls(
             &state,
@@ -1687,6 +1718,10 @@ fn proxy_play_urls(
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
+    // 同一房间换档/换线路后旧 token 不会被再访问，先清掉同前缀的条目，
+    // 否则切台越多这张表越大。
+    let prefix = format!("{}-", key.replace(':', "_"));
+    targets.retain(|token, _| !token.starts_with(&prefix));
     {
         for (line, url) in urls.into_iter().enumerate() {
             // 纯音频是同一个清晰度的另一种取法，token 必须区分开，
@@ -1720,9 +1755,10 @@ async fn play(
     key: String,
     index: usize,
     audio_only: Option<bool>,
+    force_https: Option<bool>,
 ) -> Result<PlayPayload, String> {
     let tag = format!("play {key} #{index}");
-    traced(&tag, play_task(state, key, index, audio_only).await)
+    traced(&tag, play_task(state, key, index, audio_only, force_https).await)
 }
 
 async fn play_task(
@@ -1730,6 +1766,7 @@ async fn play_task(
     key: String,
     index: usize,
     audio_only: Option<bool>,
+    force_https: Option<bool>,
 ) -> Result<PlayPayload, String> {
     let (detail, quality) = {
         let sessions = state
@@ -1751,6 +1788,7 @@ async fn play_task(
     let room_id = detail.room_id.clone();
     let core = state.core(platform);
     let play = blocking(move || core.play(&detail, &quality)).await?;
+    let play_headers = play.headers;
     let mut hls_urls = play.hls_urls;
     let mut flv_urls = Vec::with_capacity(play.urls.len());
     // 后端已按协议分流；这里再兜一层，防止某个平台把 m3u8 混进 urls。
@@ -1760,6 +1798,10 @@ async fn play_task(
         } else {
             flv_urls.push(url);
         }
+    }
+    if force_https.unwrap_or(false) {
+        flv_urls = flv_urls.into_iter().map(force_https_url).collect();
+        hls_urls = hls_urls.into_iter().map(force_https_url).collect();
     }
     if flv_urls.is_empty() && hls_urls.is_empty() {
         return Err("这个清晰度没有可用的播放地址".to_string());
@@ -1795,7 +1837,7 @@ async fn play_task(
             audio_only.unwrap_or(false),
         ),
         hls_urls,
-        headers: Vec::new(),
+        headers: play_headers,
         expires_in,
     })
 }
@@ -2137,8 +2179,9 @@ async fn capture_login(app: AppHandle, platform: String) -> Result<LoginCapture,
     let (_, _, cookie_url) =
         login_page(platform).ok_or_else(|| format!("{}暂不支持账号登录", platform.name()))?;
     let label = login_window_label(platform);
-    let window = app
-        .get_webview_window(&label)
+    let login_window = app.get_webview_window(&label);
+    let window = login_window
+        .clone()
         .or_else(|| app.get_webview_window("main"))
         .ok_or_else(|| "找不到可以读取 Cookie 的窗口".to_string())?;
     let url: tauri::Url = cookie_url
@@ -2167,8 +2210,11 @@ async fn capture_login(app: AppHandle, platform: String) -> Result<LoginCapture,
         web_login_user(platform, &cookie)
     };
     if user.logged_in {
-        // 登录成功后把窗口收掉，免得用户以为还要在里面停留。
-        let _ = window.close();
+        // 只收掉独立登录窗口。回退到主窗口时读到的是共享 Cookie，
+        // 这里关窗会把整个界面关掉。
+        if let Some(window) = login_window {
+            let _ = window.close();
+        }
     }
     Ok(LoginCapture { user, cookie })
 }
@@ -2788,11 +2834,12 @@ fn lan_sync_inbox(state: State<'_, AppState>) -> Vec<lan_sync::InboxItem> {
 }
 
 #[tauri::command]
-async fn lan_sync_pull(address: String, port: u16) -> Result<String, String> {
+async fn lan_sync_pull(address: String, port: u16, token: String) -> Result<String, String> {
     let tag = format!("lan_sync_pull {address}:{port}");
-    let result = tauri::async_runtime::spawn_blocking(move || lan_sync::pull(&address, port))
-        .await
-        .map_err(|error| format!("同步任务异常：{error}"));
+    let result =
+        tauri::async_runtime::spawn_blocking(move || lan_sync::pull(&address, port, &token))
+            .await
+            .map_err(|error| format!("同步任务异常：{error}"));
     traced(&tag, result.and_then(std::convert::identity))
 }
 
@@ -2800,12 +2847,15 @@ async fn lan_sync_pull(address: String, port: u16) -> Result<String, String> {
 async fn lan_sync_push(
     address: String,
     port: u16,
+    token: String,
     content: String,
 ) -> Result<lan_sync::PushResult, String> {
     let tag = format!("lan_sync_push {address}:{port}");
-    let result = tauri::async_runtime::spawn_blocking(move || lan_sync::push(&address, port, &content))
-        .await
-        .map_err(|error| format!("同步任务异常：{error}"));
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        lan_sync::push(&address, port, &token, &content)
+    })
+    .await
+    .map_err(|error| format!("同步任务异常：{error}"));
     traced(&tag, result.and_then(std::convert::identity))
 }
 

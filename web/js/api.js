@@ -207,15 +207,17 @@ export const api = {
     return payload;
   },
   // audioOnly 走代理的纯音频分支，视频 tag 在代理层丢弃。
+  // forceHttps 由调用方按设置传入，后端把平台下发的 http 直链换成 https。
   async play(key, index, options = {}) {
     const audioOnly = Boolean(options.audioOnly);
+    const forceHttps = Boolean(options.forceHttps);
     if (key.startsWith('douyu:')) {
       const session = douyuSessions.get(key);
       if (!session) throw new Error('斗鱼会话已失效，请重新进房');
       const signed = signDouyu(session.script, session.roomId, session.did);
-      return call('douyu_play', { key, index, signedArgs: signed, audioOnly });
+      return call('douyu_play', { key, index, signedArgs: signed, audioOnly, forceHttps });
     }
-    return call('play', { key, index, audioOnly });
+    return call('play', { key, index, audioOnly, forceHttps });
   },
   // 抖音的弹幕握手要带 webmssdk 签名，由 room.js 算好后传进来；其余平台忽略这两个参数。
   startDanmaku(key, options = {}) {
@@ -266,11 +268,11 @@ export const api = {
   lanSyncInbox() {
     return call('lan_sync_inbox');
   },
-  lanSyncPull(address, port) {
-    return call('lan_sync_pull', { address, port });
+  lanSyncPull(address, port, token) {
+    return call('lan_sync_pull', { address, port, token });
   },
-  lanSyncPush(address, port, content) {
-    return call('lan_sync_push', { address, port, content });
+  lanSyncPush(address, port, token, content) {
+    return call('lan_sync_push', { address, port, token, content });
   },
   lanSyncProbe(address, port) {
     return call('lan_sync_probe', { address, port });

@@ -57,8 +57,9 @@ fn legacy_key(sdk_key: &str) -> Option<&'static str> {
     match sdk_key {
         "origin" | "uhd" => Some("FULL_HD1"),
         "hd" => Some("HD1"),
-        "ld" => Some("SD1"),
-        "sd" => Some("SD2"),
+        // 阶梯是 origin > uhd > hd > sd > ld：sd 比 ld 高，别接反。
+        "sd" => Some("SD1"),
+        "ld" => Some("SD2"),
         _ => None,
     }
 }
@@ -485,11 +486,18 @@ fn parse_partition_rooms(value: &Value) -> Result<Vec<LiveRoomItem>, LiveError> 
         if room_id.is_empty() {
             continue;
         }
-        // 在线人数在 `room_view_stats.display_value`；偶尔是字符串，两种都认。
+        // 在线人数优先取数值字段：`display_value` 是「1.2万」这类展示串，
+        // `number_of` 解析不出来会变成 0，卡片人气就一直是空的。
         let online = room
             .get("room_view_stats")
-            .and_then(|stats| stats.get("display_value"))
-            .map(number_of)
+            .map(|stats| {
+                stats
+                    .get("total_user")
+                    .or_else(|| stats.get("user_count"))
+                    .map(number_of)
+                    .filter(|value| *value > 0)
+                    .unwrap_or_else(|| stats.get("display_value").map(number_of).unwrap_or(0))
+            })
             .unwrap_or(0);
         items.push(LiveRoomItem {
             platform: Platform::Douyin,

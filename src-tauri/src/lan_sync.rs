@@ -1,10 +1,12 @@
 //! 局域网同步：UDP 23245 广播发现 + 本机 HTTP 23244 交换配置包。
 //! Rust 只搬运 JSON 文本，打包与合并由前端完成。
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -24,6 +26,19 @@ const PEER_TTL: Duration = Duration::from_secs(16);
 /// 同步包上限：关注几百个、统计几百个主播也就几 MB，16MB 足够挡住乱发的包。
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// 同时处理的连接数上限：每个连接一个线程，被批量建连时不能无限开。
+const MAX_CONNECTIONS: usize = 8;
+
+/// 允许跨域访问本服务的页面来源。应用自身的 WebView 是前三条，后两条给
+/// `tools/serve.py` 的本地预览用。不在这里的来源不回 CORS 头，浏览器读不到响应，
+/// 也就拿不到同步包。
+const ALLOWED_ORIGINS: [&str; 5] = [
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DeviceInfo {
@@ -33,6 +48,8 @@ pub struct DeviceInfo {
     pub platform: String,
     pub version: String,
     pub port: u16,
+    /// 配对令牌：随 UDP 广播下发，交换同步包的请求必须带上。
+    pub token: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -43,6 +60,8 @@ pub struct Peer {
     pub address: String,
     pub port: u16,
     pub version: String,
+    /// 对端的配对令牌，拉取 / 发送时放进 `X-Starveil-Token`。
+    pub token: String,
     /// 秒级时间戳，前端只用来显示「刚刚 / 12 秒前」。
     pub last_seen: u64,
 }
@@ -92,6 +111,7 @@ pub struct LanSync {
     device: DeviceInfo,
     inner: Mutex<Inner>,
     running: AtomicBool,
+    active: AtomicUsize,
     error: Mutex<Option<String>>,
 }
 
@@ -100,6 +120,21 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or(0)
+}
+
+/// 每次启动生成一个新令牌。它只解决「谁可以读同步包」：令牌随 UDP 广播发给
+/// 局域网里的应用，网页拿不到广播，也读不到被 CORS 拦住的响应。
+fn new_token() -> String {
+    let mut hasher = DefaultHasher::new();
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0)
+        .hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    let first = hasher.finish();
+    first.rotate_left(23).hash(&mut hasher);
+    format!("{first:016x}{:016x}", hasher.finish())
 }
 
 impl LanSync {
@@ -120,9 +155,11 @@ impl LanSync {
                 platform,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 port: HTTP_PORT,
+                token: new_token(),
             },
             inner: Mutex::new(Inner::default()),
             running: AtomicBool::new(false),
+            active: AtomicUsize::new(0),
             error: Mutex::new(None),
         }
     }
@@ -210,9 +247,19 @@ impl LanSync {
     fn serve(self: Arc<Self>, listener: TcpListener) {
         while self.is_running() {
             match listener.accept() {
-                Ok((stream, _)) => {
+                Ok((mut stream, _)) => {
+                    if self.active.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        continue;
+                    }
+                    self.active.fetch_add(1, Ordering::Relaxed);
                     let sync = self.clone();
-                    thread::spawn(move || sync.handle(stream));
+                    thread::spawn(move || {
+                        sync.handle(stream);
+                        sync.active.fetch_sub(1, Ordering::Relaxed);
+                    });
                 }
                 Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(120));
@@ -225,10 +272,16 @@ impl LanSync {
     fn handle(&self, mut stream: TcpStream) {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(6)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(6)));
-        let Some((method, path, body)) = read_request(&mut stream) else {
+        let Some(request) = read_request(&mut stream) else {
             return;
         };
-        match (method.as_str(), path.as_str()) {
+        let origin = request.origin.as_deref();
+        // 跨域预检：只对白名单来源回允许，其它来源的浏览器请求到此为止。
+        if request.method == "OPTIONS" {
+            respond(&mut stream, 204, "No Content", "", origin);
+            return;
+        }
+        match (request.method.as_str(), request.path.as_str()) {
             // 浏览器里直接打开 http://<ip>:23244 也能看到服务在跑，方便排查。
             ("GET", "/") => respond(
                 &mut stream,
@@ -242,12 +295,23 @@ impl LanSync {
                     "platform": self.device.platform,
                 })
                 .to_string(),
+                origin,
             ),
-            ("GET", "/info") => respond(&mut stream, 200, "OK", &device_json(&self.device)),
+            ("GET", "/info") => respond(
+                &mut stream,
+                200,
+                "OK",
+                &device_json(&self.device),
+                origin,
+            ),
             ("GET", "/sync/bundle") => {
+                if !self.token_matches(request.token.as_deref()) {
+                    respond(&mut stream, 401, "Unauthorized", &unauthorized(), origin);
+                    return;
+                }
                 let bundle = self.inner.lock().unwrap().bundle.as_ref().map(|item| item.content.clone());
                 match bundle {
-                    Some(content) => respond(&mut stream, 200, "OK", &content),
+                    Some(content) => respond(&mut stream, 200, "OK", &content, origin),
                     None => respond(
                         &mut stream,
                         409,
@@ -257,12 +321,17 @@ impl LanSync {
                             "message": "对方还没有准备好数据，请让对方停留在「数据同步」页面",
                         })
                         .to_string(),
+                        origin,
                     ),
                 }
             }
             ("POST", "/sync/bundle") => {
-                let size = body.len();
-                let text = match String::from_utf8(body) {
+                if !self.token_matches(request.token.as_deref()) {
+                    respond(&mut stream, 401, "Unauthorized", &unauthorized(), origin);
+                    return;
+                }
+                let size = request.body.len();
+                let text = match String::from_utf8(request.body) {
                     Ok(text) => text,
                     Err(_) => {
                         respond(
@@ -270,6 +339,7 @@ impl LanSync {
                             400,
                             "Bad Request",
                             r#"{"status":false,"message":"同步包不是 UTF-8 文本"}"#,
+                            origin,
                         );
                         return;
                     }
@@ -280,6 +350,7 @@ impl LanSync {
                         400,
                         "Bad Request",
                         r#"{"status":false,"message":"同步包不是合法 JSON"}"#,
+                        origin,
                     );
                     return;
                 }
@@ -303,6 +374,7 @@ impl LanSync {
                     200,
                     "OK",
                     &json!({ "status": true, "bytes": size }).to_string(),
+                    origin,
                 );
             }
             _ => respond(
@@ -310,8 +382,14 @@ impl LanSync {
                 404,
                 "Not Found",
                 r#"{"status":false,"message":"没有这个接口"}"#,
+                origin,
             ),
         }
+    }
+
+    /// 交换同步包要求带上广播里发出去的令牌。
+    fn token_matches(&self, token: Option<&str>) -> bool {
+        token.is_some_and(|value| value == self.device.token)
     }
 
     // ------------------------------------------------------------ UDP 发现
@@ -346,6 +424,7 @@ impl LanSync {
             "name": self.device.name,
             "platform": self.device.platform,
             "version": self.device.version,
+            "token": self.device.token,
         })
         .to_string();
         let target = SocketAddr::from(([255, 255, 255, 255], UDP_PORT));
@@ -383,6 +462,7 @@ impl LanSync {
             address,
             port,
             version: value["version"].as_str().unwrap_or("").to_string(),
+            token: value["token"].as_str().unwrap_or("").to_string(),
             last_seen: now_secs(),
         };
         self.inner.lock().unwrap().peers.insert(id, peer);
@@ -398,6 +478,7 @@ fn device_json(device: &DeviceInfo) -> String {
         "app": device.app,
         "version": device.version,
         "port": device.port,
+        "token": device.token,
     })
     .to_string()
 }
@@ -450,8 +531,27 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+struct Request {
+    method: String,
+    path: String,
+    body: Vec<u8>,
+    /// 浏览器请求的来源，用来决定要不要回 CORS 头。
+    origin: Option<String>,
+    /// 配对令牌，交换同步包时必须与广播里的一致。
+    token: Option<String>,
+}
+
+fn header_value(head: &str, name: &str) -> Option<String> {
+    head.lines().skip(1).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_string())
+    })
+}
+
 /// 读一个完整的 HTTP 请求：请求行 + 头（按 Content-Length 读包体）。
-fn read_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
+fn read_request(stream: &mut TcpStream) -> Option<Request> {
     let mut buffer: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let head_end = loop {
@@ -481,6 +581,10 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
         })
         .unwrap_or(0);
     if content_length > MAX_BODY {
+        // 明确回 413：直接断连接的话，推送方只会看到「连接被关闭」。
+        let _ = stream.write_all(
+            b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
         return None;
     }
 
@@ -504,13 +608,38 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
         .next()
         .unwrap_or("/")
         .to_string();
-    Some((method, path, body))
+    Some(Request {
+        method,
+        path,
+        body,
+        origin: header_value(&head, "origin"),
+        token: header_value(&head, "x-starveil-token"),
+    })
 }
 
-fn respond(stream: &mut TcpStream, code: u16, reason: &str, body: &str) {
+fn unauthorized() -> String {
+    r#"{"status":false,"message":"缺少配对令牌，请从设备列表里操作"}"#.to_string()
+}
+
+/// CORS 头只回给白名单来源。其它来源拿不到这个头，浏览器就拦下响应体。
+fn cors_headers(origin: Option<&str>) -> String {
+    match origin {
+        Some(origin) if ALLOWED_ORIGINS.contains(&origin) => format!(
+            "Access-Control-Allow-Origin: {origin}\r\n\
+             Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+             Access-Control-Allow-Headers: content-type, x-starveil-token\r\n\
+             Access-Control-Max-Age: 600\r\n\
+             Vary: Origin\r\n"
+        ),
+        _ => String::new(),
+    }
+}
+
+fn respond(stream: &mut TcpStream, code: u16, reason: &str, body: &str, origin: Option<&str>) {
     let response = format!(
-        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}",
-        body.as_bytes().len()
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{body}",
+        body.as_bytes().len(),
+        cors_headers(origin)
     );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
@@ -546,18 +675,25 @@ fn explain(error: reqwest::Error, url: &str) -> String {
 }
 
 /// 拉取对端准备好的同步包（原文 JSON 文本）。
-pub fn pull(address: &str, port: u16) -> Result<String, String> {
+pub fn pull(address: &str, port: u16, token: &str) -> Result<String, String> {
     let base = base_url(address, port);
     if base.is_empty() {
         return Err("地址不能为空".to_string());
     }
     let url = format!("{base}/sync/bundle");
     let client = build_client()?;
-    let response = client.get(&url).send().map_err(|error| explain(error, &url))?;
+    let response = client
+        .get(&url)
+        .header("X-Starveil-Token", token)
+        .send()
+        .map_err(|error| explain(error, &url))?;
     let status = response.status().as_u16();
     let text = response.text().map_err(|error| format!("读取响应失败：{error}"))?;
     if status == 409 {
         return Err("对方还没有准备好数据，请让对方停留在「数据同步」页面".to_string());
+    }
+    if status == 401 {
+        return Err("对方不认这个配对令牌：请重新搜索设备后再试".to_string());
     }
     if !(200..300).contains(&status) {
         return Err(format!("对方返回 {status}：{text}"));
@@ -569,21 +705,35 @@ pub fn pull(address: &str, port: u16) -> Result<String, String> {
 }
 
 /// 把本机同步包推给对端（对端收到后由用户确认是否应用）。
-pub fn push(address: &str, port: u16, content: &str) -> Result<PushResult, String> {
+pub fn push(address: &str, port: u16, token: &str, content: &str) -> Result<PushResult, String> {
     let base = base_url(address, port);
     if base.is_empty() {
         return Err("地址不能为空".to_string());
+    }
+    if content.len() > MAX_BODY {
+        return Err(format!(
+            "同步包 {} 超过上限 {}，已停止发送",
+            content.len(),
+            MAX_BODY
+        ));
     }
     let url = format!("{base}/sync/bundle");
     let client = build_client()?;
     let response = client
         .post(&url)
         .header("Content-Type", "application/json; charset=utf-8")
+        .header("X-Starveil-Token", token)
         .body(content.to_string())
         .send()
         .map_err(|error| explain(error, &url))?;
     let status = response.status().as_u16();
     let text = response.text().map_err(|error| format!("读取响应失败：{error}"))?;
+    if status == 401 {
+        return Err("对方不认这个配对令牌：请重新搜索设备后再试".to_string());
+    }
+    if status == 413 {
+        return Err("对方拒收：同步包超过 16MB".to_string());
+    }
     if !(200..300).contains(&status) {
         return Err(format!("对方拒绝了这次发送（{status}）：{text}"));
     }
@@ -619,6 +769,7 @@ pub fn probe(address: &str, port: u16) -> Result<Peer, String> {
         address: address.trim().trim_start_matches("http://").to_string(),
         port,
         version: value["version"].as_str().unwrap_or("").to_string(),
+        token: value["token"].as_str().unwrap_or("").to_string(),
         last_seen: now_secs(),
     })
 }
@@ -661,10 +812,12 @@ mod tests {
     #[test]
     fn accepts_and_serves_bundle() {
         let sync = new_sync();
+        let token = sync.device.token.clone();
         let port = serve_once(&sync);
         let body = r#"{"version":2,"follow":[{"platform":"bilibili","roomId":"1"}]}"#;
         let response = reqwest::blocking::Client::new()
             .post(format!("http://127.0.0.1:{port}/sync/bundle"))
+            .header("X-Starveil-Token", &token)
             .body(body)
             .send()
             .expect("推送失败");
@@ -679,7 +832,10 @@ mod tests {
         // 本机发布后，对端拉到的应是同一份内容。
         sync.publish(body.to_string()).expect("发布失败");
         let port = serve_once(&sync);
-        let text = reqwest::blocking::get(format!("http://127.0.0.1:{port}/sync/bundle"))
+        let text = reqwest::blocking::Client::new()
+            .get(format!("http://127.0.0.1:{port}/sync/bundle"))
+            .header("X-Starveil-Token", &token)
+            .send()
             .expect("拉取失败")
             .text()
             .expect("读取失败");
@@ -687,11 +843,69 @@ mod tests {
     }
 
     #[test]
-    fn rejects_broken_payload() {
+    fn bundle_requires_pairing_token() {
         let sync = new_sync();
+        sync.publish(r#"{"version":2}"#.to_string()).expect("发布失败");
+        for token in [None, Some("wrong")] {
+            let port = serve_once(&sync);
+            let mut request = reqwest::blocking::Client::new()
+                .get(format!("http://127.0.0.1:{port}/sync/bundle"));
+            if let Some(token) = token {
+                request = request.header("X-Starveil-Token", token);
+            }
+            let response = request.send().expect("请求失败");
+            assert_eq!(response.status().as_u16(), 401, "令牌不对时必须拒绝");
+            assert!(!response.text().unwrap().contains("version"));
+        }
+        // 推送同样要令牌，否则任何人都能往收件箱里塞包。
         let port = serve_once(&sync);
         let response = reqwest::blocking::Client::new()
             .post(format!("http://127.0.0.1:{port}/sync/bundle"))
+            .body(r#"{"version":2}"#)
+            .send()
+            .expect("推送失败");
+        assert_eq!(response.status().as_u16(), 401);
+        assert!(sync.take_inbox().is_empty());
+    }
+
+    #[test]
+    fn cors_only_for_known_origins() {
+        let sync = new_sync();
+        let token = sync.device.token.clone();
+        let port = serve_once(&sync);
+        let allowed = reqwest::blocking::Client::new()
+            .get(format!("http://127.0.0.1:{port}/info"))
+            .header("Origin", "tauri://localhost")
+            .send()
+            .expect("请求失败");
+        assert_eq!(
+            allowed
+                .headers()
+                .get("access-control-allow-origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("tauri://localhost")
+        );
+        let port = serve_once(&sync);
+        let denied = reqwest::blocking::Client::new()
+            .get(format!("http://127.0.0.1:{port}/sync/bundle"))
+            .header("Origin", "https://evil.example")
+            .header("X-Starveil-Token", &token)
+            .send()
+            .expect("请求失败");
+        assert!(
+            denied.headers().get("access-control-allow-origin").is_none(),
+            "白名单之外的来源不回 CORS 头"
+        );
+    }
+
+    #[test]
+    fn rejects_broken_payload() {
+        let sync = new_sync();
+        let token = sync.device.token.clone();
+        let port = serve_once(&sync);
+        let response = reqwest::blocking::Client::new()
+            .post(format!("http://127.0.0.1:{port}/sync/bundle"))
+            .header("X-Starveil-Token", &token)
             .body("not json")
             .send()
             .expect("推送失败");
@@ -703,8 +917,13 @@ mod tests {
     #[test]
     fn reports_not_ready_when_bundle_missing() {
         let sync = new_sync();
+        let token = sync.device.token.clone();
         let port = serve_once(&sync);
-        let response = reqwest::blocking::get(format!("http://127.0.0.1:{port}/sync/bundle")).expect("请求失败");
+        let response = reqwest::blocking::Client::new()
+            .get(format!("http://127.0.0.1:{port}/sync/bundle"))
+            .header("X-Starveil-Token", &token)
+            .send()
+            .expect("请求失败");
         assert_eq!(response.status().as_u16(), 409);
         assert!(response.text().unwrap().contains("还没有准备好"));
     }

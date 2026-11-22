@@ -386,17 +386,24 @@ impl LiveSite for HuyaSite {
             .unwrap_or_default();
 
         let mut token_cache: BTreeMap<String, String> = BTreeMap::new();
+        let mut token_error: Option<String> = None;
         let mut urls: Vec<String> = Vec::new();
         for line in lines {
             // Dart 版每次取流都会向 getCdnTokenInfoEx 换新 token；
-            // 页面里的 anti-code 只能撑几秒，必须优先用新 token。
-            let token = token_cache
-                .entry(line.stream_name.clone())
-                .or_insert_with(|| {
-                    crate::huya_token::fetch_token(&line.stream_name)
-                        .unwrap_or_else(|_| line.anti_code.clone())
-                })
-                .clone();
+            // 页面里的 anti-code 只能撑几秒，用它拼出来的地址必然 403，不做回退。
+            let token = match token_cache.get(&line.stream_name) {
+                Some(cached) => cached.clone(),
+                None => match crate::huya_token::fetch_token(&line.stream_name) {
+                    Ok(token) => {
+                        token_cache.insert(line.stream_name.clone(), token.clone());
+                        token
+                    }
+                    Err(error) => {
+                        token_error = Some(error.to_string());
+                        continue;
+                    }
+                },
+            };
             let mut fresh = line.clone();
             fresh.anti_code = token;
             if let Some(url) = build_play_url(&fresh, *presenter_uid, bitrate, now_ms) {
@@ -408,6 +415,9 @@ impl LiveSite for HuyaSite {
         // 那一侧还有额外要求。与其给用户一条必失败的线路，不如只交 FLV。
         urls.sort_by_key(|url| cdn_rank(url));
         if urls.is_empty() {
+            if let Some(error) = token_error {
+                return Err(LiveError::network(format!("虎牙取流凭证获取失败：{error}")));
+            }
             return Err(LiveError::protocol("虎牙没有可用的播放地址"));
         }
         Ok(PlayUrls::new(urls).header("user-agent", DESKTOP_UA))

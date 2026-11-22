@@ -16,7 +16,7 @@ import {
   toggleFollow,
   toggleTheme,
 } from './store.js';
-import { escapeHtml, openModal, toast } from './ui.js';
+import { dismissOverlays, escapeHtml, openModal, toast } from './ui.js';
 import { renderHome } from './pages/home.js';
 import { renderCategory } from './pages/category.js';
 import { renderCategoryRooms } from './pages/category-rooms.js';
@@ -494,8 +494,8 @@ function dropCachedPage(cacheKey) {
 }
 
 function render({ keepScroll = false, dir = 'forward', animate = true, fresh = false } = {}) {
-  // 路由切换时关掉可能还没关的浮层菜单，避免它跟着进入下一个页面。
-  for (const overlay of document.querySelectorAll('.menu-overlay')) overlay.remove();
+  // 路由切换时关掉可能还没关的浮层，避免它跟着进入下一个页面。
+  dismissOverlays();
   const leavingScroll = view.scrollTop;
   stashPage();
   if (currentKey) scrollPositions.set(currentKey, leavingScroll);

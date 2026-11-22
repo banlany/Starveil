@@ -84,11 +84,13 @@ export function renderSearch(ctx, params = {}) {
   page.querySelectorAll('.search-tabs .platform-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       const platform = tab.dataset.platform;
+      // selectPlatform 会清空 state.search.keyword，先把关键词取出来。
+      const keyword = state.search.keyword;
       if (!ctx.selectPlatform(platform, { silent: true })) return;
       page.querySelectorAll('.search-tabs .platform-tab').forEach((item) => {
         item.classList.toggle('active', item.dataset.platform === platform);
       });
-      if (state.search.keyword) runSearch(state.search.keyword);
+      if (keyword) runSearch(keyword);
       else renderIdle();
     });
   });

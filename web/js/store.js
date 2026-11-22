@@ -89,7 +89,6 @@ export const DEFAULT_SETTINGS = {
     muteOnStart: false,
     autoSwitchLine: true,
     autoRefresh: true,
-    showStats: false,
     // 缓冲档位：low 低延迟 / normal 标准 / smooth 流畅优先（见 player-buffer.js）。
     buffer: 'normal',
     scaleMode: 'contain',
@@ -245,6 +244,13 @@ function loadSettings() {
     stored = {};
   }
   const settings = merge(clone(DEFAULT_SETTINGS), stored);
+  // 脏数据（整段被写成标量）会让后面读字段抛错、界面直接白屏，逐段回落到默认值。
+  for (const key of ['home', 'appearance', 'player', 'live', 'danmaku', 'follow', 'timer', 'sync', 'other']) {
+    const value = settings[key];
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      settings[key] = clone(DEFAULT_SETTINGS[key] ?? {});
+    }
+  }
   // 兼容顶层的 theme，仅在 appearance 缺该项时回退。
   if (stored.theme && !stored.appearance?.theme) {
     settings.appearance.theme = stored.theme;
@@ -282,6 +288,8 @@ function loadSettings() {
   // 清理已由 player.gpu 取代的两项。
   delete settings.player?.hardwareDecode;
   delete settings.player?.highPerformanceGpu;
+  // 播放统计默认从控制条进入，没有独立开关。
+  delete settings.player?.showStats;
   // 30 帧上限已移除，落到 60 帧。
   if (settings.danmaku?.fps === 30) settings.danmaku.fps = 60;
   // 日志开关没有接入实现，落盘旧值一并清掉。
@@ -394,6 +402,7 @@ export async function applySkin(id) {
   await swapSkinStyle(skin);
   // 图标先换好再重画：反过来的话调用方拿到的还是上一套皮肤的图形。
   await loadSkinIcons(skin.id);
+  iconSkinId = skin.id;
   saveSettings();
   applyTheme();
   return skin;
@@ -480,6 +489,14 @@ function ensureSkinStyle(skin) {
 }
 
 /// 把皮肤的变量真正落到 `<html>` 上：皮肤 → 明暗 → 强调色。
+/// applyTheme 也要换图标：导入数据、恢复默认会直接改外观段，绕过 applySkin。
+let iconSkinId = '';
+function syncSkinIcons(skin) {
+  if (iconSkinId === skin.id) return;
+  iconSkinId = skin.id;
+  void loadSkinIcons(skin.id);
+}
+
 export function applyTheme() {
   const appearance = state.settings.appearance || {};
   const skin = getSkin(appearance.skin);
@@ -499,6 +516,7 @@ export function applyTheme() {
   root.dataset.themeMode = mode;
   root.dataset.motion = sanitizeMotion(appearance.motion, defaultMotion());
   ensureSkinStyle(skin);
+  syncSkinIcons(skin);
 
   // 存原值，落到 DOM 时按当前明暗档换算。
   const accent = accentForMode(skin.id, resolveAccentValue(skin, appearance), effective);
@@ -966,16 +984,23 @@ export function loadSearchHistory() {
   return loadSearch();
 }
 
-/// 导入时整段替换搜索历史。仍然按 12 条上限截断，避免外部包把列表撑爆。
-export function replaceSearchHistory(list) {
-  const cleaned = (Array.isArray(list) ? list : [])
-    .map((item) => String(item ?? '').trim())
-    .filter(Boolean)
-    .slice(0, 12);
+/// 导入时合并搜索历史：本机顺序保留，对端独有的关键词追加在后面，仍按 12 条截断。
+export function mergeSearchHistory(list) {
+  const current = loadSearch().slice();
+  const seen = new Set(current);
+  let added = 0;
+  for (const item of Array.isArray(list) ? list : []) {
+    const keyword = String(item ?? '').trim();
+    if (!keyword || seen.has(keyword)) continue;
+    seen.add(keyword);
+    current.push(keyword);
+    added += 1;
+  }
+  const cleaned = current.slice(0, 12);
   state.search.recent = cleaned;
   if (cleaned.length) localStorage.setItem(SEARCH_KEY, JSON.stringify(cleaned));
   else localStorage.removeItem(SEARCH_KEY);
-  return cleaned.length;
+  return added;
 }
 
 /// 导入/同步观看统计：按房间、按天合并，冲突字段取较大值。

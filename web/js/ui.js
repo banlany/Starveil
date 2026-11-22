@@ -285,6 +285,16 @@ export function promptDialog({ title = '输入', text = '', placeholder = '', va
   });
 }
 
+/// 关掉当前所有浮层。走各自的关闭流程，否则节点被摘掉后，挂在 document 上的监听不会解绑。
+export function dismissOverlays() {
+  for (const modal of document.querySelectorAll('.modal-overlay')) {
+    modal.querySelector('.modal-close')?.click();
+  }
+  for (const menu of document.querySelectorAll('.menu-overlay:not(.closing)')) {
+    menu.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  }
+}
+
 export function openMenu(anchor, items, { align = 'end', placement = 'bottom', gap = 6 } = {}) {
   const rect = anchor.getBoundingClientRect();
   // 弹窗里的下拉要挂进弹窗，否则会被弹窗遮罩盖住（见 menuRoot）。

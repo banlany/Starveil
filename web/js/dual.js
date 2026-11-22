@@ -1,6 +1,7 @@
 // 同屏播放的 B 路：独立取流与播放，向 A 提供音量、对齐与销毁。
 import { api, normalizePlatform } from './api.js';
 import { flvBufferOptions, hlsBufferOptions } from './player-buffer.js';
+import { state } from './store.js';
 
 /// 直链判断：只认 http(s) 且以 .flv / .m3u8 结尾（允许带查询串）。
 const STREAM_URL = /^https?:\/\/\S+\.(flv|m3u8)(\?|#|$)/i;
@@ -190,9 +191,21 @@ export function createDualPlayback(video, onState) {
       fixAudioTimestampGap: true,
     });
     player.attachMediaElement(video);
+    let errored = false;
     player.on(mpegts.Events.ERROR, (_type, detail) => {
+      // 一次故障会连发多条错误事件，只认第一条并立刻拆掉实例。
+      if (errored) return;
+      errored = true;
       console.error('[dual] mpegts error', _type, detail);
-      session.player = null;
+      try {
+        player.destroy();
+      } catch {
+        /* 忽略销毁异常 */
+      }
+      if (session.player === player) {
+        session.player = null;
+        session.protocol = '';
+      }
       scheduleRetry();
     });
     player.on(mpegts.Events.LOADING_COMPLETE, () => {
@@ -275,7 +288,9 @@ export function createDualPlayback(video, onState) {
   async function refreshRoomStream() {
     if (!session.key) return;
     try {
-      const payload = await api.play(session.key, session.qualityIndex);
+      const payload = await api.play(session.key, session.qualityIndex, {
+        forceHttps: state.settings.player.forceHttps,
+      });
       if (session.destroyed || !session.open) return;
       session.lines = toLines(payload);
       playLine(0);
@@ -286,10 +301,15 @@ export function createDualPlayback(video, onState) {
     }
   }
 
+  // 连点载入会并发，只认最后一次的结果。
+  let openRequest = 0;
+
   /// 载入 B：房间走 openRoom + play，直链直接播。
   async function open(input, options = {}) {
     close();
+    const request = ++openRequest;
     const target = await parseDualTarget(options.currentPlatform || 'bilibili', input);
+    if (session.destroyed || request !== openRequest) return snapshot();
     session.open = true;
     session.loading = true;
     session.error = '';
@@ -310,7 +330,7 @@ export function createDualPlayback(video, onState) {
     session.platform = target.platform;
     session.roomId = target.roomId;
     const payload = await api.openRoom(target.platform, target.roomId);
-    if (session.destroyed) return snapshot();
+    if (session.destroyed || request !== openRequest) return snapshot();
     session.key = payload.key;
     session.detail = payload.detail;
     session.title = payload.detail?.user_name || payload.detail?.title || target.roomId;
@@ -328,12 +348,15 @@ export function createDualPlayback(video, onState) {
   }
 
   function close() {
+    openRequest += 1;
     session.open = false;
     session.loading = false;
     session.error = '';
     session.key = '';
     session.detail = null;
+    session.title = '';
     session.lines = [];
+    session.qualities = [];
     session.retries = 0;
     destroyPlayer();
     try {

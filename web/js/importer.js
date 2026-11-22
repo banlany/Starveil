@@ -17,7 +17,7 @@ import {
   loadSearchHistory,
   loadStats,
   merge,
-  replaceSearchHistory,
+  mergeSearchHistory,
   mergeStats,
   saveFollow,
   saveHistory,
@@ -37,12 +37,19 @@ const PLATFORM_LABELS = {
   huya: '虎牙',
 };
 
+/// 主题色只收十六进制色值：非法值写进 `--accent` 会让 color-mix 与派生色一起失效。
+function sanitizeAccent(value) {
+  if (typeof value !== 'string') return '';
+  const text = value.trim();
+  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text) ? text : '';
+}
+
 /// 同步包内容清单，设置页据此渲染说明；增删字段时同步修改。
 export function bundleScope() {
   const { includeHistory, includeAppearance, includeAccounts } = bundleOptions();
   const settingsNote = includeAppearance
-    ? '设置（不含 WebDAV 口令）'
-    : '设置（不含皮肤与高级外观、WebDAV 口令）';
+    ? '设置（不含同步通道配置）'
+    : '设置（不含皮肤与高级外观、同步通道配置）';
   const included = [settingsNote, '关注列表'];
   if (includeHistory) included.push('观看记录');
   if (includeAppearance) included.push('皮肤与高级外观');
@@ -52,8 +59,9 @@ export function bundleScope() {
   if (includeAccounts) included.push(`登录 Cookie（${accountNames}）`);
 
   const excluded = [
-    // 凭据：WebDAV 口令永远不进包，它本身是上传通道的钥匙。
-    'WebDAV 口令',
+    // 凭据：WebDAV 地址、账号与口令只属于本机，它本身是上传通道的钥匙。
+    'WebDAV 地址、账号与口令',
+    '同步内容开关与上次同步时间',
     // 首次运行状态：换个设备就该各自确认一次免责声明，包不替对方做决定。
     '首次运行状态（免责声明确认）',
     // 跟物理设备绑定：窗口位置搬到手机上没有意义，聊天栏宽度换屏就错位。
@@ -83,10 +91,16 @@ function bundleOptions() {
 /// 参与同步与导出的本机数据（中立格式，驼峰字段）。
 /// `history` / `accounts` 由同步内容开关决定，关闭时整段不写。
 export function buildBundle() {
-  // 摘掉 WebDAV 密码，避免随包上传。
+  // 同步通道本身只属于本机：WebDAV 地址、账号、口令与内容开关留在本机，
+  // 带过去会让对端拿自己的口令去连另一台设备填的服务器。
   const settings = clone(state.settings ?? {});
-  if (settings.sync?.webdav) {
-    delete settings.sync.webdav.password;
+  if (settings.sync) {
+    delete settings.sync.webdav;
+    delete settings.sync.includeHistory;
+    delete settings.sync.includeAccounts;
+    delete settings.sync.includeAppearance;
+    delete settings.sync.lastSyncAt;
+    if (!Object.keys(settings.sync).length) delete settings.sync;
   }
   // 首次运行状态不跨设备传递。
   delete settings.disclaimerAccepted;
@@ -190,6 +204,14 @@ function importBundle(data, options = {}) {
   let followCount = 0;
   let historyCount = 0;
 
+  // 更高版本的包可能带本机不认识的语义，拒绝比静默合并安全。
+  const version = Number(data.version) || 1;
+  if (version > BUNDLE_VERSION) {
+    throw new Error(
+      `同步包版本 ${version} 高于本机支持的 ${BUNDLE_VERSION}，请先升级应用`
+    );
+  }
+
   if (Array.isArray(data.follow)) {
     const followMap = new Map(loadFollow().map((item) => [followKey(item.platform, item.room_id), item]));
     for (const item of data.follow) {
@@ -284,17 +306,18 @@ function importBundle(data, options = {}) {
         if (motion) patch.appearance.motion = motion;
         else delete patch.appearance.motion;
       }
-      // 主题色按皮肤各存一份：只留字符串色值与本机存在的皮肤。
+      // 主题色按皮肤各存一份：只留合法色值与本机存在的皮肤。
       const accents = {};
       const incoming = patch.appearance.accents;
       if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
         for (const [id, color] of Object.entries(incoming)) {
-          if (typeof color === 'string' && hasSkin(id)) accents[id] = color;
+          const hex = sanitizeAccent(color);
+          if (hex && hasSkin(id)) accents[id] = hex;
         }
       }
       // 旧包只有一个全局色，落到包里那套皮肤下。
-      const legacyAccent = patch.appearance.accent;
-      if (legacyAccent && typeof legacyAccent === 'string' && patch.appearance.accentSource === 'user') {
+      const legacyAccent = sanitizeAccent(patch.appearance.accent);
+      if (legacyAccent && patch.appearance.accentSource === 'user') {
         const skinId = String(patch.appearance.skin || state.settings.appearance.skin);
         if (hasSkin(skinId)) accents[skinId] = legacyAccent;
       }
@@ -314,6 +337,16 @@ function importBundle(data, options = {}) {
       delete patch.player.highPerformanceGpu;
     }
     if (patch.other && typeof patch.other === 'object') delete patch.other.log;
+    if (patch.sync && typeof patch.sync === 'object') {
+      // 同步通道配置只属于本机：旧包可能带着对端的 WebDAV 地址与内容开关，
+      // 合并进来会让本机拿自己的口令去连别人的服务器，或把 Cookie 一起发出去。
+      delete patch.sync.webdav;
+      delete patch.sync.includeHistory;
+      delete patch.sync.includeAccounts;
+      delete patch.sync.includeAppearance;
+      delete patch.sync.lastSyncAt;
+      if (!Object.keys(patch.sync).length) delete patch.sync;
+    }
     state.settings = merge(clone(state.settings), patch);
     saveSettings();
     applyTheme();
@@ -323,7 +356,7 @@ function importBundle(data, options = {}) {
   // 搜索历史与统计仅当包内带这两段时才合并；统计按房间按天取大值。
   let searchCount = 0;
   if (Array.isArray(data.search)) {
-    searchCount = replaceSearchHistory(data.search);
+    searchCount = mergeSearchHistory(data.search);
   }
   let statsCount = 0;
   if (data.stats && typeof data.stats === 'object') {

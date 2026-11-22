@@ -480,6 +480,11 @@ html.is-mobile .chat-resizer {
     height: 40px;
   }
 
+  /* 音量交给系统音量键：应用内不再提供音量图标与滑条，避免两个音量各调一半。 */
+  html.is-mobile .room-page .player-controls .pc-left {
+    display: none;
+  }
+
   /* 档位文字过长时省略。 */
   html.is-mobile .room-page .player-controls .ctrl-label {
     max-width: 4.6em;

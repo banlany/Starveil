@@ -70,8 +70,12 @@ export function renderCategoryRooms(ctx, params) {
     }
   }
 
+  // 切分类时旧请求可能还在路上：用序号丢弃过期结果，reset 也要能打断在途请求。
+  let loadToken = 0;
+
   async function load(reset) {
-    if (state.categoryRooms.loading) return;
+    if (!reset && state.categoryRooms.loading) return;
+    const token = ++loadToken;
     if (reset) {
       state.categoryRooms.items = [];
       state.categoryRooms.page = 0;
@@ -90,7 +94,7 @@ export function renderCategoryRooms(ctx, params) {
         context.name,
         nextPage
       );
-      if (ctx.route() !== 'categoryRooms') return;
+      if (ctx.route() !== 'categoryRooms' || token !== loadToken) return;
       const seen = new Set(state.categoryRooms.items.map((room) => room.room_id));
       const fresh = items.filter((room) => !seen.has(room.room_id)).map((room) => ({ ...room, platform: context.platform }));
       state.categoryRooms.items.push(...fresh);
@@ -104,12 +108,16 @@ export function renderCategoryRooms(ctx, params) {
         }),
         tail
       );
-      renderTail();
     } catch (error) {
+      if (token !== loadToken) return;
       state.categoryRooms.error = String(error);
-      renderTail();
     } finally {
-      state.categoryRooms.loading = false;
+      // 先复位 loading 再画页脚：renderTail 用 loading 决定显示转圈还是按钮，
+      // 顺序反了页脚会一直停在「正在加载更多」。
+      if (token === loadToken) {
+        state.categoryRooms.loading = false;
+        renderTail();
+      }
     }
   }
 

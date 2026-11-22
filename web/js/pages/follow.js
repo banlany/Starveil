@@ -1,10 +1,10 @@
 // 关注页：本地关注列表、标签与平台筛选。
 import { api, formatOnline, formatCount } from '../api.js';
 import { icon, PLATFORM_META, platformIcon } from '../icons.js';
-import { applyTheme, collectAccounts, followKey, loadFollow, loadLogin, recentVisitCounts, removeFollow, saveFollow, state, updateFollow } from '../store.js';
+import { applyTheme, followKey, loadFollow, loadLogin, recentVisitCounts, removeFollow, saveFollow, state, updateFollow } from '../store.js';
 import { importData } from '../importer.js';
 import { IS_MOBILE } from '../platform.js';
-import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
+import { avatarHtml, bindImageFallback, confirmDialog, emptyState, escapeHtml, loadMore, openMenu, promptDialog, saveJsonFile, toast } from '../ui.js';
 
 /// 自动刷新防循环标记：仅本页触发的重建跳过自动刷新。
 let skipAutoRefreshOnce = false;
@@ -189,8 +189,15 @@ export function renderFollow(ctx) {
     box.textContent = keyword ? `${list.length} 位 · 搜索「${keyword}」` : `${list.length} ${label}`;
   }
 
-  function renderCards() {
+  // 分页：首屏只画「关注每页数量」那么多，滚到底或点按钮再续。
+  let shownCount = 0;
+  function pageSize() {
+    return Math.max(20, Number(state.settings.follow?.pageSize) || 200);
+  }
+
+  function renderCards(reset = true) {
     const list = filtered();
+    if (reset || !shownCount) shownCount = pageSize();
     updateCount(list);
     if (!follows.length) {
       body.replaceChildren(
@@ -233,7 +240,7 @@ export function renderFollow(ctx) {
     grid.className = state.followView === 'grid' ? 'follow-grid' : 'follow-list-view';
     // 手机竖屏一行两张卡，62px 头像会把卡片撑得很高，小一号才匀称。
     const gridAvatar = IS_MOBILE ? 46 : 62;
-    for (const item of list) {
+    for (const item of list.slice(0, shownCount)) {
       const card = document.createElement('article');
       card.className = 'follow-card';
       card.tabIndex = 0;
@@ -292,7 +299,27 @@ export function renderFollow(ctx) {
     }
     body.replaceChildren(grid);
     bindImageFallback(grid);
+    if (shownCount < list.length) {
+      const more = loadMore(`加载更多（还有 ${list.length - shownCount} 位）`);
+      more.addEventListener('click', showMore);
+      body.appendChild(more);
+    }
   }
+
+  function showMore() {
+    const total = filtered().length;
+    if (shownCount >= total) return;
+    shownCount += pageSize();
+    renderCards(false);
+  }
+
+  // 滚到底自动续页：一页 200 位时基本用不到按钮。
+  const scrollView = document.getElementById('view');
+  const onFollowScroll = () => {
+    if (!scrollView) return;
+    if (scrollView.scrollTop + scrollView.clientHeight > scrollView.scrollHeight - 420) showMore();
+  };
+  scrollView?.addEventListener('scroll', onFollowScroll, { passive: true });
 
   function refresh() {
     // 改标签、取消关注这类操作之后的自我重建，不算「用户进入页面」。
@@ -442,21 +469,21 @@ export function renderFollow(ctx) {
     alive = false;
     ctx.setPullRefresh(null);
     stickyObserver?.disconnect();
+    scrollView?.removeEventListener('scroll', onFollowScroll);
   };
 }
 
 async function exportFollow() {
+  // 只导出关注列表：设置、观看记录与登录 Cookie 走设置页的完整备份，
+  // 这里夹带的话，文件一分享出去账号就跟着走了。
   const data = {
     version: 1,
     exportedAt: new Date().toISOString(),
     follows: loadFollow(),
-    settings: state.settings,
-    history: state.history,
-    accounts: collectAccounts(),
   };
-  const filename = `starveil-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const filename = `starveil-follows-${new Date().toISOString().slice(0, 10)}.json`;
   const saved = await saveJsonFile(filename, data);
-  if (saved) toast('已导出关注与设置', 'success');
+  if (saved) toast('已导出关注列表', 'success');
 }
 
 function importFollow(after) {

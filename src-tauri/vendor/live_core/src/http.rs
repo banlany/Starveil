@@ -75,11 +75,22 @@ impl HttpSession {
     fn send(&self, request: RequestBuilder) -> Result<Response, LiveError> {
         let response = request.send()?;
         let status = response.status();
-        if status.as_u16() == 403 || status.as_u16() == 412 {
-            return Err(LiveError::RiskControl(format!("HTTP {}", status.as_u16())));
+        let code = status.as_u16();
+        match code {
+            403 | 412 => return Err(LiveError::RiskControl(format!("HTTP {code}"))),
+            401 => {
+                return Err(LiveError::unsupported("需要登录后才能访问这个接口".to_string()));
+            }
+            429 => {
+                return Err(LiveError::network("请求过于频繁，已被平台限流，请稍后再试"));
+            }
+            _ => {}
         }
         if status.is_server_error() {
-            return Err(LiveError::Network(format!("服务端返回 HTTP {}", status.as_u16())));
+            return Err(LiveError::Network(format!("服务端返回 HTTP {code}")));
+        }
+        if status.is_client_error() {
+            return Err(LiveError::protocol(format!("服务端返回 HTTP {code}")));
         }
         Ok(response)
     }

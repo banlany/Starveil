@@ -78,6 +78,8 @@ const QUEUE_MAX_AGE = 3000;
 
 /// 已预热的表情图缓存（url → Image）。
 const preloadedEmoticons = new Map();
+/// 缓存上限：跨房间只增不减会一直占着解码后的位图。
+const PRELOAD_LIMIT = 300;
 
 function preloadEmoticon(url) {
   if (!url || preloadedEmoticons.has(url)) return;
@@ -87,6 +89,10 @@ function preloadEmoticon(url) {
   image.onerror = () => preloadedEmoticons.delete(url);
   image.src = url;
   preloadedEmoticons.set(url, image);
+  // Map 按插入顺序迭代，超限时丢掉最早的一张。
+  if (preloadedEmoticons.size > PRELOAD_LIMIT) {
+    preloadedEmoticons.delete(preloadedEmoticons.keys().next().value);
+  }
 }
 
 function rendererClass() {
@@ -819,10 +825,11 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       }
       // 行数/区域/速度只影响渲染配置，库内部重排轨道并保留现有弹幕实例。
       syncRenderConfig();
-      // 大表情行数变化：清空已登记图片并按新行数重建避让表。
+      // 大表情行数变化：图片尺寸与避让表都要按新档位重算。
+      // 只清图片会让屏上实例引用到不存在的图，重建一次最干净。
       if (previous && previous.bigEmojiLines !== session.config.bigEmojiLines) {
-        clearImages();
-        syncMaxGrade();
+        rebuild();
+        return;
       }
       // 帧率上限不受重建影响，改完立即生效。
       applyFrameLimit();

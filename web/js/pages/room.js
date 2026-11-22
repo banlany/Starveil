@@ -98,6 +98,8 @@ export function renderRoom(ctx, params = {}) {
         <!-- A 的小窗关闭按钮：跟着小窗走，位置由 positionDualPip 同步。
              单独一个元素而不是塞进 video 里——video 不能有子元素。 -->
         <button class="pip-close" id="pip-close" type="button" title="关闭小窗" hidden>${icon('close', 13)}</button>
+        <div class="gesture-dim" id="gesture-dim"></div>
+        <div class="gesture-hud" id="gesture-hud"><span></span></div>
         <div class="danmaku-layer" id="danmaku-layer"></div>
         <div class="sc-float-layer" id="sc-float-layer"></div>
         <div class="stage-hint" id="stage-hint"><span class="big-spinner"></span><span>正在读取直播间…</span></div>
@@ -428,6 +430,87 @@ export function renderRoom(ctx, params = {}) {
   const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
   for (const name of stageEvents) page.addEventListener(name, onActivity, { passive: true });
 
+  // ------------------------------------------------------------ 滑动手势
+
+  // 左半屏上下滑调亮度（遮罩），右半屏调音量。只在触屏上启用，鼠标拖动会误触。
+  const gestureDim = $('gesture-dim');
+  const gestureHud = $('gesture-hud');
+  const gestureHudText = gestureHud.querySelector('span');
+  const gesture = { pending: false, active: false, x: 0, y: 0, side: 'right', base: 0 };
+  let hudTimer = 0;
+  let brightness = 1;
+
+  function setBrightness(value) {
+    brightness = Math.min(1, Math.max(0.15, value));
+    gestureDim.style.opacity = String((1 - brightness) * 0.85);
+  }
+
+  function showHud(text) {
+    gestureHudText.textContent = text;
+    gestureHud.classList.add('show');
+    clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => gestureHud.classList.remove('show'), 900);
+  }
+
+  function onGestureStart(event) {
+    if (!state.settings.live.gesture || event.touches.length !== 1) return;
+    if (event.target.closest('.player-controls, .room-topbar, .stage-hint, .pip-close, .sc-float-layer')) {
+      return;
+    }
+    const touch = event.touches[0];
+    const rect = stage.getBoundingClientRect();
+    const rightHalf = touch.clientX - rect.left >= rect.width / 2;
+    // 移动端音量由系统音量键控制，右半屏不接管。
+    if (IS_MOBILE && rightHalf) return;
+    gesture.pending = true;
+    gesture.active = false;
+    gesture.x = touch.clientX;
+    gesture.y = touch.clientY;
+    gesture.side = rightHalf ? 'right' : 'left';
+    gesture.base = gesture.side === 'left' ? brightness : video.muted ? 0 : video.volume;
+  }
+
+  function onGestureMove(event) {
+    if (!gesture.pending || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - gesture.x;
+    const dy = touch.clientY - gesture.y;
+    if (!gesture.active) {
+      if (Math.abs(dy) < 14) return;
+      // 横向为主时交还给页面（切页、滚动），别把横向手势吃掉。
+      if (Math.abs(dy) < Math.abs(dx) * 1.2) {
+        gesture.pending = false;
+        return;
+      }
+      gesture.active = true;
+    }
+    // 阻止页面跟着滚：这一步需要非 passive 监听。
+    event.preventDefault();
+    const rect = stage.getBoundingClientRect();
+    const delta = -dy / Math.max(160, rect.height * 0.7);
+    if (gesture.side === 'left') {
+      setBrightness(gesture.base + delta);
+      showHud(`亮度 ${Math.round(brightness * 100)}%`);
+      return;
+    }
+    const value = Math.min(1, Math.max(0, gesture.base + delta));
+    video.volume = value;
+    video.muted = value === 0;
+    session.lastVolume = value || session.lastVolume;
+    updateVolumeIcon();
+    showHud(`音量 ${Math.round(value * 100)}%`);
+  }
+
+  function onGestureEnd() {
+    gesture.pending = false;
+    gesture.active = false;
+  }
+
+  stage.addEventListener('touchstart', onGestureStart, { passive: true });
+  stage.addEventListener('touchmove', onGestureMove, { passive: false });
+  stage.addEventListener('touchend', onGestureEnd, { passive: true });
+  stage.addEventListener('touchcancel', onGestureEnd, { passive: true });
+
   // ------------------------------------------------------------ 弹幕渲染
 
   // 弹幕渲染交给 fly-barrage；需在容器有尺寸后再创建。
@@ -488,20 +571,32 @@ export function renderRoom(ctx, params = {}) {
     return keywords.some((keyword) => message.text.includes(keyword));
   }
 
+  /// 弹幕去重。`dedupeStep` 是窗口内同一 key 允许保留的条数：达到第 step 条起丢弃，
+  /// 所以 2 表示只留一条。窗口由 `dedupeWindow` 秒决定。
   function deduped(message) {
     const config = state.settings.danmaku;
     if (!config.dedupe) return false;
     const now = Date.now();
-    const key = config.dedupeMode === 'user' ? `${message.user}|${message.text}` : message.text;
-    const last = session.dedupe.get(key) || 0;
-    const windowMs = Math.max(1, config.dedupeWindow) * 1000;
-    session.dedupe.set(key, now);
+    const windowMs = Math.max(1, Number(config.dedupeWindow) || 10) * 1000;
+    const step = Math.max(2, Number(config.dedupeStep) || 2);
+    const mode = config.dedupeMode;
+    // content 只看内容；user 看「同一人说的同一句话」；strict 看同一人（不管说什么）。
+    const key =
+      mode === 'content'
+        ? message.text
+        : mode === 'strict'
+          ? `user:${message.user || ''}`
+          : `${message.user}|${message.text}`;
+    const entry = session.dedupe.get(key);
+    const count = entry && now - entry.at < windowMs ? entry.count + 1 : 1;
+    session.dedupe.set(key, { at: now, count });
     if (session.dedupe.size > 600) {
-      for (const [item, time] of session.dedupe) {
-        if (now - time > 15000) session.dedupe.delete(item);
+      // 按当前窗口清理：固定 15 秒会让长窗口的去重提前失效。
+      for (const [item, value] of session.dedupe) {
+        if (now - value.at > windowMs) session.dedupe.delete(item);
       }
     }
-    return now - last < windowMs;
+    return count >= step;
   }
 
   function spawnDanmaku(message) {
@@ -690,7 +785,7 @@ export function renderRoom(ctx, params = {}) {
     bindImageFallback(layer);
   }
 
-  function pushMessage(message) {
+  function pushMessage(message, platform = session.platform) {
     const text = message.text == null ? '' : String(message.text);
     const entry = {
       user: message.user || '',
@@ -701,8 +796,9 @@ export function renderRoom(ctx, params = {}) {
       position: Number(message.position) || 0,
       sc: message.sc || null,
       // 表情信息需带到弹幕层与聊天栏；抖音小表情按本地表情表补齐。
+      // 按弹幕来源平台判断：B 路接抖音时主平台仍是 B 站。
       emoticons:
-        session.platform === 'douyin'
+        platform === 'douyin'
           ? expandDouyinEmoticons(text, message.emoticons) || undefined
           : Array.isArray(message.emoticons) && message.emoticons.length
             ? message.emoticons
@@ -1631,7 +1727,7 @@ export function renderRoom(ctx, params = {}) {
       localStorage.setItem(`${QUALITY_KEY}${session.platform}`, String(index));
     }
     setQualityLabel();
-    refreshStream(false);
+    refreshStream();
   }
 
   /// 把「默认清晰度」映射到当前平台的档位：按关键词从高到低匹配，失败时用平台默认档。
@@ -1691,6 +1787,8 @@ export function renderRoom(ctx, params = {}) {
     session.playerProtocol = '';
     session.playerReady = false;
     session.bytesLoaded = 0;
+    // 断开期间不再累计已观看时长，重连出画后由 playing 重新计时。
+    session.playStartedAt = 0;
   }
 
   // ------------------------------------------------------------ 观看时长统计
@@ -1728,10 +1826,31 @@ export function renderRoom(ctx, params = {}) {
   // 关窗/切页时同步补一次，靠 pagehide 而不是 beforeunload（后者在 WebView2 里不保证触发）。
   const flushWatchOnHide = () => stopWatchClock();
   window.addEventListener('pagehide', flushWatchOnHide);
-  const resumeWatchOnShow = () => {
-    if (!document.hidden && !video.paused) startWatchClock();
+  /// 切到后台：按设置决定停不停播、收不收弹幕；回到前台按原状态恢复。
+  const onVisibilityChange = () => {
+    if (document.hidden) {
+      stopWatchClock();
+      if (!state.settings.live.allowBackground && !video.paused) {
+        session.pausedByHidden = true;
+        video.pause();
+      }
+      if (state.settings.live.hideDanmakuOnMinimize && session.danmakuEnabled) {
+        session.danmakuHidden = true;
+        danmaku?.setEnabled(false);
+      }
+      return;
+    }
+    if (session.pausedByHidden) {
+      session.pausedByHidden = false;
+      video.play().catch(() => {});
+    }
+    if (session.danmakuHidden) {
+      session.danmakuHidden = false;
+      danmaku?.setEnabled(session.danmakuEnabled);
+    }
+    if (!video.paused) startWatchClock();
   };
-  document.addEventListener('visibilitychange', resumeWatchOnShow);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   // 线路播放失败：先自动重连/换线，放弃后显示错误页（FLV 与 HLS 共用）。
   /// 自动重连一轮，返回 false 表示已放弃。连发的 ERROR 由 `reconnecting` 去重。
@@ -1771,6 +1890,7 @@ export function renderRoom(ctx, params = {}) {
         // 续签需带同一个 audioOnly，保持代理条目一致。
         const payload = await api.play(session.key, session.qualityIndex, {
           audioOnly: session.audioOnly,
+          forceHttps: state.settings.player.forceHttps,
         });
         if (session.destroyed) return;
         const lines = buildLines(payload);
@@ -1827,6 +1947,16 @@ export function renderRoom(ctx, params = {}) {
           backBufferLength: 30,
           manifestLoadingTimeOut: 8000,
           fragLoadingTimeOut: 20000,
+          // HLS 直连 CDN：平台要求的 Referer / UA 由协议层给，m3u8 与分片都带上。
+          xhrSetup: (xhr) => {
+            for (const [name, value] of session.headers || []) {
+              try {
+                xhr.setRequestHeader(name, value);
+              } catch {
+                /* 浏览器禁止设置的请求头保持原样 */
+              }
+            }
+          },
         });
         hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
           session.bytesLoaded += Number(data?.frag?.stats?.loaded) || 0;
@@ -1924,8 +2054,22 @@ export function renderRoom(ctx, params = {}) {
         fixAudioTimestampGap: true,
       });
       player.attachMediaElement(video);
+      let errored = false;
       player.on(mpegts.Events.ERROR, (_type, detail) => {
+        // 一路流出错时会连发多条错误事件，只认第一条并立刻拆掉实例。
+        if (errored) return;
+        errored = true;
         console.error('mpegts error', _type, detail);
+        try {
+          player.destroy();
+        } catch {
+          /* 忽略销毁异常 */
+        }
+        if (session.player === player) {
+          session.player = null;
+          session.playerProtocol = '';
+          session.playerReady = false;
+        }
         onLineError(detail);
       });
       player.on(mpegts.Events.LOADING_COMPLETE, () => {
@@ -1970,18 +2114,25 @@ export function renderRoom(ctx, params = {}) {
     return lines;
   }
 
-  async function refreshStream(resetQuality = false) {
+  // 取流请求序号：连点清晰度、卡顿重取与手动刷新会并发，只认最后一次的结果。
+  let streamRequest = 0;
+
+  async function refreshStream() {
     if (!session.key) return;
+    const request = ++streamRequest;
+    const keepLine = session.lineIndex;
     setHint({ spinner: true, text: '正在获取播放地址…' });
     try {
       // 同屏时 A 只要声音：audioOnly 让代理丢掉视频 tag。
       const payload = await api.play(session.key, session.qualityIndex, {
         audioOnly: session.audioOnly,
+        forceHttps: state.settings.player.forceHttps,
       });
-      if (session.destroyed) return;
+      if (session.destroyed || request !== streamRequest) return;
       session.lines = buildLines(payload);
       session.headers = payload.headers || [];
-      session.lineIndex = 0;
+      // 切档、切音频不该顺手把用户手选的线路重置回第 1 条。
+      session.lineIndex = Math.min(keepLine, Math.max(0, session.lines.length - 1));
       session.lineFailures = 0;
       setQualityLabel();
       // 斗鱼地址按 expires_in 排续签，其它平台直接返回。
@@ -1991,9 +2142,9 @@ export function renderRoom(ctx, params = {}) {
         bindHintActions();
         return;
       }
-      playLine(0);
+      playLine(session.lineIndex);
     } catch (error) {
-      if (session.destroyed) return;
+      if (session.destroyed || request !== streamRequest) return;
       setHint({
         text: `获取播放地址失败：${error}`,
         actions: '<button class="btn primary" id="hint-retry">重试</button>',
@@ -2273,12 +2424,31 @@ export function renderRoom(ctx, params = {}) {
   }
 
   /// 定时刷新直播间数据，只重画头部，不碰播放器。
+  /// 主播下播后，按设置跳到关注列表里下一个正在直播的房间。
+  function switchToNextRoom() {
+    const others = loadFollow().filter(
+      (item) =>
+        item.live && !(item.platform === session.platform && String(item.room_id) === String(session.roomId))
+    );
+    if (!others.length) return false;
+    // 同平台优先：跨平台会把主题色、弹幕源一起换掉，尽量少动。
+    const next = others.find((item) => item.platform === session.platform) || others[0];
+    toast('这个直播间已下播，正在切到下一个关注', 'info', 4000);
+    ctx.openRoom(next.platform, next.room_id);
+    return true;
+  }
+
   async function refreshRoomInfo() {
     if (session.destroyed || document.hidden) return;
     try {
       const payload = await api.openRoom(session.platform, session.roomId);
       if (session.destroyed) return;
+      const wasLive = session.detail?.live === true;
       session.detail = payload.detail;
+      if (wasLive && !payload.detail.live && state.settings.live.autoSwitchNext) {
+        switchToNextRoom();
+        return;
+      }
       if (payload.qualities?.length) {
         session.qualities = payload.qualities;
         // 平台中途下架了高档清晰度时，别让下标指到空档上。
@@ -2379,7 +2549,10 @@ export function renderRoom(ctx, params = {}) {
       return;
     }
     try {
-      const payload = await api.play(session.key, session.qualityIndex, { audioOnly: false });
+      const payload = await api.play(session.key, session.qualityIndex, {
+        audioOnly: false,
+        forceHttps: state.settings.player.forceHttps,
+      });
       copyText(payload?.urls?.[0] || current, '直播流地址已复制');
     } catch {
       copyText(current, '直播流地址已复制（只有声音）');
@@ -3112,6 +3285,8 @@ export function renderRoom(ctx, params = {}) {
       session.dualDelayB = 0;
       syncAudioOnly();
       renderDualPanel();
+      // 弹幕正连在 B 上时换了房间，重新连到新的 key。
+      if (session.danmakuSource === 'b') await switchDanmakuSource('b', { force: true });
     } catch (error) {
       toast(`载入 B 失败：${error}`, 'error');
       renderDualPanel();
@@ -3329,9 +3504,10 @@ export function renderRoom(ctx, params = {}) {
   }
 
   /// 换一路弹幕：后端只有一个槽位，先停旧的再连新的。
-  async function switchDanmakuSource(source) {
+  /// `force` 用于 B 换了房间但来源没变的情况，此时必须重连到新的 key。
+  async function switchDanmakuSource(source, { force = false } = {}) {
     const next = source === 'b' ? 'b' : 'a';
-    if (next === session.danmakuSource) return;
+    if (next === session.danmakuSource && !force) return;
     if (next === 'b' && !danmakuTarget('b')) {
       toast('B 没有可用的弹幕');
       return;
@@ -3466,8 +3642,12 @@ export function renderRoom(ctx, params = {}) {
     return { key: session.key, platform: session.platform, detail: session.detail };
   }
 
+  // 监听注册是异步的：连续切源时只让最后一次落地，否则会留下两份监听。
+  let danmakuRequest = 0;
+
   /// source 为 'a' / 'b'；后端只有一个弹幕槽位，切换即重连。
   async function startDanmaku(source = session.danmakuSource) {
+    const request = ++danmakuRequest;
     session.danmakuSource = source === 'b' ? 'b' : 'a';
     const target = danmakuTarget(session.danmakuSource);
     if (!target) {
@@ -3488,10 +3668,14 @@ export function renderRoom(ctx, params = {}) {
       session.danmakuStatus = { state: String(status?.state || ''), reason: String(status?.reason || '') };
       renderDanmakuStatus();
     });
+    if (session.destroyed || request !== danmakuRequest) {
+      unlistenStatus?.();
+      return;
+    }
     const unlisten = await api.onDanmaku((message) => {
-      if (!session.destroyed) pushMessage(message);
+      if (!session.destroyed) pushMessage(message, target.platform);
     });
-    if (session.destroyed) {
+    if (session.destroyed || request !== danmakuRequest) {
       unlisten?.();
       unlistenStatus?.();
       return;
@@ -3500,7 +3684,7 @@ export function renderRoom(ctx, params = {}) {
     state.unlistenDanmakuStatus = unlistenStatus;
     try {
       const options = await prepareDanmakuSignature(target.platform, target.detail);
-      if (session.destroyed) return;
+      if (session.destroyed || request !== danmakuRequest) return;
       await api.startDanmaku(target.key, options);
       // 状态由后端事件驱动，连接成功不写入聊天记录。
     } catch (error) {
@@ -3533,7 +3717,9 @@ export function renderRoom(ctx, params = {}) {
       session.qualities = payload.qualities || [];
       const detailPlatform = normalizePlatform(payload.detail.platform || platform);
       session.platform = detailPlatform;
-      const remembered = Number(localStorage.getItem(`${QUALITY_KEY}${detailPlatform}`));
+      const rememberedRaw = localStorage.getItem(`${QUALITY_KEY}${detailPlatform}`);
+      // getItem 缺键返回 null，Number(null) 是 0，会被当成「记住第 0 档」，默认清晰度就永远不生效。
+      const remembered = rememberedRaw === null || rememberedRaw === '' ? NaN : Number(rememberedRaw);
       // 虎牙 4K/20M 带宽要求高，首次进入默认选蓝光4M。
       const huyaDefault = session.qualities.findIndex((name) => name.includes('4M'));
       const defaultQuality = pickDefaultQuality(detailPlatform, huyaDefault);
@@ -3579,6 +3765,8 @@ export function renderRoom(ctx, params = {}) {
         return;
       }
       await refreshStream();
+      // await 期间可能已经退出直播间，cleanup 清过的定时器不能再建回来。
+      if (session.destroyed) return;
       if (state.settings.player.muteOnStart) {
         video.muted = true;
         updateVolumeIcon();
@@ -3592,7 +3780,7 @@ export function renderRoom(ctx, params = {}) {
       session.lastProgressTime = video.currentTime;
       session.lastProgressAt = Date.now();
       session.stallTimer = setInterval(() => {
-        if (session.destroyed || session.streamDead || video.paused || video.readyState < 2) return;
+        if (session.destroyed || session.streamDead || video.paused) return;
         const now = Date.now();
         // 延迟兜底：落后超过 30 秒时跳回最新位置，日常抖动不处理。
         const bufferedEnd = video.buffered.length
@@ -3612,7 +3800,11 @@ export function renderRoom(ctx, params = {}) {
           session.stallRetries = 0;
           return;
         }
-        if (now - session.lastProgressAt < 6000) return;
+        // 缓冲耗尽时 readyState 会掉到 2 以下，正是最需要兜底的时候；
+        // 只是首帧/重新缓冲期间多给一点时间，别刚进房就换线。
+        const stalledFor = now - session.lastProgressAt;
+        const threshold = video.readyState < 2 ? 12000 : 6000;
+        if (stalledFor < threshold) return;
         session.lastProgressAt = now;
         if (!state.settings.player.autoRefresh) {
           setHint({ text: '直播流已停止，可以刷新继续观看', actions: '<button class="btn primary" id="hint-retry">刷新</button>' });
@@ -3668,6 +3860,8 @@ export function renderRoom(ctx, params = {}) {
     if (event.key === 'Escape') {
       // 桌面全屏交给浏览器自己处理 Esc（它会退出 Fullscreen API）。
       if (document.fullscreenElement) return;
+      // 有弹窗或菜单开着时让浮层自己关，别顺手把直播间退了。
+      if (document.querySelector('.modal-overlay, .menu-overlay')) return;
       event.preventDefault();
       // 安卓剧场模式没有浏览器那一层，Esc（外接键盘）自己退全屏，别一把退出直播间。
       if (page.classList.contains('is-theater')) {
@@ -3740,13 +3934,18 @@ export function renderRoom(ctx, params = {}) {
     stopWatchClock();
     clearInterval(session.watchTimer);
     window.removeEventListener('pagehide', flushWatchOnHide);
-    document.removeEventListener('visibilitychange', resumeWatchOnShow);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     // 聊天标签色条的尺寸监听同样随房间撤掉。
     window.removeEventListener('resize', onChatUnderlineResize);
     window.removeEventListener('orientationchange', onChatUnderlineResize);
     chatTabsObserver?.disconnect();
     clearTimeout(chatUnderlineTimer);
     clearTimeout(session.idleTimer);
+    clearTimeout(hudTimer);
+    stage.removeEventListener('touchstart', onGestureStart);
+    stage.removeEventListener('touchmove', onGestureMove);
+    stage.removeEventListener('touchend', onGestureEnd);
+    stage.removeEventListener('touchcancel', onGestureEnd);
     clearInterval(session.clockTimer);
     clearInterval(session.statsTimer);
     clearInterval(session.infoTimer);
