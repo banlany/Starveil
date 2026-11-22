@@ -19,6 +19,32 @@ use base64::Engine as _;
 use crate::huya_token::{Reader, Writer};
 use tungstenite::client::IntoClientRequest;
 
+/// 房间实时数据。各平台能给的字段不同，只下发拿到的项。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RoomStats {
+    /// 贵宾 / 大航海 / 守护人数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guards: Option<u64>,
+    /// 付费粉丝团人数（斗鱼钻粉）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fans: Option<u64>,
+    /// 粉丝数（斗鱼为房间关注数）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub followers: Option<u64>,
+    /// 实时在线人数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub online: Option<u64>,
+}
+
+impl RoomStats {
+    pub fn is_empty(&self) -> bool {
+        self.guards.is_none()
+            && self.fans.is_none()
+            && self.followers.is_none()
+            && self.online.is_none()
+    }
+}
+
 /// 一条弹幕（或系统提示）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DanmakuMessage {
@@ -37,6 +63,9 @@ pub struct DanmakuMessage {
     /// 表情弹幕（B 站大表情 / 内嵌小表情）；普通弹幕为 None。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emoticons: Option<Vec<Emoticon>>,
+    /// 房间实时数据；只有数据包带这个字段，正文为空。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<RoomStats>,
 }
 
 /// 正文里的一个表情片段。
@@ -80,6 +109,7 @@ impl DanmakuMessage {
             position: 0,
             sc: None,
             emoticons: None,
+            stats: None,
         }
     }
 
@@ -92,6 +122,15 @@ impl DanmakuMessage {
             position: 0,
             sc: None,
             emoticons: None,
+            stats: None,
+        }
+    }
+
+    /// 房间实时数据包：没有正文，前端只取 `stats`。
+    pub fn room_stats(stats: RoomStats) -> Self {
+        Self {
+            stats: Some(stats),
+            ..Self::system("")
         }
     }
 }
@@ -513,6 +552,7 @@ pub fn bilibili_super_chat(data: &serde_json::Value) -> Option<DanmakuMessage> {
             end_time: data.get("end_time").and_then(|v| v.as_u64()).unwrap_or(0),
         }),
         emoticons: None,
+        stats: None,
     })
 }
 
@@ -574,6 +614,7 @@ fn bilibili_parse_json(text: &str, tx: &Sender<DanmakuMessage>) {
             position,
             sc: None,
             emoticons,
+            stats: None,
         });
     }
 }
@@ -1049,13 +1090,12 @@ fn douyu_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
         return;
     };
 
-    for field in text.split('/') {
-        if field.is_empty() {
-            continue;
-        }
-        if let Some(value) = field.strip_prefix("type@=")
-            && value == "chatmsg"
-        {
+    // 斗鱼把房间实时数据也推在这条长连接上，HTTP 侧没有对应接口。
+    let Some(kind) = stt_value(text, "type") else {
+        return;
+    };
+    match kind.as_str() {
+        "chatmsg" => {
             let user = stt_value(text, "nn").unwrap_or_default();
             let message = stt_value(text, "txt").unwrap_or_default();
             let color = stt_value(text, "col")
@@ -1070,11 +1110,29 @@ fn douyu_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
                     position: 0,
                     sc: None,
                     emoticons: None,
+                    stats: None,
                 });
             }
-            return;
         }
+        // 钻粉团人数。
+        "dfnum" => douyu_stats(tx, |stats| stats.fans = stt_num(text, "dfc")),
+        // 实时在线人数；`un` 是「1.9万」这种格式化字符串，取数字字段。
+        "oni" => douyu_stats(tx, |stats| stats.online = stt_num(text, "vn")),
+        _ => {}
     }
+}
+
+fn stt_num(text: &str, key: &str) -> Option<u64> {
+    stt_value(text, key).and_then(|value| value.trim().parse::<u64>().ok())
+}
+
+fn douyu_stats(tx: &Sender<DanmakuMessage>, fill: impl FnOnce(&mut RoomStats)) {
+    let mut stats = RoomStats::default();
+    fill(&mut stats);
+    if stats.is_empty() {
+        return;
+    }
+    let _ = tx.send(DanmakuMessage::room_stats(stats));
 }
 
 #[cfg(test)]
@@ -1201,6 +1259,26 @@ mod tests {
         assert_eq!(messages[0].user, "测试用户");
         assert_eq!(messages[0].text, "你好世界");
         assert_eq!(messages[0].color, Some(0xFF0000));
+    }
+
+    #[test]
+    fn 斗鱼房间数据解析出钻粉与在线() {
+        for (body, fans, online) in [
+            ("type@=dfnum/dfc@=795/rid@=36252/", Some(795), None),
+            ("type@=oni/vn@=19000/rid@=36252/un@=1.9万/", None, Some(19000)),
+        ] {
+            let mut data = vec![0u8; 12];
+            data[0..4].copy_from_slice(&(body.len() as u32 + 9).to_le_bytes());
+            data.extend_from_slice(body.as_bytes());
+            data.push(0);
+            let (tx, rx) = channel();
+            douyu_handle(&data, &tx);
+            let messages: Vec<_> = rx.try_iter().collect();
+            assert_eq!(messages.len(), 1, "{body}");
+            let stats = messages[0].stats.clone().expect("应有 stats");
+            assert_eq!((stats.fans, stats.online), (fans, online), "{body}");
+            assert!(messages[0].text.is_empty());
+        }
     }
 
     #[test]
@@ -1448,6 +1526,7 @@ fn huya_parse_message(data: &[u8], tx: &Sender<DanmakuMessage>) {
         position: 0,
         sc: None,
         emoticons: None,
+        stats: None,
     });
 }
 

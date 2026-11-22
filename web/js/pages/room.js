@@ -217,6 +217,8 @@ export function renderRoom(ctx, params = {}) {
     sendingDanmaku: false,
     // 弹幕连接状态 { state, reason }，供聊天栏顶部状态条使用。
     danmakuStatus: null,
+    // 房间实时数据（钻粉、在线等），随弹幕通道下发。
+    stats: {},
     // 当前播放器对应的协议：'flv'（mpegts.js）或 'hls'（hls.js / 原生 HLS）。
     playerProtocol: '',
     // 线路列表：[{ url, protocol }]，FLV 在前、HLS 作为兜底在后。
@@ -786,6 +788,11 @@ export function renderRoom(ctx, params = {}) {
   }
 
   function pushMessage(message, platform = session.platform) {
+    // 房间实时数据包没有正文，只更新头部与信息面板。
+    if (message.stats) {
+      applyRoomStats(message.stats, platform);
+      if (!message.text) return;
+    }
     const text = message.text == null ? '' : String(message.text);
     const entry = {
       user: message.user || '',
@@ -2378,6 +2385,8 @@ export function renderRoom(ctx, params = {}) {
 
   // 观众数据口径：B 站为累计观看，抖音/快手为实时在看。
   const AUDIENCE_LABEL = { douyin: '在看', kuaishou: '在看' };
+  // 守卫人数在各站的叫法。
+  const GUARD_LABEL = { bilibili: '大航海', huya: '守护' };
 
   /// 观众数据格的文案与数值；无数据返回 null。
   function audienceStat(platform, detail) {
@@ -2406,21 +2415,45 @@ export function renderRoom(ctx, params = {}) {
     $('chat-avatar').innerHTML = avatarHtml(detail.user_name, avatar, 42);
     bindImageFallback(page);
     $('chat-name').textContent = detail.user_name || '聊天';
-    // 聊天区第二行：平台、开播状态、观众数据。
-    const audience = audienceStat(session.platform, detail);
-    const guards = Number(detail.guard_count) || 0;
-    const dataBits = [];
-    if (audience) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(audience.value)} ${audience.label}</span>`);
-    // 大航海单独占一行（flex-basis: 100%）。
-    const guardBit = guards > 0 ? `<span class="chat-head-guard">${icon('anchor', 11)}${guards} 大航海</span>` : '';
-    $('chat-meta').innerHTML =
-      `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
-      (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '') +
-      guardBit;
+    renderChatMeta();
     document.title = `${detail.title || '直播间'} · Starveil`;
     if (cover) {
       $('stage-bg').style.backgroundImage = `url("${cover}")`;
     }
+  }
+
+  /// 聊天区第二行：平台、开播状态、观众数据、守卫与钻粉。
+  /// 实时数据（斗鱼钻粉/在线）由弹幕连接推送，单独重画这一行。
+  function renderChatMeta() {
+    const detail = session.detail;
+    if (!detail) return;
+    const audience = audienceStat(session.platform, detail);
+    const guards = Number(detail.guard_count) || Number(session.stats.guards) || 0;
+    const fans = Number(session.stats.fans) || 0;
+    const dataBits = [];
+    if (audience) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(audience.value)} ${audience.label}</span>`);
+    // 守卫 / 钻粉各自占一行（flex-basis: 100%）。
+    const guardBit = guards > 0
+      ? `<span class="chat-head-guard">${icon('anchor', 11)}${guards} ${GUARD_LABEL[session.platform] || '大航海'}</span>`
+      : '';
+    const fanBit = fans > 0 ? `<span class="chat-head-guard">${icon('star', 11)}${fans} 钻粉</span>` : '';
+    $('chat-meta').innerHTML =
+      `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
+      (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '') +
+      guardBit +
+      fanBit;
+  }
+
+  /// 合并弹幕通道下发的房间数据并重画头部。
+  function applyRoomStats(stats, platform) {
+    // B 路接的是别的房间，那些数字不属于当前房间。
+    if (!stats || platform !== session.platform) return;
+    for (const key of ['guards', 'fans', 'online']) {
+      if (stats[key] == null) continue;
+      const value = Number(stats[key]);
+      if (Number.isFinite(value) && value >= 0) session.stats[key] = value;
+    }
+    renderChatMeta();
   }
 
   /// 定时刷新直播间数据，只重画头部，不碰播放器。
@@ -2761,6 +2794,15 @@ export function renderRoom(ctx, params = {}) {
     const viewersRow = viewers > 0
       ? `<div><span>看过</span><b>${formatOnline(viewers)}</b></div>`
       : '';
+    // 守卫人数（B 站大航海 / 虎牙守护）与斗鱼实时推来的钻粉、在线。
+    const stats = session.stats || {};
+    const statsRow = (label, value) => {
+      const count = Number(value) || 0;
+      return count > 0 ? `<div><span>${label}</span><b>${formatOnline(count)}</b></div>` : '';
+    };
+    const guardsRow = statsRow(GUARD_LABEL[session.platform] || '大航海', Number(detail.guard_count) || stats.guards);
+    const fansRow = statsRow('钻粉', stats.fans);
+    const realtimeRow = statsRow('实时在线', stats.online);
     openModal({
       title: '房间信息',
       width: 520,
@@ -2771,7 +2813,10 @@ export function renderRoom(ctx, params = {}) {
           <div><span>主播</span><b>${escapeHtml(detail.user_name || '')}</b></div>
           <div><span>分区</span><b>${escapeHtml(detail.area || '未提供')}</b></div>
           <div><span>${onlineLabel}</span><b>${formatOnline(detail.online)}</b></div>
+          ${realtimeRow}
           ${viewersRow}
+          ${guardsRow}
+          ${fansRow}
           <div><span>状态</span><b>${detail.live ? '直播中' : '未开播'}</b></div>
           <div><span>已直播</span><b>${escapeHtml(liveDuration)}</b></div>
           <div><span>直播流</span><b>${session.lines.length} 条线路 / ${session.qualities.length} 档清晰度</b></div>
