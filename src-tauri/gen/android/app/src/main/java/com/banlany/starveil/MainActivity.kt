@@ -6,13 +6,16 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.WebView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -29,10 +32,19 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
+        val window = window ?: return
+        // 窗口铺到屏幕边缘（含挖孔），顶部那一条才归应用自己上色；
+        // 内容仍按系统给的 Insets 避让，不会压到状态栏与摄像头。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val params = window.attributes
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = params
+        }
         syncSystemBars()
     }
 
-    /** 从通知栏、其他应用回来时系统会把状态栏放回去，重新隐藏。 */
+    /** 剧院模式下系统栏会被系统放回来（切前台、退出小窗），重新按当前模式同步一次。 */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus && !pipActive) syncSystemBars()
@@ -78,21 +90,23 @@ class MainActivity : TauriActivity() {
     }
 
     /**
-     * 状态栏常驻隐藏，从屏幕边缘划入时临时出现（BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE）。
+     * 系统栏可见性：常态常显，剧院模式（视频铺满）时全部隐藏。
      *
-     * 导航栏不跟着藏：返回手势要用它。剧院模式才连导航栏一起收掉。
+     * 常态不再隐藏状态栏。藏起来之后那一块位置仍然占着，系统用纯黑铺它，
+     * 浅色主题下就是顶部一条黑边；常显时底色由 setSystemBar 跟着主题走，
+     * 与顶栏同色，连成一片。
      */
     private fun syncSystemBars() {
         val window = window ?: return
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        val types = if (theater) {
-            WindowInsetsCompat.Type.systemBars()
+        if (theater) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {
-            WindowInsetsCompat.Type.statusBars()
+            controller.show(WindowInsetsCompat.Type.systemBars())
         }
-        controller.hide(types)
+        ViewCompat.requestApplyInsets(window.decorView)
     }
 
     /**
@@ -231,8 +245,8 @@ class MainActivity : TauriActivity() {
          * 系统栏配色跟随前端主题。
          *
          * `color` 是 ARGB int，`light` 为 1 表示背景是浅色、状态栏图标要用深色。
-         * 主题资源里的固定色（`@color/starveil_status_bar`）只是首帧兜底，
-         * 启动后由前端调这里覆盖，否则浅色主题下状态栏一直是黑的。
+         * 窗口的默认底色是系统给的纯黑，WebView 没盖到的位置（状态栏、挖孔、首帧）会露出它，
+         * 浅色主题下那一条就一直是黑的；所以窗口底色一并换成本主题的底色。
          */
         @Suppress("DEPRECATION")
         @JvmStatic
@@ -242,15 +256,10 @@ class MainActivity : TauriActivity() {
                 val window = activity.window ?: return@runOnUiThread
                 window.statusBarColor = color
                 window.navigationBarColor = color
-                var flags = window.decorView.systemUiVisibility
-                flags = if (light != 0) {
-                    flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-                        View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                } else {
-                    flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() and
-                        View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
-                }
-                window.decorView.systemUiVisibility = flags
+                window.setBackgroundDrawable(ColorDrawable(color))
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.isAppearanceLightStatusBars = light != 0
+                controller.isAppearanceLightNavigationBars = light != 0
             }
             return true
         }
@@ -275,10 +284,6 @@ class MainActivity : TauriActivity() {
                 val window = activity.window ?: return@runOnUiThread
                 theater = on
                 WindowCompat.setDecorFitsSystemWindows(window, !on)
-                if (!on) {
-                    WindowInsetsControllerCompat(window, window.decorView)
-                        .show(WindowInsetsCompat.Type.navigationBars())
-                }
                 activity.syncSystemBars()
             }
             return true
