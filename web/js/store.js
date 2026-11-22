@@ -2,7 +2,7 @@
 import { api, canonicalImage, roomUrl } from './api.js';
 import { setIconOverrides } from './icons.js';
 import { IS_MOBILE } from './platform.js';
-import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAllowsAccent, skinAllowsFont, skinBase, skinHref, skinModes } from '../skins/registry.js';
+import { DEFAULT_SKIN_ID, SKINS, accentForMode, getSkin, skinAccent, skinAllowsAccent, skinAllowsFont, skinAllowsOverrides, skinBase, skinHref, skinModes } from '../skins/registry.js';
 import { resolvedOverrides, sanitizeOverrides } from '../skins/overrides.js';
 import { defaultMotion, sanitizeMotion } from './motion.js';
 import { loadSkinPacks, packCss } from '../skins/pack.js';
@@ -65,15 +65,15 @@ export const DEFAULT_SETTINGS = {
     // 皮肤：配色风格，独立于明暗。清单见 web/skins/registry.js。
     skin: DEFAULT_SKIN_ID,
     theme: 'dark',
-    // 主题色：默认取皮肤 accents 的第一个（皮肤不绑死某个品牌色）。
-    accent: skinAccent(DEFAULT_SKIN_ID),
-    // 主题色是否跟随皮肤；用户自选后不再被皮肤覆盖。
-    accentSource: 'skin',
+    // 主题色按皮肤各记一份，键为皮肤 id；缺省表示跟随该皮肤的默认色。
+    accents: {},
     density: 'comfortable',
     // 界面动效档位：full / reduced / off，首次启动跟随系统偏好。
     motion: defaultMotion(),
     // 用户覆盖的皮肤变量，键为变量名，只存改过的项。
     overrides: {},
+    // 高级外观总开关；关闭时不应用 overrides，皮肤锁死时同样不应用。
+    overridesEnabled: true,
     // 界面字体家族名；空串表示用皮肤自带的字体栈。皮肤锁定字体时不生效。
     font: '',
     // 仅移动端生效：auto / portrait / landscape（桌面端命令是空实现）。
@@ -197,6 +197,9 @@ export const state = {
   unlistenDanmakuStatus: null,
 };
 
+// 迁移结果立即落盘：旧版的 appearance.accent / accentSource 不再留在存储里。
+saveSettings();
+
 /// 某个平台的首页数据槽（没有就新建）。
 export function homeSlot(platform = state.platform) {
   if (!state.homes[platform]) {
@@ -241,24 +244,30 @@ function loadSettings() {
     stored = {};
   }
   const settings = merge(clone(DEFAULT_SETTINGS), stored);
-  // 兼容顶层的 theme/accent，仅在 appearance 缺该项时回退。
+  // 兼容顶层的 theme，仅在 appearance 缺该项时回退。
   if (stored.theme && !stored.appearance?.theme) {
     settings.appearance.theme = stored.theme;
   }
-  if (stored.accent && !stored.appearance?.accent) {
-    settings.appearance.accent = stored.accent;
-  }
-  // 旧数据落到默认皮肤；非默认强调色标记为用户自选。
+  // 旧数据落到默认皮肤。
   if (!stored.appearance?.skin) {
     settings.appearance.skin = DEFAULT_SKIN_ID;
   }
   settings.appearance.skin = getSkin(settings.appearance.skin).id;
   settings.appearance.overrides = sanitizeOverrides(settings.appearance.overrides);
   settings.appearance.motion = sanitizeMotion(settings.appearance.motion, defaultMotion());
-  const bakedAccent = skinAccent(settings.appearance.skin);
-  if (!settings.appearance.accentSource) {
-    settings.appearance.accentSource = settings.appearance.accent === bakedAccent ? 'skin' : 'user';
+  // 主题色按皮肤各存一份。旧版只有一个全局自选色，落到当时生效的皮肤下。
+  const appearance = settings.appearance;
+  if (!appearance.accents || typeof appearance.accents !== 'object' || Array.isArray(appearance.accents)) {
+    appearance.accents = {};
   }
+  const legacy = stored.appearance || {};
+  const legacyAccent = legacy.accent || stored.accent;
+  const legacyFollow = legacy.accentSource
+    ? legacy.accentSource !== 'user'
+    : !legacyAccent || legacyAccent.toLowerCase() === skinAccent(appearance.skin).toLowerCase();
+  if (legacyAccent && !legacyFollow) appearance.accents[appearance.skin] ||= legacyAccent;
+  delete appearance.accent;
+  delete appearance.accentSource;
   // 清掉已删除的设置项，避免随备份导出。
   delete settings.dynamicColor;
   delete settings.appearance?.dynamicColor;
@@ -284,7 +293,7 @@ export function saveSettings() {
   const appearance = state.settings?.appearance;
   if (appearance) {
     state.settings.theme = appearance.theme;
-    state.settings.accent = appearance.accent;
+    state.settings.accent = resolveAccentValue(getSkin(appearance.skin), appearance);
   }
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
 }
@@ -306,11 +315,6 @@ export function setSetting(path, value) {
     node = node[parts[index]];
   }
   node[parts.at(-1)] = value;
-  // 用户亲手挑了强调色：从此切皮肤不再覆盖它。
-  if (path === 'appearance.accent') {
-    if (!state.settings.appearance) state.settings.appearance = {};
-    state.settings.appearance.accentSource = 'user';
-  }
   saveSettings();
   // 只有外观类设置触发 applyTheme 重算样式。
   if (path.startsWith('appearance.')) applyTheme();
@@ -326,11 +330,13 @@ export function resetSettings() {
 /// 皮肤清单：设置页只读，不要在别处再维护一份。
 export { SKINS };
 
-/// 写入主题色；`followSkin` 为真表示跟随皮肤默认色。
+/// 写入当前皮肤的主题色；`followSkin` 为真表示回到这套皮肤的默认色。
 export function setAccent(color, followSkin = false) {
   const appearance = state.settings.appearance;
-  appearance.accent = color;
-  appearance.accentSource = followSkin ? 'skin' : 'user';
+  if (!appearance.accents || typeof appearance.accents !== 'object') appearance.accents = {};
+  const skinId = currentSkin().id;
+  if (followSkin) delete appearance.accents[skinId];
+  else appearance.accents[skinId] = color;
   saveSettings();
   applyTheme();
 }
@@ -350,17 +356,20 @@ export function currentSkin() {
   return getSkin(state.settings.appearance?.skin);
 }
 
-/// 皮肤实际使用的主题色原值：皮肤锁定主题色时忽略用户自选。
+/// 皮肤实际使用的主题色原值：皮肤锁定主题色时忽略自选色。
 function resolveAccentValue(skin, appearance) {
-  return appearance.accentSource === 'user' && appearance.accent && skinAllowsAccent(skin.id)
-    ? appearance.accent
-    : skinAccent(skin.id);
+  const picked = appearance.accents?.[skin.id];
+  return picked && skinAllowsAccent(skin.id) ? picked : skinAccent(skin.id);
+}
+
+/// 某套皮肤记着的主题色原值（不换算明暗档），设置页的皮肤色点用。
+export function skinAccentValue(skinId) {
+  return resolveAccentValue(getSkin(skinId), state.settings.appearance || {});
 }
 
 /// 当前皮肤正在用的主题色原值（不换算明暗档）。
 export function currentAccentValue() {
-  const appearance = state.settings.appearance || {};
-  return resolveAccentValue(getSkin(appearance.skin), appearance);
+  return resolveAccentValue(currentSkin(), state.settings.appearance || {});
 }
 
 /// 当前皮肤正在用的主题色（按 <html data-theme> 换算过）。
@@ -380,12 +389,45 @@ export async function applySkin(id) {
   const skin = getSkin(id);
   const appearance = state.settings.appearance;
   appearance.skin = skin.id;
-  ensureSkinStyle(skin);
+  // 先等新样式表落地：切完立刻重画设置页的话，读到的还是上一套皮肤的取值。
+  await swapSkinStyle(skin);
   // 图标先换好再重画：反过来的话调用方拿到的还是上一套皮肤的图形。
   await loadSkinIcons(skin.id);
   saveSettings();
   applyTheme();
   return skin;
+}
+
+/// 换皮肤样式表并等它生效；href 已经是目标地址时不重复加载。
+function swapSkinStyle(skin) {
+  const link = document.getElementById('skin-css');
+  if (!link || link.getAttribute('href') === skinHref(skin.id)) {
+    ensureSkinStyle(skin);
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      resolve();
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      link.removeEventListener('load', finish);
+      link.removeEventListener('error', finish);
+      // link 的 load 早于样式计算完成，让一帧；后台标签页 rAF 不跑，留个计时兜底。
+      requestAnimationFrame(release);
+      setTimeout(release, 80);
+    };
+    link.addEventListener('load', finish);
+    link.addEventListener('error', finish);
+    ensureSkinStyle(skin);
+    // 样式表已在缓存里时可能不触发 load，兜底放行。
+    setTimeout(finish, 600);
+  });
 }
 
 /// 加载皮肤图标覆盖表；失败时退回基础表。
@@ -465,7 +507,7 @@ export function applyTheme() {
   root.style.setProperty('--accent-on', isLightColor(accent) ? '#15151b' : '#ffffff');
 
   // 变量覆盖层：密度预设打底，用户覆盖值优先，inline style 高于 skin.css。
-  const overrides = resolvedOverrides(appearance);
+  const overrides = resolvedOverrides(appearance, !skinAllowsOverrides(skin.id));
   applyOverrideVars(overrides);
 
   // 皮肤锁定字体时清掉覆盖，切回开放的皮肤再恢复原值。

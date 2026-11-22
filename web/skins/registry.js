@@ -11,6 +11,7 @@
 //   titlebar       'traffic' 表示 macOS 红绿灯，缺省为 Windows 右侧三键
 //   allowAccent    缺省开放主题色；false 锁定为 accents 第一项
 //   allowUserFont  缺省开放界面字体；false 锁定为皮肤自带字体栈
+//   allowOverrides 缺省开放高级外观；false 锁定为皮肤自带形状、间距与动效
 //   base           皮肤包专用的内置皮肤 id，变量基底来自它的 skin.css
 
 export const BUILTIN_SKINS = [
@@ -45,6 +46,8 @@ export const BUILTIN_SKINS = [
     // 系统蓝与系统字体是这套皮肤的一部分，主题色与界面字体都固定。
     allowAccent: false,
     allowUserFont: false,
+    // 全圆角、慢一档动效是这套皮肤的一部分，高级外观固定。
+    allowOverrides: false,
   },
   {
     id: 'cinema',
@@ -59,6 +62,8 @@ export const BUILTIN_SKINS = [
     desc: '纯黑画布、硬边细线；画面上的控件退成浮字，高亮跟随主题色。只提供深色。',
     modes: ['dark'],
     icons: true,
+    // 硬边与紧凑间距是这套皮肤的一部分，高级外观固定。
+    allowOverrides: false,
   },
 ];
 
@@ -130,6 +135,11 @@ export function skinAllowsAccent(id) {
 /// 界面字体是否可由用户更改；缺省开放，只有显式写 false 才锁定。
 export function skinAllowsFont(id) {
   return getSkin(id).allowUserFont !== false;
+}
+
+/// 高级外观是否可由用户调整；缺省开放，只有显式写 false 才锁定。
+export function skinAllowsOverrides(id) {
+  return getSkin(id).allowOverrides !== false;
 }
 
 /// 主题色清单，至少一项；兼容旧的 `accent` 单值写法。

@@ -112,6 +112,7 @@ export function sanitizeSkinPack(raw) {
     titlebar: TITLEBAR_MODES.includes(raw.titlebar) ? raw.titlebar : 'windows',
     allowAccent: raw.allowAccent !== false,
     allowUserFont: raw.allowUserFont !== false,
+    allowOverrides: raw.allowOverrides !== false,
     vars: { dark: cleanVars(raw.vars?.dark), light: cleanVars(raw.vars?.light) },
     icons: cleanIcons(raw.icons),
   };
@@ -189,6 +190,7 @@ export function templatePack(skin) {
     titlebar: TITLEBAR_MODES.includes(skin.titlebar) ? skin.titlebar : 'windows',
     allowAccent: skin.allowAccent !== false,
     allowUserFont: skin.allowUserFont !== false,
+    allowOverrides: skin.allowOverrides !== false,
     vars: { dark: {}, light: {} },
     icons: {},
   };

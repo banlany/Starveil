@@ -72,7 +72,12 @@ export function sanitizeOverrides(input) {
 }
 
 /// 密度预设打底，用户覆盖值优先。
-export function resolvedOverrides(appearance) {
+/// 皮肤锁死时形状、间距、动效全部固定，密度预设也不参与；
+/// 总开关关闭只停用用户覆盖项，密度预设照旧。
+export function resolvedOverrides(appearance, skinLocked = false) {
+  if (skinLocked) return {};
   const density = appearance?.density || 'comfortable';
-  return { ...(DENSITY_PRESETS[density] || {}), ...sanitizeOverrides(appearance?.overrides) };
+  const base = DENSITY_PRESETS[density] || {};
+  if (appearance?.overridesEnabled === false) return { ...base };
+  return { ...base, ...sanitizeOverrides(appearance?.overrides) };
 }

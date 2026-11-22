@@ -80,7 +80,7 @@
 只填一项时设置页的明暗选项收窄成一项。
 
 **第 4 步 · 主题色与能力**
-写 `accents`，第一项是默认色；按设计意图写 `allowAccent` / `allowUserFont`（见 §5）。
+写 `accents`，第一项是默认色；按设计意图写 `allowAccent` / `allowUserFont` / `allowOverrides`（见 §5）。
 `titlebar` 填 `windows` 或 `traffic`（见 §12）。
 
 **第 5 步 · 变量**
@@ -95,7 +95,7 @@
 「安装皮肤包」选这个 JSON，安装后立即切换。同 `id` 覆盖。
 验收走三处：设置页卡片与色板、首页/分类页卡片、直播间（亮画面与暗画面各看一次控制条与加载提示）。
 
-完整示例（浅色纸感、只提供浅色、锁定主题色与字体）：
+完整示例（浅色纸感、只提供浅色、锁定主题色、字体与高级外观）：
 
 ```json
 {
@@ -110,6 +110,7 @@
   "titlebar": "windows",
   "allowAccent": false,
   "allowUserFont": false,
+  "allowOverrides": false,
   "vars": {
     "dark": {
       "--bg": "#f7f5ef",
@@ -167,6 +168,7 @@
 | `titlebar` | 可选 | 可选 | `windows`（缺省）/ `traffic` | 窗口按钮形态 |
 | `allowAccent` | 可选 | 可选 | 布尔，缺省 `true` | 用户能否改主题色 |
 | `allowUserFont` | 可选 | 可选 | 布尔，缺省 `true` | 用户能否改界面字体 |
+| `allowOverrides` | 可选 | 可选 | 布尔，缺省 `true` | 用户能否调整高级外观（形状 / 间距 / 动效 / 密度） |
 | `vars` | 必填 | — | `{ dark: {}, light: {} }` | 差异变量，见 §7 |
 | `icons` | 可选 | 可选 | 图标名 → SVG 片段；内置侧写 `icons: true` + `icons.js` | 图形覆盖，见 §11 |
 
@@ -188,11 +190,11 @@
 
 ## 5. 能力开关与设置页
 
-两项能力**缺省开放**，只有显式写 `false` 才锁定。皮肤包导出模板会带上当前皮肤的取值。
+三项能力**缺省开放**，只有显式写 `false` 才锁定。皮肤包导出模板会带上当前皮肤的取值。
 
 | `allowAccent` | 设置 → 外观 → 主题颜色 | 运行时 |
 | --- | --- | --- |
-| 省略 / `true` | 色板：`accents` 全部色 + 自定义色 | 用户选色（`appearance.accentSource`）生效 |
+| 省略 / `true` | 色板：`accents` 全部色 + 自定义色 | 用户选色（`appearance.accents[皮肤 id]`）生效 |
 | `false` | 只读一行，显示 `accents[0].name`，说明「这套皮肤固定主题色」 | `--accent` 固定为 `accents[0].color` |
 
 | `allowUserFont` | 设置 → 外观 → 界面字体（桌面 / 移动端横屏） | 运行时 |
@@ -200,16 +202,22 @@
 | 省略 / `true` | 字体下拉 + 「跟随皮肤」 | 写入 `--font-user` |
 | `false` | 只读一行「跟随皮肤」，说明「这套皮肤固定字体」 | 不写 `--font-user` |
 
+| `allowOverrides` | 设置 → 外观 → 界面密度 / 高级外观 | 运行时 |
+| --- | --- | --- |
+| 省略 / `true` | 密度下拉 + 高级外观总开关与 9 条滑杆 | 密度预设与 `appearance.overrides` 都生效 |
+| `false` | 两组各一行只读说明，总开关与滑杆都不出现 | 形状、间距、动效全部取皮肤自带值，密度预设也不参与 |
+
 内置皮肤现状：
 
-| 皮肤 | `accents` | `modes` | `allowAccent` | `allowUserFont` | `titlebar` |
-| --- | --- | --- | --- | --- | --- |
-| `default` 星幕 | 7 色 | `dark` + `light` | 开放 | 开放 | `windows` |
-| `apple` 苹果 | 1 色（系统蓝） | `light` | **锁定** | **锁定** | `traffic` |
-| `cinema` OLED 影院 | 5 色 | `dark` | 开放 | 开放 | `windows` |
+| 皮肤 | `accents` | `modes` | `allowAccent` | `allowUserFont` | `allowOverrides` | `titlebar` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `default` 星幕 | 7 色 | `dark` + `light` | 开放 | 开放 | 开放 | `windows` |
+| `apple` 苹果 | 1 色（系统蓝） | `light` | **锁定** | **锁定** | **锁定** | `traffic` |
+| `cinema` OLED 影院 | 5 色 | `dark` | 开放 | 开放 | **锁定** | `windows` |
 
-苹果把系统蓝与系统字体当作设计的一部分：注册表里写 `allowAccent: false` 与
-`allowUserFont: false`，设置页两项都只显示只读说明，色板与字体下拉都不出现。
+苹果把系统蓝、系统字体与全圆角当作设计的一部分：注册表里写 `allowAccent: false`、
+`allowUserFont: false`、`allowOverrides: false`，设置页三项都只显示只读说明。
+OLED 影院的硬边与紧凑间距同理，只锁 `allowOverrides`。
 
 `modes` 只有一项时，明暗档也锁定：设置页只列出皮肤支持的那一档，存着的偏好保留但不生效。
 
@@ -254,7 +262,11 @@ html[data-skin="apple"][data-theme="light"] { /* 一套值 */ }
    写成 `<html>` 的 inline style。
 
 优先级从低到高：`base.css` 派生值 → 基底 `skin.css` → 皮肤包 `vars` → inline style。
-用户在「高级外观」里拖的滑杆永远盖过皮肤自带值；「恢复皮肤默认值」清掉覆盖项后回到皮肤值。
+用户在「高级外观」里拖的滑杆默认盖过皮肤自带值；总开关关闭或皮肤锁定 `allowOverrides`
+时覆盖项不写入 inline style，「恢复皮肤默认值」清掉覆盖项后回到皮肤值。
+
+切皮肤时 `applySkin()` 等新样式表 `load` 后再重算与重画设置页：改 `link[href]` 是异步加载，
+不等的话设置页滑杆读到的还是上一套皮肤的计算值。
 
 ---
 
@@ -524,12 +536,14 @@ html[data-skin="apple"][data-theme="light"] { /* 一套值 */ }
 ```
 accents[0].color ──> skin.css 的静态 --accent（首帧）
 accents[] ─────────> 设置页色板（allowAccent 为 false 时不出现）
-appearance.accentSource / accent ──> resolveAccentValue() ──> accentForMode() ──> applyTheme()
+appearance.accents[皮肤 id] ──> resolveAccentValue() ──> accentForMode() ──> applyTheme()
    ├─ --accent        强调色
    ├─ --accent-soft   color-mix(强调色 16% / 18%, transparent)
    └─ --accent-on     按亮度取 #15151b 或 #ffffff
 ```
 
+- 主题色**按皮肤各存一份**（`appearance.accents`，键为皮肤 id）：切走再切回来还是原来那份，
+  没有键表示跟随该皮肤的默认色。设置页皮肤卡片的色点也按各自的键取值。
 - `allowAccent: false` 时 `resolveAccentValue()` 直接返回 `accents[0].color`，用户存着的选色不生效。
 - `accentForMode(skinId, color, mode)` 只在**当前皮肤自己**的 `accents` 里查 `light`；
   设置里存的始终是 `color` 原值。
@@ -625,7 +639,11 @@ Windows 没有系统标题栏（`decorations: false`），顶部那条自己画�
 ## 13. 用户覆盖层与密度
 
 `web/skins/overrides.js` 的 `OVERRIDE_GROUPS` 是唯一白名单，设置页「外观 → 高级外观」
-按它生成滑杆。值存在 `appearance.overrides`，只记改过的项，切皮肤保留。
+按它生成滑杆。值存在 `appearance.overrides`，只记改过的项。
+
+「高级外观」顶部的总开关是 `appearance.overridesEnabled`（缺省 `true`）。关闭后覆盖项保留在
+存储里但不写入 inline style，界面回到皮肤自带值；重新打开即恢复，不用重新调。
+皮肤写 `allowOverrides: false` 时开关与滑杆都不出现，覆盖项一律不生效。
 
 | 分组 | 可覆盖变量 | 范围 / 单位 |
 | --- | --- | --- |
@@ -634,10 +652,12 @@ Windows 没有系统标题栏（`decorations: false`），顶部那条自己画�
 | 动效 | `--dur-base` `--icon-stroke` | 0–0.8 s / 1–2.6 |
 
 密度三档写 `--row-min-h` `--row-pad-y` `--item-min-h` 的预设值，与用户覆盖共用同一组变量。
-成对变量（`--media-*` 的底色与字色、`--on-sc*`）不列入白名单。
+密度是独立设置项，不受总开关影响；但 `allowOverrides: false` 的皮肤连密度预设也不应用，
+设置页那一行改成只读说明。成对变量（`--media-*` 的底色与字色、`--on-sc*`）不列入白名单。
 `sanitizeOverrides()` 只接受表内变量与「数值 + 本项单位」，备份与同步包导入时也过这一层。
 
-设计者要知道：上面 9 项与密度预设的 3 项会被用户拖走，皮肤自带值只是默认值。
+设计者要知道：上面 9 项与密度预设的 3 项默认会被用户拖走，皮肤自带值只是默认值；
+不想要这种自由度的皮肤把 `allowOverrides` 写成 `false`。
 
 ---
 
@@ -682,9 +702,10 @@ web/
      modes: ['dark'],
      icons: true,          // 自带 icons.js 才写
      titlebar: 'windows',  // 或 'traffic'
-     // 缺省开放主题色与界面字体；要锁定才写下面两行
+     // 缺省开放主题色、界面字体与高级外观；要锁定才写下面三行
      // allowAccent: false,
      // allowUserFont: false,
+     // allowOverrides: false,
    }
    ```
 
@@ -716,8 +737,9 @@ node tools/check-skin.mjs --verbose  # 附带皮肤数、变量数、组件消�
 4. 卡片三件套（`var(--surface)` 底 + `1px solid var(--line)` + `var(--radius)`）写死；
 5. 皮肤文件缺失、缺少两块作用域、出现变量声明以外的规则、
    `--accent` 与 `accents[0]` 不一致、`skin.css` 里写死动效时长；
-6. `allowAccent` / `allowUserFont` 不是布尔值，或与 `skinAllowsAccent()` / `skinAllowsFont()` 不一致；
-7. 皮肤包缺省没开放两项能力、显式锁定没生效；
+6. `allowAccent` / `allowUserFont` / `allowOverrides` 不是布尔值，或与
+   `skinAllowsAccent()` / `skinAllowsFont()` / `skinAllowsOverrides()` 不一致；
+7. 皮肤包缺省没开放三项能力、显式锁定没生效；
 8. 注册表缺 `accents`、标了 `icons: true` 却没有 `icons.js`、
    `icons.js` 写了基础表不存在的图标名；
 9. `js/icons.js` 的 `icon()` 把线宽写回标签或丢了 `data-icon`；
@@ -738,11 +760,12 @@ node tools/check-skin.mjs --verbose  # 附带皮肤数、变量数、组件消�
 | 启动先闪一下别的颜色 / 别的皮肤 | `skin.css` 的 `--accent` 与 `accents[0].color` 不一致；首帧缓存没带上皮肤包 CSS | 对齐两处色值；`check-skin` 会报 |
 | 换主题色后加载转圈、进度条不变色 | 皮肤的 `--media-accent` 写死成某个 hex | 改成 `var(--accent)` |
 | 白底浮层上的字看不清 | 只翻了 `--media-surface*`，没翻 `--media-fg*`；文字阴影没关 | 成对改，浅底设 `--media-text-shadow: none` |
-| 设置页选不了主题色 / 字体 | 皮肤或包写了 `allowAccent: false` / `allowUserFont: false` | 需要开放就删掉这两行；苹果保留 |
+| 设置页选不了主题色 / 字体 / 高级外观 | 皮肤或包写了 `allowAccent: false` / `allowUserFont: false` / `allowOverrides: false` | 需要开放就删掉对应那行；苹果与 OLED 影院保留 |
 | 选了浅色仍是深色 | `modes` 只列了 `["dark"]` | 补 `light` 并写浅色作用域 |
 | 皮肤包安装失败 | `id` 撞内置 id / 含大写或下划线；`base` 不是内置 id；`format` 不是 `starveil-skin`；值里含 `;` `{}` `<>` `url()` | 按 §4 修正 |
 | 换了图标但界面没变 | 图标名不在 §11 全集里 | 核对名字，`check-skin` 会报 |
-| 改了 `--radius` 没效果 | 用户在「高级外观」里拖过圆角，inline style 优先 | 点「恢复皮肤默认值」 |
+| 改了 `--radius` 没效果 | 用户在「高级外观」里拖过圆角，inline style 优先 | 点「恢复皮肤默认值」，或关掉高级外观总开关 |
+| 高级外观没有滑杆 | 皮肤写了 `allowOverrides: false`，两项都只给只读说明 | 需要调整就换开放的皮肤；设计上就固定则保留 |
 | `check-skin` 报 `var(--x) 没有定义` | 拼错变量名，或某块作用域漏了这一项 | 按 §7 补齐 213 项 |
 | 卡片选中时尺寸跳一下 | `--chip-line` 与 `--chip-on-line` 描边宽度不同 | 写成同一宽度 |
 | 切皮肤后侧栏图标还是旧图形 | 图标没走 `data-icon` 就地重画 | 检查 `icon()` 输出与 `icons.js` |

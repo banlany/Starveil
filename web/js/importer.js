@@ -263,11 +263,32 @@ function importBundle(data, options = {}) {
       if (patch.appearance.overrides !== undefined) {
         patch.appearance.overrides = sanitizeOverrides(patch.appearance.overrides);
       }
+      if (patch.appearance.overridesEnabled !== undefined) {
+        patch.appearance.overridesEnabled = patch.appearance.overridesEnabled !== false;
+      }
       if (patch.appearance.motion !== undefined) {
         const motion = sanitizeMotion(patch.appearance.motion, '');
         if (motion) patch.appearance.motion = motion;
         else delete patch.appearance.motion;
       }
+      // 主题色按皮肤各存一份：只留字符串色值与本机存在的皮肤。
+      const accents = {};
+      const incoming = patch.appearance.accents;
+      if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+        for (const [id, color] of Object.entries(incoming)) {
+          if (typeof color === 'string' && hasSkin(id)) accents[id] = color;
+        }
+      }
+      // 旧包只有一个全局色，落到包里那套皮肤下。
+      const legacyAccent = patch.appearance.accent;
+      if (legacyAccent && typeof legacyAccent === 'string' && patch.appearance.accentSource === 'user') {
+        const skinId = String(patch.appearance.skin || state.settings.appearance.skin);
+        if (hasSkin(skinId)) accents[skinId] = legacyAccent;
+      }
+      delete patch.appearance.accent;
+      delete patch.appearance.accentSource;
+      if (Object.keys(accents).length) patch.appearance.accents = accents;
+      else delete patch.appearance.accents;
     }
     // 剔除已废弃的 danmaku.blockUsers；30 帧上限已移除。
     if (patch.danmaku && typeof patch.danmaku === 'object') {

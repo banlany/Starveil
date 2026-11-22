@@ -4,7 +4,6 @@ import {
   aggregateStats,
   applySkin,
   applyTheme,
-  currentAccent,
   currentAccentValue,
   currentSkin,
   clearHistory,
@@ -23,10 +22,11 @@ import {
   setAccent,
   setOverride,
   setSetting,
+  skinAccentValue,
   state,
 } from '../store.js';
 import { icon, PLATFORM_META, platformAsset } from '../icons.js';
-import { SKINS, accentForMode, skinAccents, skinAllowsAccent, skinAllowsFont, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
+import { SKINS, accentForMode, skinAccents, skinAllowsAccent, skinAllowsFont, skinAllowsOverrides, skinModes, DEFAULT_SKIN_ID } from '../../skins/registry.js';
 import { OVERRIDE_GROUPS, formatOverride } from '../../skins/overrides.js';
 import { addEnterClass } from '../motion.js';
 import { installSkinPack, removeSkinPack, templatePack } from '../../skins/pack.js';
@@ -56,7 +56,7 @@ import {
 } from '../ui.js';
 
 // 兜底版本号，与 tauri.conf.json 一致；运行时优先用 app.getVersion()。
-const FALLBACK_VERSION = '0.8.1';
+const FALLBACK_VERSION = '0.8.2';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -393,10 +393,9 @@ function buildRow(config, repaint, ctx) {
       card.type = 'button';
       card.className = `skin-card${skin.id === active ? ' is-active' : ''}`;
       card.setAttribute('aria-pressed', String(skin.id === active));
-      // 色点：当前皮肤取实际在用的色，其它皮肤取 accents 第一项；都按当前明暗档换算。
+      // 色点：每套皮肤显示它自己记着的主题色，没选过就是这套皮肤的默认色。
       const modes = skinModes(skin.id);
-      const fallback = skinAccents(skin.id)[0]?.color || 'currentColor';
-      const dot = skin.id === active ? currentAccent() : accentForMode(skin.id, fallback, currentMode());
+      const dot = accentForMode(skin.id, skinAccentValue(skin.id), currentMode());
       card.innerHTML = `
         <span class="skin-dot" style="background:${escapeHtml(dot)}" aria-hidden="true"></span>
         <span class="skin-text">
@@ -615,7 +614,7 @@ function buildRow(config, repaint, ctx) {
       });
       swatches.appendChild(swatch);
     }
-    // 自定义色写入 appearance.accent，并标记为用户自选。
+    // 自定义色写入当前皮肤的自选主题色。
     const custom = !accents.some((accent) => accent.color.toLowerCase() === current);
     const picker = document.createElement('button');
     picker.className = `swatch swatch-custom${custom ? ' active' : ''}`;
@@ -698,6 +697,8 @@ function detailSections(key, ctx, repaint) {
       const locked = modes.length === 1;
       const accentLocked = !skinAllowsAccent(skinId);
       const fontLocked = !skinAllowsFont(skinId);
+      const overrideLocked = !skinAllowsOverrides(skinId);
+      const overrideOn = getSetting('appearance.overridesEnabled') !== false;
       const LOCKED_HINT = '当前皮肤只提供一套配色，明暗随皮肤固定；换一套支持双主题的皮肤即可切换';
       return [
         {
@@ -800,7 +801,12 @@ function detailSections(key, ctx, repaint) {
               }],
           }]
           : []),
-        { label: '界面密度', rows: [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' } }] },
+        {
+          label: '界面密度',
+          rows: overrideLocked
+            ? [{ type: 'info', title: '卡片与列表间距', desc: '这套皮肤固定间距，不提供密度调整', value: '跟随皮肤' }]
+            : [{ type: 'select', key: 'appearance.density', title: '卡片与列表间距', valueMap: { comfortable: '标准', compact: '紧凑', relaxed: '宽松' } }],
+        },
         {
           label: '动效',
           rows: [{
@@ -815,19 +821,31 @@ function detailSections(key, ctx, repaint) {
         },
         {
           label: '高级外观',
-          rows: [
-            ...OVERRIDE_GROUPS.flatMap((group) => group.items.map((item) => ({
-              type: 'override',
-              item,
-              title: `${group.label} · ${item.label}`,
-            }))),
-            {
-              type: 'action',
-              title: '恢复皮肤默认值',
-              desc: '清除全部覆盖项，回到当前皮肤自带的取值',
-              onClick: () => setSetting('appearance.overrides', {}),
-            },
-          ],
+          rows: overrideLocked
+            ? [{ type: 'info', title: '自定义', desc: '这套皮肤固定形状、间距与动效，不提供高级外观调整', value: '跟随皮肤' }]
+            : [
+              {
+                type: 'switch',
+                key: 'appearance.overridesEnabled',
+                title: '自定义形状、间距与动效',
+                desc: '关闭后回到皮肤自带取值，调整过的数值保留',
+              },
+              ...(overrideOn
+                ? [
+                  ...OVERRIDE_GROUPS.flatMap((group) => group.items.map((item) => ({
+                    type: 'override',
+                    item,
+                    title: `${group.label} · ${item.label}`,
+                  }))),
+                  {
+                    type: 'action',
+                    title: '恢复皮肤默认值',
+                    desc: '清除全部覆盖项，回到当前皮肤自带的取值',
+                    onClick: () => setSetting('appearance.overrides', {}),
+                  },
+                ]
+                : []),
+            ],
         },
         // 屏幕方向只有移动端有意义：桌面窗口的尺寸方向由用户自己拖。
         ...(IS_MOBILE
