@@ -4,7 +4,7 @@
 推荐、分类、搜索、直播间与播放。界面是纯 HTML / CSS / ES Modules（无前端框架），
 播放走 mpegts.js（FLV）与 hls.js（HLS），协议层是 Rust 的 [`live_core`](src-tauri/vendor/live_core)。
 
-> **0.8.2** · Windows 10/11 x64 · Android 8.0+（arm64-v8a） · GPL-3.0 · 非官方第三方客户端，仅供学习交流
+> **0.8.3** · Windows 10/11 x64 · Android 8.0+（arm64-v8a） · GPL-3.0 · 非官方第三方客户端，仅供学习交流
 
 ![首页](docs/img/home.png)
 
@@ -28,13 +28,15 @@
   按进房热度排序、导入导出。
 - **观看记录与统计**：记录 / 统计两个视图，统计按本周 / 本月 / 今年 / 全部聚合，
   给出总时长、次数、主播数、日均与主播时长排行。
-- **数据同步**：本机备份、局域网直连（同 Wi-Fi 自动发现）、
-  WebDAV（跨网络）；同步包内容可勾选（观看记录、登录 Cookie 各自默认）。
+- **数据同步**：本机备份、局域网直连（同 Wi-Fi 自动发现）、WebDAV（跨网络）。
+  同步包内容三项可勾选：观看记录与外观（皮肤、明暗、主题色、高级外观）默认带上，
+  登录 Cookie 默认不带。
 - **皮肤**：配色、圆角、阴影、字体、动效、图标质感、窗口按钮形态、压在视频上的浮层与悬停提示
   全部来自皮肤变量，组件样式只消费变量；深浅色是独立维度，皮肤可只提供一档并锁定。
   内置「星幕」（七种预设色 + 自定义色，深 / 浅双档）、「苹果」（浅色单档，macOS 红绿灯）
   与「OLED 影院」（纯黑单档，画面上的控件退成浮字）。
-  主题色与界面字体缺省开放，苹果皮肤两项都锁定；可导入 JSON 皮肤包，只写差异变量即可做一套新皮肤。
+  主题色、界面字体、高级外观三组覆盖缺省开放，皮肤可逐项锁定：苹果皮肤三项全锁，
+  OLED 影院锁定高级外观（密度与圆角固定）。可导入 JSON 皮肤包，只写差异变量即可做一套新皮肤。
   字段、变量总表与设计流程见 [皮肤设计指南](docs/skins.md)。
 - **桌面外壳**：无边框 + 自绘 38px 标题栏，关闭即退出、不驻留后台，可多开。
 - **Android**：竖屏底部 TabBar、横屏左侧栏；直播间竖屏上下分栏，控件收进「更多」；
@@ -81,14 +83,25 @@ cargo tauri android build --apk --target aarch64 # Android 真机 / 发布
 产物在 `src-tauri/gen/android/app/build/outputs/apk/`。`gen/android` 已入库，
 **改包名后必须删掉重新 `cargo tauri android init`**。
 
-**界面调试**：Debug 与 Release 都不带 DevTools（WebView2 不接受 `--remote-debugging-port`），
-界面调试走 Edge 预览：
+**界面调试**：WebView2 的调试端口要用环境变量追加，直接传命令行参数不生效。
+release 构建同样可以连，能读 DOM、截图、量帧率：
+
+```bash
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9333 --remote-allow-origins=*" \
+  ./dist/starveil.exe
+CDP_PORT=9333 node tools/cdp.mjs eval "document.title"   # eval / shot / reload / console
+```
+
+只调界面、不碰 Rust 命令时也可以走 Edge 预览：
 
 ```bash
 python tools/serve.py 1420 web                   # 禁缓存的静态服务
 # 另开 Edge 指向 http://127.0.0.1:1420/index.html?titlebar=1，加 --remote-debugging-port=9225
-CDP_PORT=9225 node tools/cdp.mjs shot shot.png   # 截图 / eval / reload / console
+CDP_PORT=9225 node tools/cdp.mjs shot shot.png
 ```
+
+需要 DevTools 面板时用 `--features devtools` 构建（`cargo build --features devtools`、
+`cargo tauri android build --features devtools --target aarch64 --apk`）。
 
 **数据位置**：桌面端存在 `%LOCALAPPDATA%\Starveil\WebView2`，删除该目录会同时清掉设置与登录态；
 Android 在应用私有目录 `/data/data/com.banlany.starveil`，卸载即清空。
@@ -113,7 +126,8 @@ Starveil/
 │  ├─ js/                   app / api / store / danmaku / tooltip / titlebar / pages/
 │  └─ vendor/               mpegts.js、hls.js、fly-barrage、cryptojs、qrcode
 ├─ tools/                   check-skin / serve / cdp / shot / make_icon
-├─ docs/                    皮肤契约、弹幕库改动清单、界面截图
+├─ docs/                    皮肤协议与组件变量、弹幕库改动清单、界面截图
+├─ dist/                    本机发布产物（可执行文件不入库）
 └─ .github/workflows/       CI：Windows 与 Android 并行构建，手动触发
 ```
 
@@ -124,13 +138,18 @@ Starveil/
 | `recommend` / `search` / `search_anchors` | 推荐、搜索直播间、搜索主播 |
 | `categories` / `category_rooms` | 分类树、分类下直播间 |
 | `open_room` / `play` | 房间详情与清晰度、按清晰度取直链与请求头 |
-| `start_danmaku` / `stop_danmaku` | 弹幕订阅，消息走 `danmaku-batch`，状态走 `danmaku-status` |
+| `douyu_qualities` / `douyu_play` | 斗鱼：提交 WebView 算好的签名换取清晰度列表与直链 |
+| `douyin_query` | 抖音列表接口的签名串拼装（签名在 WebView 里算） |
+| `start_danmaku` / `stop_danmaku` / `send_danmaku` | 弹幕订阅、停止与发送；消息走 `danmaku-batch`，状态走 `danmaku-status` |
 | `resolve_input` | 链接 / 房间号解析 |
 | `set_cookie` / `clear_cookie` / `login_status` | 登录态注入、清除与校验 |
 | `open_login_window` / `capture_login` / `bili_qr_*` | 独立登录窗口、读取 Cookie、B 站扫码 |
 | `webdav_test` / `webdav_upload` / `webdav_download` | WebDAV 探活与整包收发 |
 | `lan_sync_*` | 局域网同步服务的启停、发布、收取与对端拉推 |
-| `set_screen_orientation` / `enter_picture_in_picture` / `set_system_bar` | 安卓方向、小窗、系统栏 |
+| `set_gpu_mode` / `gpu_mode` | 显卡加速模式（切换后需重启） |
+| `set_screen_orientation` / `set_system_bar` / `set_immersive` / `enter_picture_in_picture` | 安卓方向、系统栏、沉浸模式、小窗 |
+| `log_level` / `read_log` / `clear_log` / `share_log_text` / `open_log_dir` | 运行日志的读取、清空、分享与级别切换 |
+| `app_platform` / `list_fonts` / `copy_text` / `open_url` | 平台判断、字体列表、剪贴板与外部链接 |
 
 ## 文档
 
@@ -143,15 +162,21 @@ Starveil/
 
 - **播放内核**：FLV 走 mpegts.js、HLS 走 hls.js，画质切换细节与原生 mpv 不完全一致；
   虎牙与斗鱼只提供 FLV（没有可用的 HLS 出口）。
+- **HLS 线路**：m3u8 与分片直接交给 hls.js，不带 Referer / UA。B 站与抖音实测不校验，
+  照常播放；校验 Referer 的平台只提供 FLV，所以影响面有限。
 - **快手弹幕**未接入（自定义 protobuf + 页面下发 token）；快手搜索需要 did 注册，暂不可用。
 - **发送弹幕**默认隐藏，且目前只有 B 站实现。
+- **抖音**：列表接口的在线人数是「1.2 万」这类展示串，解析不出数字时卡片人气留空；
+  某个档位缺直链时回退到同一清晰度的其它档，档位名与实际码流可能不一致。
 - **斗鱼**：直链带 `expire=300`，到期由代理换上游并重组 FLV，接缝处丢约 1 秒画面；
   网页端拿不到「原画 2K」这一档，清晰度列表按接口返回展示。
+  清晰度列表要现算签名，重新进房刷新详情时若这一步失败，这一轮取不到流，再点一次刷新即可。
 - **Android**：斗鱼弹幕走 8601 明文端口，个别企业 / 校园网会拦截；
   退到后台会暂停播放，不支持后台听声；编解码取决于系统 WebView 版本。
 - **桌面**：自绘标题栏失去了 Windows 原生的贴边吸附；关闭即退出，没有托盘常驻与后台播放。
-- **数据**默认只在本机。只有配置了 WebDAV 并手动触发（或显式打开自动拉取）时，
-  才会把不含 Cookie 的同步包上传；局域网同步也只在打开「数据同步」页时启动。
+- **数据**默认只在本机。只有配置了 WebDAV 并手动触发（或显式打开自动拉取）时才会上传同步包，
+  默认不含 Cookie（勾选「同步登录状态」后才带）。局域网同步在打开「数据同步」页时启动监听，
+  之后一直运行到应用退出（HTTP 23244 / UDP 23245）。
 
 ## 排查
 
@@ -163,6 +188,10 @@ Starveil/
   复制、分享或清空，也能临时切到「调试」级别；单文件超过 512KB 轮转为 `starveil.log.1`，
   只保留上一份。记录内容含请求失败、播放器错误、弹幕断连、panic 与前端未捕获异常，
   不含 Cookie。反馈问题时请附上。日志级别也可在启动前用 `STARVEIL_LOG=debug|info|warn|error` 指定。
+- **画面比所选档位低**：先确认设置 → 账号里该平台是已登录。斗鱼按登录态与设备号分配码流，
+  身份对不上时档位名不变、实际给低码率流。日志里有一行
+  `[douyu] 取流 … 清晰度=原画1080P60 登录=是 直链=xxx.flv`，直链带 `_4000`、`_900`
+  后缀即表示被降档，没有后缀是正常原画。
 - **Chromium 自身日志**：设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging --v=1 --log-file=<路径>`。
 
 ## 许可与致谢
