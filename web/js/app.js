@@ -164,8 +164,6 @@ function openRoom(platform, roomId) {
   // 同平台进房（从搜索结果/首页点卡片）不要动缓存，否则返回后列表和关键词都没了。
   const platformChanged = platform !== state.platform;
   state.platform = platform;
-  state.settings.home.platform = platform;
-  saveSettings();
   if (platformChanged) {
     // 切换平台时清掉上一平台的列表缓存。
     resetSearchState();
@@ -239,11 +237,10 @@ function canSlidePlatform() {
   return !document.querySelector('.modal-overlay, .menu-overlay:not(.closing)');
 }
 
-/// 真正落地切平台：写设置、刷新标签条，列表页从缓存接上或现渲染。
+/// 真正落地切平台：刷新标签条，列表页从缓存接上或现渲染。
+/// 只改本次运行的平台，默认平台由「主页设置 → 默认平台」决定。
 function applyPlatform(platform) {
   state.platform = platform;
-  state.settings.home.platform = platform;
-  saveSettings();
   resetSearchState();
   syncPlatformTabs();
   if (state.page === 'home' || state.page === 'category') {

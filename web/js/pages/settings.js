@@ -874,7 +874,14 @@ function detailSections(key, ctx, repaint) {
         {
           label: '首页内容',
           rows: [
-            { type: 'select', key: 'home.platform', title: '默认平台', valueMap: Object.fromEntries(Object.entries(PLATFORM_META).map(([id, meta]) => [id, meta.name])) },
+            {
+              type: 'select',
+              key: 'home.platform',
+              title: '默认平台',
+              desc: '启动时进入的平台，切换标签不会改动它',
+              valueMap: Object.fromEntries(Object.entries(PLATFORM_META).map(([id, meta]) => [id, meta.name])),
+              onChange: (value) => ctx.selectPlatform(value, { silent: true }),
+            },
             { type: 'select', key: 'home.cardSize', title: '卡片尺寸', valueMap: { small: '小', medium: '标准', large: '大' }, onChange: (value) => applyCardSize(value) },
             { type: 'switch', key: 'home.autoRefresh', title: '回到首页时自动刷新', desc: '关闭后保留上次的推荐列表，点刷新才重新请求' },
             { type: 'switch', key: 'home.showMore', title: '显示「加载更多」', desc: '关闭后只显示首屏推荐，不再自动追加下一页' },

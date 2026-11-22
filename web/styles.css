@@ -1100,7 +1100,9 @@ textarea.input {
 
 .menu {
   position: fixed;
-  min-width: 178px;
+  /* 宽度由内容撑开：文本 + 右侧的对号或取值，短菜单不会被拉成统一宽板。 */
+  width: max-content;
+  min-width: 0;
   max-width: calc(100vw - 16px);
   /* 菜单限高并内部滚动，避免超出视口无法触达。 */
   max-height: calc(100vh - 16px);
@@ -1140,6 +1142,7 @@ textarea.input {
 
 .menu-item {
   width: 100%;
+  min-width: 64px;
   min-height: 34px;
   border-radius: var(--radius-sm);
   padding: 0 10px;
@@ -1161,6 +1164,8 @@ textarea.input {
 
 .menu-item em {
   margin-left: auto;
+  /* 宽度由内容决定，靠 padding 留出与标签的间隔，而不是靠剩余空白。 */
+  padding-left: 14px;
   font-style: normal;
   color: var(--dim);
   font-size: 12px;
