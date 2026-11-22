@@ -386,23 +386,29 @@ impl LiveSite for HuyaSite {
             .unwrap_or_default();
 
         let mut token_cache: BTreeMap<String, String> = BTreeMap::new();
-        let mut token_error: Option<String> = None;
+        // 换 token 失败一次就整场退回页面 anti-code，不按线路重复等超时。
+        let mut token_failed = false;
         let mut urls: Vec<String> = Vec::new();
         for line in lines {
             // Dart 版每次取流都会向 getCdnTokenInfoEx 换新 token；
-            // 页面里的 anti-code 只能撑几秒，用它拼出来的地址必然 403，不做回退。
+            // 页面里的 anti-code 撑得短，换不到时仍然用它，至少能播。
             let token = match token_cache.get(&line.stream_name) {
                 Some(cached) => cached.clone(),
-                None => match crate::huya_token::fetch_token(&line.stream_name) {
-                    Ok(token) => {
-                        token_cache.insert(line.stream_name.clone(), token.clone());
-                        token
-                    }
-                    Err(error) => {
-                        token_error = Some(error.to_string());
-                        continue;
-                    }
-                },
+                None => {
+                    let next = if token_failed {
+                        line.anti_code.clone()
+                    } else {
+                        match crate::huya_token::fetch_token(&line.stream_name) {
+                            Ok(token) => token,
+                            Err(_) => {
+                                token_failed = true;
+                                line.anti_code.clone()
+                            }
+                        }
+                    };
+                    token_cache.insert(line.stream_name.clone(), next.clone());
+                    next
+                }
             };
             let mut fresh = line.clone();
             fresh.anti_code = token;
@@ -415,9 +421,6 @@ impl LiveSite for HuyaSite {
         // 那一侧还有额外要求。与其给用户一条必失败的线路，不如只交 FLV。
         urls.sort_by_key(|url| cdn_rank(url));
         if urls.is_empty() {
-            if let Some(error) = token_error {
-                return Err(LiveError::network(format!("虎牙取流凭证获取失败：{error}")));
-            }
             return Err(LiveError::protocol("虎牙没有可用的播放地址"));
         }
         Ok(PlayUrls::new(urls).header("user-agent", DESKTOP_UA))
@@ -647,5 +650,29 @@ mod tests {
         };
         let url = build_play_url(&line, 1, 8000, 1).unwrap();
         assert!(url.contains("&ratio=8000"));
+    }
+}
+
+
+#[cfg(test)]
+mod proxy_probe {
+    #[test]
+    #[ignore]
+    fn huya_cdn_status() {
+        let url = "http://tx.flv.huya.com/src/294636272-294636272-1265453152455360512-589396000-10057-A-0-1-imgplus.flv?wsSecret=d32ff4b20ddfeda39aeaf29927a07ced&wsTime=6b0414d7&seqid=1795637828071&ctype=tars_mobile&ver=1&fs=bgct&fm=RFdxOEJjSjNoNkRKdDZUWV8kMF8kMV8kMl8kMw%3D%3D&t=103&uid=294636272&uuid=752618159&codec=264";
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap();
+        for _ in 0..3 {
+            let response = client
+                .get(url)
+                .header("referer", "https://www.huya.com/998")
+                .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                .send()
+                .unwrap();
+            println!("status={} final={}", response.status(), response.url());
+            let _ = response.bytes().unwrap().len();
+        }
     }
 }

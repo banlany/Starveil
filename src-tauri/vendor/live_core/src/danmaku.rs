@@ -28,20 +28,11 @@ pub struct RoomStats {
     /// 付费粉丝团人数（斗鱼钻粉）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fans: Option<u64>,
-    /// 粉丝数（斗鱼为房间关注数）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub followers: Option<u64>,
-    /// 实时在线人数。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub online: Option<u64>,
 }
 
 impl RoomStats {
     pub fn is_empty(&self) -> bool {
-        self.guards.is_none()
-            && self.fans.is_none()
-            && self.followers.is_none()
-            && self.online.is_none()
+        self.guards.is_none() && self.fans.is_none()
     }
 }
 
@@ -1116,8 +1107,8 @@ fn douyu_handle(data: &[u8], tx: &Sender<DanmakuMessage>) {
         }
         // 钻粉团人数。
         "dfnum" => douyu_stats(tx, |stats| stats.fans = stt_num(text, "dfc")),
-        // 实时在线人数；`un` 是「1.9万」这种格式化字符串，取数字字段。
-        "oni" => douyu_stats(tx, |stats| stats.online = stt_num(text, "vn")),
+        // 贵宾人数；`un` 是「1.3万」这种格式化字符串，取数字字段 `vn`。
+        "oni" => douyu_stats(tx, |stats| stats.guards = stt_num(text, "vn")),
         _ => {}
     }
 }
@@ -1262,10 +1253,10 @@ mod tests {
     }
 
     #[test]
-    fn 斗鱼房间数据解析出钻粉与在线() {
-        for (body, fans, online) in [
-            ("type@=dfnum/dfc@=795/rid@=36252/", Some(795), None),
-            ("type@=oni/vn@=19000/rid@=36252/un@=1.9万/", None, Some(19000)),
+    fn 斗鱼房间数据解析出贵宾与钻粉() {
+        for (body, guards, fans) in [
+            ("type@=oni/vn@=13000/rid@=36252/un@=1.3万/", Some(13000), None),
+            ("type@=dfnum/dfc@=29/rid@=36252/", None, Some(29)),
         ] {
             let mut data = vec![0u8; 12];
             data[0..4].copy_from_slice(&(body.len() as u32 + 9).to_le_bytes());
@@ -1276,7 +1267,7 @@ mod tests {
             let messages: Vec<_> = rx.try_iter().collect();
             assert_eq!(messages.len(), 1, "{body}");
             let stats = messages[0].stats.clone().expect("应有 stats");
-            assert_eq!((stats.fans, stats.online), (fans, online), "{body}");
+            assert_eq!((stats.guards, stats.fans), (guards, fans), "{body}");
             assert!(messages[0].text.is_empty());
         }
     }

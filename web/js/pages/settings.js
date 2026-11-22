@@ -1043,8 +1043,8 @@ function detailSections(key, ctx, repaint) {
           rows: [
             { type: 'switch', key: 'danmaku.dedupe', title: '启用重复过滤' },
             { type: 'select', key: 'danmaku.dedupeMode', title: '过滤模式', valueMap: { content: '按内容', user: '按用户', strict: '刷屏严格' } },
-            presetRow('danmaku.dedupeWindow', '过滤窗口', DANMAKU_PRESETS.dedupeWindow, (value) => `${value} 秒`, '窗口内重复的弹幕会被合并'),
-            presetRow('danmaku.dedupeStep', '过滤步长', DANMAKU_PRESETS.dedupeStep, (value) => `${value}`),
+            presetRow('danmaku.dedupeWindow', '过滤窗口', DANMAKU_PRESETS.dedupeWindow, (value) => `${value} 秒`, '重复判定的时间范围，超出后重新计数'),
+            presetRow('danmaku.dedupeStep', '过滤步长', DANMAKU_PRESETS.dedupeStep, (value) => `${value}`, '窗口内重复到第几条开始丢，2 表示第二条就丢，后面的也一起丢'),
           ],
         },
         { label: '提示', rows: [{ type: 'info', title: '即时生效', desc: '修改会立即保存，并在当前/下一个直播间生效', value: '已保存到本机' }] },

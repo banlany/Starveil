@@ -2386,7 +2386,7 @@ export function renderRoom(ctx, params = {}) {
   // 观众数据口径：B 站为累计观看，抖音/快手为实时在看。
   const AUDIENCE_LABEL = { douyin: '在看', kuaishou: '在看' };
   // 守卫人数在各站的叫法。
-  const GUARD_LABEL = { bilibili: '大航海', huya: '守护' };
+  const GUARD_LABEL = { bilibili: '大航海', huya: '守护', douyu: '贵宾' };
 
   /// 观众数据格的文案与数值；无数据返回 null。
   function audienceStat(platform, detail) {
@@ -2434,9 +2434,9 @@ export function renderRoom(ctx, params = {}) {
     if (audience) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(audience.value)} ${audience.label}</span>`);
     // 守卫 / 钻粉各自占一行（flex-basis: 100%）。
     const guardBit = guards > 0
-      ? `<span class="chat-head-guard">${icon('anchor', 11)}${guards} ${GUARD_LABEL[session.platform] || '大航海'}</span>`
+      ? `<span class="chat-head-guard">${icon('anchor', 11)}${formatOnline(guards)} ${GUARD_LABEL[session.platform] || '大航海'}</span>`
       : '';
-    const fanBit = fans > 0 ? `<span class="chat-head-guard">${icon('star', 11)}${fans} 钻粉</span>` : '';
+    const fanBit = fans > 0 ? `<span class="chat-head-guard">${icon('star', 11)}${formatOnline(fans)} 钻粉</span>` : '';
     $('chat-meta').innerHTML =
       `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
       (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '') +
@@ -2448,7 +2448,7 @@ export function renderRoom(ctx, params = {}) {
   function applyRoomStats(stats, platform) {
     // B 路接的是别的房间，那些数字不属于当前房间。
     if (!stats || platform !== session.platform) return;
-    for (const key of ['guards', 'fans', 'online']) {
+    for (const key of ['guards', 'fans']) {
       if (stats[key] == null) continue;
       const value = Number(stats[key]);
       if (Number.isFinite(value) && value >= 0) session.stats[key] = value;
@@ -2802,7 +2802,6 @@ export function renderRoom(ctx, params = {}) {
     };
     const guardsRow = statsRow(GUARD_LABEL[session.platform] || '大航海', Number(detail.guard_count) || stats.guards);
     const fansRow = statsRow('钻粉', stats.fans);
-    const realtimeRow = statsRow('实时在线', stats.online);
     openModal({
       title: '房间信息',
       width: 520,
@@ -2813,7 +2812,6 @@ export function renderRoom(ctx, params = {}) {
           <div><span>主播</span><b>${escapeHtml(detail.user_name || '')}</b></div>
           <div><span>分区</span><b>${escapeHtml(detail.area || '未提供')}</b></div>
           <div><span>${onlineLabel}</span><b>${formatOnline(detail.online)}</b></div>
-          ${realtimeRow}
           ${viewersRow}
           ${guardsRow}
           ${fansRow}
