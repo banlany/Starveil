@@ -642,12 +642,13 @@ html.is-theater .room-topbar {
 }
 
 /* ------------------------------------------------------------ 下拉刷新 */
-/* 下拉刷新胶囊外观；位置由 JS 控制。 */
+/* 下拉刷新胶囊：挂在顶栏下方，位移由 JS 控制，未下拉时透明。 */
 .pull-refresh {
   position: fixed;
-  top: calc(var(--safe-top, 0px) + 8px);
+  top: calc(var(--safe-top, 0px) + var(--topbar-height, 54px) + 6px);
   left: 50%;
-  transform: translate(-50%, -56px);
+  transform: translate(-50%, -4px);
+  opacity: 0;
   display: none;
   align-items: center;
   gap: 7px;
@@ -661,7 +662,8 @@ html.is-theater .room-topbar {
   box-shadow: none;
   z-index: 3500;
   pointer-events: none;
-  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
 }
 
 html.is-mobile .pull-refresh {

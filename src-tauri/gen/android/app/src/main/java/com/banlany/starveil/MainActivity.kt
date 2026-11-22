@@ -29,6 +29,13 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
+        syncSystemBars()
+    }
+
+    /** 从通知栏、其他应用回来时系统会把状态栏放回去，重新隐藏。 */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !pipActive) syncSystemBars()
     }
 
     override fun onDestroy() {
@@ -68,6 +75,24 @@ class MainActivity : TauriActivity() {
             }
         }
         return null
+    }
+
+    /**
+     * 状态栏常驻隐藏，从屏幕边缘划入时临时出现（BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE）。
+     *
+     * 导航栏不跟着藏：返回手势要用它。剧院模式才连导航栏一起收掉。
+     */
+    private fun syncSystemBars() {
+        val window = window ?: return
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        val types = if (theater) {
+            WindowInsetsCompat.Type.systemBars()
+        } else {
+            WindowInsetsCompat.Type.statusBars()
+        }
+        controller.hide(types)
     }
 
     /**
@@ -114,6 +139,9 @@ class MainActivity : TauriActivity() {
         /** enterPictureInPictureMode 会先触发 onPause，那时 isInPictureInPictureMode 还是 false。 */
         private var enteringPip = false
         private var pipActive = false
+
+        /** 剧院模式（视频铺满）时连导航栏一起藏，其余时候只藏状态栏。 */
+        private var theater = false
 
         /** 屏幕方向：ActivityInfo 的 0 = LANDSCAPE、1 = PORTRAIT、-1 = UNSPECIFIED。 */
         @JvmStatic
@@ -232,7 +260,7 @@ class MainActivity : TauriActivity() {
         fun isInPip(): Boolean = instance?.isInPictureInPictureMode ?: false
 
         /**
-         * 沉浸式全屏：藏起状态栏与导航栏，退出时恢复。
+         * 沉浸式全屏：藏起状态栏与导航栏，退出时回到「只藏状态栏」的常态。
          *
          * Android WebView 不实现 `requestFullscreen()`（没有 WebChromeClient 的全屏回调），
          * 所以前端的全屏是「CSS 铺满 + 这里把系统栏藏掉」两半拼出来的。
@@ -245,16 +273,13 @@ class MainActivity : TauriActivity() {
             val on = enabled != 0
             activity.runOnUiThread {
                 val window = activity.window ?: return@runOnUiThread
-                val controller = WindowInsetsControllerCompat(window, window.decorView)
-                if (on) {
-                    WindowCompat.setDecorFitsSystemWindows(window, false)
-                    controller.systemBarsBehavior =
-                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    controller.hide(WindowInsetsCompat.Type.systemBars())
-                } else {
-                    controller.show(WindowInsetsCompat.Type.systemBars())
-                    WindowCompat.setDecorFitsSystemWindows(window, true)
+                theater = on
+                WindowCompat.setDecorFitsSystemWindows(window, !on)
+                if (!on) {
+                    WindowInsetsControllerCompat(window, window.decorView)
+                        .show(WindowInsetsCompat.Type.navigationBars())
                 }
+                activity.syncSystemBars()
             }
             return true
         }

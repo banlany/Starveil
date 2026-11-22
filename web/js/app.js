@@ -791,6 +791,8 @@ function initPullRefresh() {
 
   const THRESHOLD = 64;
   const MAX = 96;
+  // 胶囊本身只滑出一小段，手指继续下拉也只是文案变化，别压到列表卡片上。
+  const TRAVEL = 16;
   let startX = 0;
   let startY = 0;
   let pulling = false;
@@ -801,6 +803,7 @@ function initPullRefresh() {
     distance = 0;
     indicator.classList.remove('ready', 'loading');
     indicator.style.transform = '';
+    indicator.style.opacity = '';
     label.textContent = '下拉刷新';
   };
 
@@ -827,7 +830,8 @@ function initPullRefresh() {
     }
     // 0.5 的阻尼：拖一屏只走半屏，手感接近原生下拉。
     distance = Math.min(MAX, delta * 0.5);
-    if (currentMotion() !== 'off') indicator.style.transform = `translate(-50%, ${distance}px)`;
+    indicator.style.opacity = '1';
+    if (currentMotion() !== 'off') indicator.style.transform = `translate(-50%, ${Math.min(distance, TRAVEL)}px)`;
     const ready = distance >= THRESHOLD;
     indicator.classList.toggle('ready', ready);
     label.textContent = ready ? '松开刷新' : '下拉刷新';
@@ -844,7 +848,7 @@ function initPullRefresh() {
     indicator.classList.add('loading');
     indicator.classList.remove('ready');
     label.textContent = '正在刷新…';
-    indicator.style.transform = 'translate(-50%, 56px)';
+    indicator.style.transform = 'translate(-50%, 8px)';
     try {
       await pullRefreshHandler?.();
     } catch {
