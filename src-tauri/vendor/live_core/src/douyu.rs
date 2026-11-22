@@ -20,6 +20,56 @@ const REFERER: &str = "https://www.douyu.com/";
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+// ---------------------------------------------------------------- Cookie
+
+/// 从 Cookie 串里取一个值（同名取第一个，与浏览器的解析顺序一致）。
+pub fn cookie_value(cookie: &str, key: &str) -> Option<String> {
+    cookie.split(';').find_map(|pair| {
+        let (name, value) = pair.trim().split_once('=')?;
+        (name.trim() == key && !value.trim().is_empty()).then(|| value.trim().to_string())
+    })
+}
+
+/// 参与签名的设备号：Cookie 里有 `acf_did` 时必须沿用，保证与请求头身份一致。
+pub fn device_id(login: &str) -> String {
+    cookie_value(login, "acf_did")
+        .filter(|value| value.len() >= 16)
+        .unwrap_or_else(douyu_sign::device_id)
+}
+
+/// 登录 Cookie 加上设备号。登录 Cookie 里已有的键不再追加，
+/// 避免同名 Cookie 出现两次、服务器按第一份算。
+fn merged_cookie(did: &str, login: &str) -> String {
+    let login = login.trim();
+    let mut parts: Vec<String> = Vec::new();
+    if !login.is_empty() {
+        parts.push(login.to_string());
+    }
+    if cookie_value(login, "dy_did").is_none() {
+        parts.push(format!("dy_did={did}"));
+    }
+    if cookie_value(login, "acf_did").is_none() {
+        parts.push(format!("acf_did={did}"));
+    }
+    parts.join("; ")
+}
+
+/// 取流请求的 Cookie：只留鉴权字段。
+///
+/// 带上 `acf_uid` 这类身份字段时，斗鱼会核对设备号与登录态是否来自同一台机器；
+/// 从别处复制来的 Cookie 没有对应设备号，会被判为陌生设备、下发
+/// `_4000` 这类低码率流（档位名仍是「原画1080P60」，实际只有 30 帧）。
+/// 只带 `PHPSESSID` 与 `acf_auth` 时按登录用户的下发，是正常原画。
+pub fn play_cookie(did: &str, login: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for field in ["PHPSESSID", "acf_auth", "acf_did", "dy_did"] {
+        if let Some(value) = cookie_value(login, field) {
+            parts.push(format!("{field}={value}"));
+        }
+    }
+    merged_cookie(did, &parts.join("; "))
+}
+
 // ---------------------------------------------------------------- 纯解析
 
 pub fn parse_search(value: &Value) -> Vec<LiveRoomItem> {
@@ -229,15 +279,24 @@ impl DouyuSite {
         }
     }
 
-    fn headers(&self, rid: &str) -> Vec<(String, String)> {
+    fn headers(&self, http: &HttpSession, rid: &str) -> Vec<(String, String)> {
+        let login = http.cookie().unwrap_or("");
         vec![
             ("referer".to_string(), format!("{REFERER}{rid}")),
             ("user-agent".to_string(), DESKTOP_UA.to_string()),
             (
                 "cookie".to_string(),
-                format!("dy_did={did}; acf_did={did}", did = self.device_id),
+                play_cookie(&self.sign_device_id(http), login),
             ),
         ]
+    }
+
+    /// 签名用的设备号，与请求头 Cookie 里的 `acf_did` 保持一致。
+    fn sign_device_id(&self, http: &HttpSession) -> String {
+        http.cookie()
+            .and_then(|cookie| cookie_value(cookie, "acf_did"))
+            .filter(|value| value.len() >= 16)
+            .unwrap_or_else(|| self.device_id.clone())
     }
 
     fn header_pairs(headers: &[(String, String)]) -> Vec<(&str, &str)> {
@@ -251,7 +310,7 @@ impl DouyuSite {
     ///
     /// 签名约 10 分钟后失效，所以取流前总要重拉重签。
     fn play_args(&self, http: &HttpSession, rid: &str) -> Result<String, LiveError> {
-        let headers = self.headers(rid);
+        let headers = self.headers(http, rid);
         let raw = http.get_text(
             "https://www.douyu.com/swf_api/homeH5Enc",
             &[("rids", rid)],
@@ -268,7 +327,7 @@ impl DouyuSite {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs())
             .unwrap_or_default();
-        douyu_sign::sign(&script, rid, &self.device_id, timestamp).map_err(|error| {
+        douyu_sign::sign(&script, rid, &self.sign_device_id(http), timestamp).map_err(|error| {
             // 签名引擎失败时不要把底层 TypeError 直接抛给用户，
             // 给一个能指导下一步动作的提示（房间页仍可正常打开）。
             LiveError::unsupported(format!(
@@ -294,7 +353,7 @@ impl DouyuSite {
             rate.map(|rate| rate as i64).unwrap_or(-1)
         ));
 
-        let headers = self.headers(rid);
+        let headers = self.headers(http, rid);
         let value = http.post_form_raw(
             &format!("https://www.douyu.com/lapi/live/getH5Play/{rid}"),
             &args,
@@ -341,7 +400,7 @@ impl LiveSite for DouyuSite {
     }
 
     fn detail(&self, http: &HttpSession, room_id: &str) -> Result<LiveRoomDetail, LiveError> {
-        let headers = self.headers(room_id);
+        let headers = self.headers(http, room_id);
         let value = http.get_json(
             &format!("https://www.douyu.com/betard/{room_id}"),
             &[],

@@ -296,3 +296,42 @@ fn 斗鱼直链由rtmp两段拼成() {
     let url = douyu::parse_play_url(&value).expect("直链");
     assert_eq!(url, "https://hd.douyucdn.cn/live/abc.flv?wsAuth=x&token=y");
 }
+
+#[test]
+fn 登录cookie里的设备号优先参与签名() {
+    // 签名身份和 Cookie 身份必须一致，否则斗鱼把请求当成陌生设备、给降码率的流。
+    let login = "acf_auth=abc; acf_uid=42; acf_did=0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+    assert_eq!(
+        douyu::device_id(login),
+        "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "有 acf_did 时必须沿用"
+    );
+    // 没有登录 Cookie 或没带 acf_did 时退回随机生成的 32 位十六进制。
+    for cookie in ["", "acf_auth=abc", "acf_did=短"] {
+        let did = douyu::device_id(cookie);
+        assert_eq!(did.len(), 32);
+        assert!(did.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
+fn 取流cookie只带鉴权字段() {
+    let did = "0123456789abcdef0123456789abcdef";
+    assert_eq!(
+        douyu::play_cookie(did, ""),
+        format!("dy_did={did}; acf_did={did}"),
+        "匿名时补设备号"
+    );
+
+    // 身份字段会让斗鱼核对设备号，复制来的 Cookie 对不上就降级成低码率流。
+    let login = "PHPSESSID=abc; acf_auth=token; acf_uid=42; dy_auth=jwt; acf_nickname=名字";
+    let cookie = douyu::play_cookie(did, login);
+    assert_eq!(cookie, format!("PHPSESSID=abc; acf_auth=token; dy_did={did}; acf_did={did}"));
+    assert!(!cookie.contains("acf_uid="));
+    assert!(!cookie.contains("dy_auth="));
+
+    // 已有真实设备号时沿用，不再生成第二个。
+    let cookie = douyu::play_cookie(did, "acf_auth=token; acf_did=aaaabbbbccccddddeeeeffff00001111");
+    assert_eq!(cookie.matches("acf_did=").count(), 1);
+    assert!(cookie.contains("acf_did=aaaabbbbccccddddeeeeffff00001111"));
+}

@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use flv::{AudioOnlyFilter, FlvSplicer};
+use live_core::douyu::{device_id as douyu_device_id, play_cookie as douyu_play_cookie};
 use live_core::model::RoomExtra;
 use live_core::{
     DanmakuSession, HttpSession, LiveCore, LiveError, LiveRoomDetail, LiveRoomItem, Platform,
@@ -535,44 +536,13 @@ where
 
 // ---------------------------------------------------------------- 斗鱼
 
-/// 从 Cookie 串里取一个值（同名取第一个，与浏览器的解析顺序一致）。
-fn douyu_cookie_value(cookie: &str, key: &str) -> Option<String> {
-    cookie.split(';').find_map(|pair| {
-        let (name, value) = pair.trim().split_once('=')?;
-        (name.trim() == key && !value.trim().is_empty()).then(|| value.trim().to_string())
-    })
-}
-
-/// 参与签名的设备号：Cookie 里有 `acf_did` 时必须沿用，保证与请求头身份一致。
-fn douyu_device_id(login: &str) -> String {
-    douyu_cookie_value(login, "acf_did")
-        .filter(|value| value.len() >= 16)
-        .unwrap_or_else(live_core::douyu_sign::device_id)
-}
-
-fn douyu_cookie(did: &str, login: &str) -> String {
-    let login = login.trim();
-    let mut parts: Vec<String> = Vec::new();
-    if !login.is_empty() {
-        parts.push(login.to_string());
-    }
-    // 登录 Cookie 里已有的键不再追加，避免同名 Cookie 出现两次、服务器按第一份算。
-    if douyu_cookie_value(login, "dy_did").is_none() {
-        parts.push(format!("dy_did={did}"));
-    }
-    if douyu_cookie_value(login, "acf_did").is_none() {
-        parts.push(format!("acf_did={did}"));
-    }
-    parts.join("; ")
-}
-
 fn douyu_referer(room_id: &str) -> String {
     format!("https://www.douyu.com/{room_id}")
 }
 
 fn douyu_script(room_id: &str, did: &str, login: &str) -> Result<String, String> {
     let http = HttpSession::new();
-    let cookie = douyu_cookie(did, login);
+    let cookie = douyu_play_cookie(did, login);
     let referer = douyu_referer(room_id);
     let value = http
         .get_json(
@@ -600,7 +570,7 @@ fn douyu_script(room_id: &str, did: &str, login: &str) -> Result<String, String>
 
 fn douyu_post(room_id: &str, did: &str, login: &str, body: &str) -> Result<Value, String> {
     let http = HttpSession::new();
-    let cookie = douyu_cookie(did, login);
+    let cookie = douyu_play_cookie(did, login);
     let referer = douyu_referer(room_id);
     http.post_form_raw(
         &format!("https://www.douyu.com/lapi/live/getH5Play/{room_id}"),
@@ -1619,6 +1589,7 @@ async fn douyu_play_task(
                 .ok_or_else(|| "斗鱼会话缺少设备号".to_string())?,
         )
     };
+    let quality_name = quality.name.clone();
     let QualityData::Douyu { rate, cdns } = quality.data else {
         return Err("清晰度句柄与平台不匹配".to_string());
     };
@@ -1651,6 +1622,19 @@ async fn douyu_play_task(
                         "{}/{}",
                         rtmp_url.trim_end_matches('/'),
                         unescape_html(rtmp_live)
+                    );
+                    // 档位与登录态决定 CDN 给哪一路流，降级时先看这行。
+                    logging::info(
+                        "douyu",
+                        format!(
+                            "取流 {} rate={} cdn={} 清晰度={} 登录={} 直链={}",
+                            room_id,
+                            rate,
+                            if cdn.is_empty() { "默认" } else { cdn.as_str() },
+                            quality_name,
+                            if login_cookie.trim().is_empty() { "否" } else { "是" },
+                            url.split('?').next().unwrap_or("").rsplit('/').next().unwrap_or(""),
+                        ),
                     );
                     // 过期时间在签名内，改动查询串即失效，只能重新签一份地址。
                     urls.push(url);
@@ -3162,41 +3146,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn 登录cookie里的设备号优先参与签名() {
-        // 签名身份和 Cookie 身份必须一致，否则斗鱼把请求当成陌生设备、给降码率的流。
-        let login = "acf_auth=abc; acf_uid=42; acf_did=0f1e2d3c4b5a69788796a5b4c3d2e1f0";
-        assert_eq!(
-            douyu_device_id(login),
-            "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
-            "有 acf_did 时必须沿用"
-        );
-        // 没有登录 Cookie 或没带 acf_did 时退回随机生成的 32 位十六进制。
-        for cookie in ["", "acf_auth=abc", "acf_did=短"] {
-            let did = douyu_device_id(cookie);
-            assert_eq!(did.len(), 32);
-            assert!(did.chars().all(|ch| ch.is_ascii_hexdigit()));
-        }
-    }
-
-    #[test]
-    fn 组装斗鱼cookie不重复也不丢登录态() {
-        let did = "0123456789abcdef0123456789abcdef";
-        assert_eq!(
-            douyu_cookie(did, ""),
-            format!("dy_did={did}; acf_did={did}"),
-            "匿名时补设备号"
-        );
-        // 登录 Cookie 已经带了 dy_did / acf_did：不能再追加一份，否则同名 Cookie 出现两次。
-        let login = "acf_auth=abc; acf_did=aaaabbbbccccddddeeeeffff00001111";
-        let cookie = douyu_cookie(did, login);
-        assert_eq!(cookie, format!("acf_auth=abc; acf_did=aaaabbbbccccddddeeeeffff00001111; dy_did={did}"));
-        assert_eq!(cookie.matches("acf_did=").count(), 1);
-    }
 }
