@@ -149,6 +149,7 @@ export function renderRoom(ctx, params = {}) {
           <div class="chat-head-text">
             <h3 id="chat-name">聊天</h3>
             <div class="chat-head-meta" id="chat-meta"></div>
+            <div class="chat-head-stats" id="chat-stats"></div>
           </div>
           <div class="chat-head-actions">
             <button class="icon-btn" id="chat-follow" title="关注">${icon('follow', 17)}</button>
@@ -217,7 +218,7 @@ export function renderRoom(ctx, params = {}) {
     sendingDanmaku: false,
     // 弹幕连接状态 { state, reason }，供聊天栏顶部状态条使用。
     danmakuStatus: null,
-    // 房间实时数据（钻粉、在线等），随弹幕通道下发。
+    // 房间实时数据（贵宾、钻粉），随弹幕通道下发。
     stats: {},
     // 当前播放器对应的协议：'flv'（mpegts.js）或 'hls'（hls.js / 原生 HLS）。
     playerProtocol: '',
@@ -2387,6 +2388,8 @@ export function renderRoom(ctx, params = {}) {
   const AUDIENCE_LABEL = { douyin: '在看', kuaishou: '在看' };
   // 守卫人数在各站的叫法。
   const GUARD_LABEL = { bilibili: '大航海', huya: '守护', douyu: '贵宾' };
+  // 斗鱼的贵宾是贵族人数，用人群图标；B 站 / 虎牙是付费守护，用船锚。
+  const GUARD_ICON = { douyu: 'users' };
 
   /// 观众数据格的文案与数值；无数据返回 null。
   function audienceStat(platform, detail) {
@@ -2422,29 +2425,36 @@ export function renderRoom(ctx, params = {}) {
     }
   }
 
-  /// 聊天区第二行：平台、开播状态、观众数据、守卫与钻粉。
-  /// 实时数据（斗鱼钻粉/在线）由弹幕连接推送，单独重画这一行。
+  /// 聊天区第二行：平台与开播状态。
+  /// 实时数据（斗鱼贵宾/钻粉）由弹幕连接推送，单独重画数据那一列。
   function renderChatMeta() {
+    const detail = session.detail;
+    if (!detail) return;
+    $('chat-meta').innerHTML =
+      `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>`;
+    renderChatStats();
+  }
+
+  /// 数据列：看过 / 在看、大航海 / 守护 / 贵宾、钻粉。热度类不进这一列。
+  function renderChatStats() {
     const detail = session.detail;
     if (!detail) return;
     const audience = audienceStat(session.platform, detail);
     const guards = Number(detail.guard_count) || Number(session.stats.guards) || 0;
     const fans = Number(session.stats.fans) || 0;
-    const dataBits = [];
-    if (audience) dataBits.push(`<span class="online">${icon('users', 11)}${formatOnline(audience.value)} ${audience.label}</span>`);
-    // 守卫 / 钻粉各自占一行（flex-basis: 100%）。
-    const guardBit = guards > 0
-      ? `<span class="chat-head-guard">${icon('anchor', 11)}${formatOnline(guards)} ${GUARD_LABEL[session.platform] || '大航海'}</span>`
-      : '';
-    const fanBit = fans > 0 ? `<span class="chat-head-guard">${icon('star', 11)}${formatOnline(fans)} 钻粉</span>` : '';
-    $('chat-meta').innerHTML =
-      `${platformBadge(session.platform)}<span>${detail.live ? '直播中' : '未开播'}</span>` +
-      (dataBits.length ? `<span class="chat-head-data">${dataBits.join('<span class="sep">·</span>')}</span>` : '') +
-      guardBit +
-      fanBit;
+    const stat = (value, label, iconName, cls) =>
+      `<span class="${cls}">${icon(iconName, 11)}${formatOnline(value)} ${label}</span>`;
+    const bits = [];
+    if (audience) bits.push(stat(audience.value, audience.label, 'users', 'stat-audience'));
+    if (guards > 0) {
+      const guardIcon = GUARD_ICON[session.platform] || 'anchor';
+      bits.push(stat(guards, GUARD_LABEL[session.platform] || '大航海', guardIcon, 'stat-guard'));
+    }
+    if (fans > 0) bits.push(stat(fans, '钻粉', 'diamond', 'stat-fans'));
+    $('chat-stats').innerHTML = bits.join('');
   }
 
-  /// 合并弹幕通道下发的房间数据并重画头部。
+  /// 合并弹幕通道下发的房间数据并重画右侧数据列。
   function applyRoomStats(stats, platform) {
     // B 路接的是别的房间，那些数字不属于当前房间。
     if (!stats || platform !== session.platform) return;
@@ -2453,7 +2463,7 @@ export function renderRoom(ctx, params = {}) {
       const value = Number(stats[key]);
       if (Number.isFinite(value) && value >= 0) session.stats[key] = value;
     }
-    renderChatMeta();
+    renderChatStats();
   }
 
   /// 定时刷新直播间数据，只重画头部，不碰播放器。
@@ -2788,7 +2798,7 @@ export function renderRoom(ctx, params = {}) {
     // 竖屏下左下角的时长被收起，这里补一行。
     const startedAt = Number(detail.live_start_time) > 0 ? Number(detail.live_start_time) * 1000 : 0;
     const liveDuration = startedAt ? formatDuration(Date.now() - startedAt) : '未提供';
-    // 「热度」这一行同样按平台改口：抖音 / 快手给的数字就是在看人数。
+    // 房间信息列全量口径：热度 / 人气照常显示，聊天区右侧只放观众与守卫数。
     const onlineLabel = AUDIENCE_LABEL[session.platform] || '人气';
     const viewers = Number(detail.viewers) || 0;
     const viewersRow = viewers > 0

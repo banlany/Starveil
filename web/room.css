@@ -618,37 +618,11 @@ body.is-resizing-chat .room-chat {
   white-space: nowrap;
 }
 
-/* 聊天区第二行右边的观众数据：看过人数、大航海数量。 */
-.chat-head-data {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  font-weight: 400;
-  color: var(--fg-subtle);
-  white-space: nowrap;
-  /* 空间不足时换行。 */
-  flex: 0 1 auto;
-}
-
-.chat-head-data .online {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--accent);
-}
-
-.chat-head-data .sep {
-  opacity: 0.6;
-}
-
 .chat-head-meta {
   margin-top: 5px;
   display: flex;
   align-items: center;
   gap: 4px 7px;
-  /* 允许换行，最多两行。 */
-  flex-wrap: wrap;
   color: var(--fg-subtle);
   font-size: 11px;
   /* 每一段自己不许被压成一字一行。 */
@@ -660,13 +634,30 @@ body.is-resizing-chat .room-chat {
   flex: none;
 }
 
-/* 大航海单独占一行，使用蓝色（flex: 1 0 100%）。 */
-.chat-head-meta .chat-head-guard {
-  flex: 1 0 100%;
+/* 观众与守卫数：看过 / 在看、大航海 / 守护 / 贵宾、钻粉，一行一个。 */
+.chat-head-stats {
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: 10.5px;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+
+.chat-head-stats > span {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10.5px;
+}
+
+.chat-head-stats .stat-audience {
+  color: var(--accent);
+}
+
+.chat-head-stats .stat-guard,
+.chat-head-stats .stat-fans {
   color: var(--info);
 }
 
@@ -678,13 +669,6 @@ body.is-resizing-chat .room-chat {
 .chat-head-meta .platform-badge .platform-img {
   width: 15px;
   height: 15px;
-}
-
-.chat-head-meta .online {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--accent);
 }
 
 .chat-head-actions {
