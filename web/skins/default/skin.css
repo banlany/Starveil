@@ -225,9 +225,6 @@ html[data-skin="default"] {
   --room-float-fg: rgba(255, 255, 255, 0.86);
   --room-float-line: rgba(255, 255, 255, 0.12);
   --room-float-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
-  /* 压在画面上的控件单独给悬停底色与字色，不使用 --wash-*。 */
-  --room-float-hover-bg: var(--wash-3);
-  --room-float-hover-fg: var(--fg);
 
   /* -------------------------------------------------- SC 卡片
      文字色由 SC 自身档位决定，不跟随明暗。 */

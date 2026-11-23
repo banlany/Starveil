@@ -1570,10 +1570,8 @@ body.is-resizing-chat .room-chat {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--room-float-fg);
-  background: var(--room-float-bg);
-  border: 1px solid var(--room-float-line);
-  box-shadow: var(--room-float-shadow);
+  color: var(--media-fg);
+  background: var(--media-chip);
   backdrop-filter: var(--media-blur);
   transition:
     opacity var(--dur-fast) var(--ease),
@@ -1581,10 +1579,9 @@ body.is-resizing-chat .room-chat {
     background var(--dur-fast) var(--ease);
 }
 
-/* 悬停底色与字色由 --room-float-hover-* 提供。 */
+/* 压在画面上的控件统一用 --media-chip：与顶栏按钮同一套质感。 */
 .chat-expand:hover {
-  color: var(--room-float-hover-fg);
-  background: var(--room-float-hover-bg);
+  background: var(--media-chip-hover);
 }
 
 /* 折叠箭头的两套图标由 CSS 按屏幕方向切换。 */

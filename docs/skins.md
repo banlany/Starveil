@@ -417,8 +417,7 @@ html[data-skin="apple"][data-theme="light"] { /* 一套值 */ }
 | --- | --- | --- | --- |
 | `--room-bg` `--room-panel` `--room-bar` `--room-field` | 房间外壳 / 聊天栏 / 底部动作栏 / 输入框 | `#050507` / `#101015` / `#0b0b0f` / `#1a1a22` | ✓ |
 | `--room-line` | 直播间分隔线 | `rgba(255,255,255,.06)` | ✓ |
-| `--room-float-bg` `--room-float-fg` `--room-float-line` `--room-float-shadow` | 聊天栏上的浮层（回到底部、展开聊天） | `rgba(30,32,40,.92)` / `rgba(255,255,255,.86)` / `<color>` / `<shadow>` | ✓ |
-| `--room-float-hover-bg` `--room-float-hover-fg` | 同上 hover 态；压在画面上，不用 `--wash-*` | `var(--wash-3)` / `var(--fg)` | ✓ |
+| `--room-float-bg` `--room-float-fg` `--room-float-line` `--room-float-shadow` | 聊天栏上的浮层（回到底部） | `rgba(30,32,40,.92)` / `rgba(255,255,255,.86)` / `<color>` / `<shadow>` | ✓ |
 
 ### 7.10 SC（醒目留言）
 

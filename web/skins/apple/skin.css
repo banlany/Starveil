@@ -198,11 +198,6 @@ html[data-skin="apple"][data-theme="light"] {
   --room-float-fg: #1d1d1f;
   --room-float-line: rgba(0, 0, 0, 0.08);
   --room-float-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  /* 悬停时压成系统灰阶：这套皮肤里不允许出现半透明黑蒙层压在画面上，
-     否则白色胶囊一悬停就化进视频里（这正是「按钮消失」的那个 bug）。 */
-  --room-float-hover-bg: #f5f5f7;
-  --room-float-hover-fg: #1d1d1f;
-
   /* -------------------------------------------------- SC 卡片
      SC 底色是平台给的浅档，浅色下不需要遮罩，直接配深字。 */
   --on-sc: #1d1d1f;

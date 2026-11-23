@@ -92,7 +92,7 @@
 | 音量浮层 | `.volume-pop` | `--media-surface` `--media-line` `--media-shadow` `--media-fg` |
 | 同屏 | `.dual-panel` | `--room-line` `--media-surface` `--media-line`；遮罩 `--mask-solid`（布局） |
 | 直播间浮层 | `.room-float` | `--room-float-bg` `--room-float-fg` `--room-float-line` `--room-float-shadow` |
-| 展开聊天区 | `.chat-expand` | `--room-float-bg` `--room-float-fg` `--room-float-line`；悬停 `--room-float-hover-bg` `--room-float-hover-fg`（它压在视频画面上，不能用 `--wash-*`） |
+| 展开聊天区 | `.chat-expand` | `--media-chip` `--media-chip-hover` `--media-fg` `--media-blur` `--radius-md`（压在画面上，与顶栏按钮同组） |
 
 ## 六、SC（醒目留言）
 

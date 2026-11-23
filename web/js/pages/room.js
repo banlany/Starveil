@@ -407,6 +407,9 @@ export function renderRoom(ctx, params = {}) {
   composer.addEventListener('submit', submitDanmaku);
   updateComposer();
   const IDLE_DELAY = 2800;
+  // 自动收起后的第一次按下只唤出控件，这次 click 不能落到刚恢复的按钮上。
+  let wakeClickGuard = false;
+  let wakeClickTimer = 0;
 
   /// 当前是否允许收起顶部浮层与底部控制条：有浮层或弹窗挡着、或窗口态暂停时不收。
   function canAutoHide() {
@@ -419,7 +422,13 @@ export function renderRoom(ctx, params = {}) {
   }
 
   /// 记一次操作：立刻恢复上下控件，并重排空闲定时器。
-  function wake() {
+  function wake(fromPress = false) {
+    if (fromPress && page.classList.contains('ui-idle')) {
+      wakeClickGuard = true;
+      clearTimeout(wakeClickTimer);
+      // 按下后没有 click（滑动手势）时别把下一次点击也挡掉。
+      wakeClickTimer = setTimeout(() => { wakeClickGuard = false; }, 400);
+    }
     page.classList.remove('ui-idle');
     clearTimeout(session.idleTimer);
     if (session.destroyed) return;
@@ -428,10 +437,19 @@ export function renderRoom(ctx, params = {}) {
     }, IDLE_DELAY);
   }
 
-  // wake 无参，事件对象会被当成定时器参数，所以包一层。
-  const onActivity = () => wake();
+  // 按下类事件才需要挡穿透；鼠标移动与滚轮唤醒后按钮照常可点。
+  const onActivity = (event) => wake(event.type === 'touchstart' || event.type === 'mousedown');
   const stageEvents = ['mousemove', 'mousedown', 'touchstart', 'wheel'];
   for (const name of stageEvents) page.addEventListener(name, onActivity, { passive: true });
+  // 捕获阶段早于按钮自己的监听：touchstart 唤醒后同一次 click 不再触发按钮。
+  page.addEventListener('click', (event) => {
+    if (!wakeClickGuard) return;
+    wakeClickGuard = false;
+    clearTimeout(wakeClickTimer);
+    if (!event.target.closest?.('.player-controls, .room-topbar, .chat-expand')) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
 
   // ------------------------------------------------------------ 滑动手势
 
