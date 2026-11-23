@@ -480,7 +480,8 @@ html[data-skin="apple"][data-theme="light"] { /* 一套值 */ }
 `--font-user` `--dm-font`、`--sc-bg` `--sc-bg-strong`、`--avatar-hue`、
 `--big-emoji-lines`、`--chat-width`、`--card-delay`、
 `--rail-width` `--topbar-height` `--titlebar-height` `--safe-top` `--safe-bottom`
-`--safe-left` `--safe-right` `--tab-underline-inset` `--mask-solid` `--stage-h`。
+`--safe-left` `--safe-right` `--sys-safe-top` `--sys-safe-bottom` `--sys-safe-left`
+`--sys-safe-right` `--ime-bottom` `--tab-underline-inset` `--mask-solid` `--stage-h`。
 
 ### 7.15 成对联动的变量
 

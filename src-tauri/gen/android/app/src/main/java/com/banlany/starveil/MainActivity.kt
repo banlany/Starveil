@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
@@ -33,15 +34,46 @@ class MainActivity : TauriActivity() {
         super.onCreate(savedInstanceState)
         instance = this
         val window = window ?: return
-        // 窗口铺到屏幕边缘（含挖孔），顶部那一条才归应用自己上色；
-        // 内容仍按系统给的 Insets 避让，不会压到状态栏与摄像头。
+        // 内容画满整屏（含状态栏、导航栏、挖孔），系统栏透明，留白由 CSS 的 --safe-* 派生。
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val params = window.attributes
             params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             window.attributes = params
         }
+        ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->
+            pushSafeInsets(insets)
+            insets
+        }
         syncSystemBars()
+    }
+
+    /**
+     * 把系统栏与键盘的高度写成 CSS 变量，前端据此留白。
+     *
+     * 窗口不再让出系统栏的位置，顶部留白由 `.main` 统一承担；键盘也不会再替窗口重排，
+     * 所以 `--ime-bottom` 要前端自己加到底部。
+     * 写成 `--sys-safe-*`：CSS 侧的 `--safe-*` 留一层派生，全屏档才能把留白归零。
+     * 左右不给留白：横屏时挖孔在侧边，让给画面或侧栏，否则会多出一条竖着的空白。
+     */
+    private fun pushSafeInsets(insets: WindowInsetsCompat? = null) {
+        val window = window ?: return
+        val view = findWebView(window.decorView) ?: return
+        val current = insets ?: ViewCompat.getRootWindowInsets(window.decorView) ?: return
+        val bars = current.getInsets(WindowInsetsCompat.Type.systemBars())
+        val ime = current.getInsets(WindowInsetsCompat.Type.ime())
+        val density = resources.displayMetrics.density
+        fun px(value: Int) = Math.round(value / density).toString() + "px"
+        // 键盘弹出时导航栏被它压住，底部留白交给 --ime-bottom，不然会空两份。
+        val bottom = if (ime.bottom > 0) 0 else bars.bottom
+        val js = "(function(){var s=document.documentElement.style;" +
+            "s.setProperty('--sys-safe-top','${px(bars.top)}');" +
+            "s.setProperty('--sys-safe-bottom','${px(bottom)}');" +
+            "s.setProperty('--sys-safe-left','0px');" +
+            "s.setProperty('--sys-safe-right','0px');" +
+            "s.setProperty('--ime-bottom','${px(ime.bottom)}');})()"
+        view.evaluateJavascript(js, null)
     }
 
     /** 剧院模式下系统栏会被系统放回来（切前台、退出小窗），重新按当前模式同步一次。 */
@@ -245,8 +277,8 @@ class MainActivity : TauriActivity() {
          * 系统栏配色跟随前端主题。
          *
          * `color` 是 ARGB int，`light` 为 1 表示背景是浅色、状态栏图标要用深色。
-         * 窗口的默认底色是系统给的纯黑，WebView 没盖到的位置（状态栏、挖孔、首帧）会露出它，
-         * 浅色主题下那一条就一直是黑的；所以窗口底色一并换成本主题的底色。
+         * 系统栏本身透明，状态栏那条由窗口底色与页面底色铺；窗口底色也换成主题色，
+         * 首帧和系统栏动画期间不会闪出 Material 默认的纯黑。
          */
         @Suppress("DEPRECATION")
         @JvmStatic
@@ -254,12 +286,18 @@ class MainActivity : TauriActivity() {
             val activity = instance ?: return false
             activity.runOnUiThread {
                 val window = activity.window ?: return@runOnUiThread
-                window.statusBarColor = color
-                window.navigationBarColor = color
+                window.statusBarColor = Color.TRANSPARENT
+                window.navigationBarColor = Color.TRANSPARENT
                 window.setBackgroundDrawable(ColorDrawable(color))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // 不透明内容上的系统栏底衬会盖掉主题色，关掉。
+                    window.isStatusBarContrastEnforced = false
+                    window.isNavigationBarContrastEnforced = false
+                }
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.isAppearanceLightStatusBars = light != 0
                 controller.isAppearanceLightNavigationBars = light != 0
+                activity.pushSafeInsets()
             }
             return true
         }
@@ -269,10 +307,12 @@ class MainActivity : TauriActivity() {
         fun isInPip(): Boolean = instance?.isInPictureInPictureMode ?: false
 
         /**
-         * 沉浸式全屏：藏起状态栏与导航栏，退出时回到「只藏状态栏」的常态。
+         * 沉浸式全屏：藏起状态栏与导航栏，退出时回到常显。
          *
          * Android WebView 不实现 `requestFullscreen()`（没有 WebChromeClient 的全屏回调），
          * 所以前端的全屏是「CSS 铺满 + 这里把系统栏藏掉」两半拼出来的。
+         * 窗口始终铺满整屏（`decorFitsSystemWindows` 在 onCreate 就关掉了），
+         * 这里只改系统栏的显隐，`--safe-*` 由全屏档在 CSS 侧归零。
          * `enabled` 用 Int 而不是 Boolean，是为了对齐 Rust 侧 `call_activity_static`
          * 固定的 `(I)Z` 签名（和 setOrientation 一致）。
          */
@@ -281,9 +321,7 @@ class MainActivity : TauriActivity() {
             val activity = instance ?: return false
             val on = enabled != 0
             activity.runOnUiThread {
-                val window = activity.window ?: return@runOnUiThread
                 theater = on
-                WindowCompat.setDecorFitsSystemWindows(window, !on)
                 activity.syncSystemBars()
             }
             return true

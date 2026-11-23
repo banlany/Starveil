@@ -2206,20 +2206,57 @@ export function renderRoom(ctx, params = {}) {
 
   /// 安卓全屏：html.is-theater 铺满画面，set_immersive 隐藏系统栏，并切到横屏。
   function setTheater(active) {
-    page.classList.toggle('is-theater', active);
-    document.documentElement.classList.toggle('is-theater', active);
-    $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
-    // 顶部返回按钮在全屏里表示「退全屏」，标题跟着改，免得点了才发现不是退出直播间。
-    const back = $('room-back');
-    back.title = active ? '退出全屏' : '返回';
-    api.setImmersive(active).catch(() => {});
     const setting = state.settings.appearance?.orientation || 'auto';
     const target = active ? (setting === 'portrait' ? 'portrait' : 'landscape') : setting;
-    api.setScreenOrientation(target).catch(() => {});
-    page.classList.remove('ui-idle');
-    wake();
-    // 进出全屏都会改可用空间（全屏时 stage 由 CSS 拉满，不再用这里的像素高度）。
-    requestAnimationFrame(relayoutPlayer);
+    const apply = () => {
+      page.classList.toggle('is-theater', active);
+      document.documentElement.classList.toggle('is-theater', active);
+      $('ctrl-fullscreen').innerHTML = icon(active ? 'fullscreenExit' : 'fullscreen', 21);
+      // 顶部返回按钮在全屏里表示「退全屏」，标题跟着改，免得点了才发现不是退出直播间。
+      const back = $('room-back');
+      back.title = active ? '退出全屏' : '返回';
+      api.setImmersive(active).catch(() => {});
+      api.setScreenOrientation(target).catch(() => {});
+      page.classList.remove('ui-idle');
+      wake();
+      // 进出全屏都会改可用空间（全屏时 stage 由 CSS 拉满，不再用这里的像素高度）。
+      requestAnimationFrame(relayoutPlayer);
+    };
+    // 横竖屏切换是系统直接转窗口，没有补间：先整页淡出，等方向真的变过去再淡回。
+    // 方向不变（设置里锁了竖屏、或全局都是竖屏）就不走这段，免得白闪一下。
+    const portraitNow = portraitQuery.matches;
+    const wantPortrait = !active ? target !== 'landscape' : target === 'portrait';
+    rotateTransition(wantPortrait !== portraitNow, wantPortrait ? 'portrait' : 'landscape', apply);
+  }
+
+  /// 方向切换的过渡：淡出 → 换向 → 等 media query 真的翻过去 → 淡入。
+  function rotateTransition(willRotate, direction, apply) {
+    const html = document.documentElement;
+    if (!willRotate || currentMotion() === 'off') {
+      apply();
+      return;
+    }
+    const before = portraitQuery.matches;
+    html.dataset.rotateTo = direction;
+    html.classList.add('is-rotating');
+    let done = false;
+    const reveal = () => {
+      if (done) return;
+      done = true;
+      portraitQuery.removeEventListener('change', onFlip);
+      html.classList.remove('is-rotating');
+      delete html.dataset.rotateTo;
+    };
+    // 新布局落位后再淡回，一帧之内 WebView 还在按旧尺寸排版。
+    const onFlip = () => requestAnimationFrame(() => requestAnimationFrame(reveal));
+    setTimeout(() => {
+      // 先挂监听再切方向：媒体查询可能在 apply 的同一帧就翻过去。
+      portraitQuery.addEventListener('change', onFlip);
+      apply();
+      if (portraitQuery.matches !== before) onFlip();
+      // 方向到头来没变（个别机型转屏被系统拦下）：别一直暗着。
+      setTimeout(reveal, 700);
+    }, motionDelay(140));
   }
 
   /// 双击切全屏要跳过的区域：控制条、顶栏、错误卡、SC 卡与小窗。

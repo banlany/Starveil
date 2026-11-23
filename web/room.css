@@ -80,7 +80,7 @@
 .gesture-dim {
   position: absolute;
   inset: 0;
-  background: #000;
+  background: #000; /* skin:allow 亮度遮罩按透明度调，必须纯黑 */
   opacity: 0;
   pointer-events: none;
   z-index: 2;
@@ -96,14 +96,14 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.66);
-  color: #fff;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.66); /* skin:allow 画面上的 HUD 固定半透明黑 */
+  color: #fff; /* skin:allow 画面上的 HUD 固定白字 */
   font-size: 14px;
   font-variant-numeric: tabular-nums;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.16s ease;
+  transition: opacity var(--dur-fast) var(--ease);
   z-index: 9;
 }
 

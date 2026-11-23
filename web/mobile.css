@@ -4,13 +4,19 @@
    ============================================================ */
 
 html.is-mobile {
-  /* 系统状态栏与手势条留白（viewport-fit=cover）。 */
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --safe-left: env(safe-area-inset-left, 0px);
-  --safe-right: env(safe-area-inset-right, 0px);
+  /* 系统栏高度由原生写成 --sys-safe-*；首帧与 iOS 用 env() 兜底。
+     --safe-* 留在 CSS 侧派生，全屏档才能把留白归零。 */
+  --safe-top: var(--sys-safe-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--sys-safe-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--sys-safe-left, env(safe-area-inset-left, 0px));
+  --safe-right: var(--sys-safe-right, env(safe-area-inset-right, 0px));
   --topbar-height: 54px;
   --rail-width: 0px;
+}
+
+/* 窗口画满整屏：所有页面统一从状态栏下方开始，顶栏与各页面不再各自留白。 */
+html.is-mobile .main {
+  padding-top: var(--safe-top);
 }
 
 /* ------------------------------------------------------------ 桌面专属的窗口装饰 */
@@ -27,6 +33,8 @@ html.is-mobile body {
   -webkit-tap-highlight-color: transparent;
   /* 触屏设备没有 hover，去掉悬停时的背景残留。 */
   text-size-adjust: 100%;
+  /* 窗口已铺满整屏、不再为键盘让位，键盘高度由原生化成 --ime-bottom，整页上提一段。 */
+  padding-bottom: var(--ime-bottom, 0px);
 }
 
 /* 触屏没有「拖滚动条」的操作，滚动条只会碍事：任何方向都不显示。 */
@@ -172,12 +180,9 @@ html.is-mobile .rail-btn .ico {
 /* ------------------------------------------------------------ 顶栏 */
 
 html.is-mobile .topbar {
-  padding-top: var(--safe-top);
-  height: calc(var(--topbar-height) + var(--safe-top));
-  padding-left: 12px;
-  padding-right: 12px;
   /* 窄屏下标签条横向滚动，并为右侧搜索按钮留位。 */
   justify-content: flex-start;
+  padding-left: 12px;
   padding-right: 96px;
 }
 
@@ -186,6 +191,7 @@ html.is-mobile .topbar.has-refresh {
   padding-left: 58px;
 }
 
+/* 首页左上角是刷新按钮，从标签条左边独立出来。 */
 html.is-mobile .topbar-refresh {
   left: 10px;
 }
@@ -195,7 +201,7 @@ html.is-mobile .topbar::before,
 html.is-mobile .topbar::after {
   content: '';
   position: absolute;
-  top: calc(50% + var(--safe-top) / 2);
+  top: 50%;
   transform: translateY(-50%);
   width: 1px;
   height: 18px;
@@ -371,9 +377,9 @@ html.is-mobile .modal {
 
 /* ------------------------------------------------------------ 直播间 */
 
-html.is-mobile .room-page {
-  /* 状态栏区域铺黑，避免视频上方露白。 */
-  padding-top: var(--safe-top);
+/* 音量交给系统音量键：横竖屏都不再提供音量图标与滑条，避免两个音量各调一半。 */
+html.is-mobile .room-page .player-controls .pc-left {
+  display: none;
 }
 
 /* 横屏保留左右分栏，视频区让出底栏高度。 */
@@ -478,11 +484,6 @@ html.is-mobile .chat-resizer {
   html.is-mobile .room-page .player-controls .ctrl {
     width: 40px;
     height: 40px;
-  }
-
-  /* 音量交给系统音量键：应用内不再提供音量图标与滑条，避免两个音量各调一半。 */
-  html.is-mobile .room-page .player-controls .pc-left {
-    display: none;
   }
 
   /* 档位文字过长时省略。 */
@@ -596,6 +597,10 @@ html.is-pip .stage {
   border-radius: 0 !important;
 }
 
+html.is-pip .main {
+  padding-top: 0 !important;
+}
+
 /* ------------------------------------------------------------ 安卓「全屏」 */
 /* 安卓全屏（html.is-theater）：视频铺满，系统栏由 set_immersive 隐藏。 */
 html.is-mobile.is-theater {
@@ -639,6 +644,25 @@ html.is-theater .stage {
 html.is-theater .room-topbar {
   padding: calc(var(--safe-top) + 12px) calc(var(--safe-right) + 18px) 26px calc(var(--safe-left) + 18px);
   background: var(--media-topbar-bg), var(--media-fade-top);
+}
+
+/* ------------------------------------------------------------ 方向切换 */
+/* 系统转窗口没有补间，先淡出再等新方向落位后淡入；倾斜方向跟着目标方向走。 */
+html.is-mobile .app {
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+}
+
+html.is-mobile.is-rotating .app {
+  opacity: 0;
+  transition-duration: var(--dur-fast);
+}
+
+html.is-mobile.is-rotating[data-rotate-to='landscape'] .app {
+  transform: scale(0.94) rotate(1.5deg);
+}
+
+html.is-mobile.is-rotating[data-rotate-to='portrait'] .app {
+  transform: scale(0.94) rotate(-1.5deg);
 }
 
 /* ------------------------------------------------------------ 下拉刷新 */

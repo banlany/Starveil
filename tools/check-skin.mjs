@@ -47,6 +47,12 @@ const RUNTIME_VARS = new Set([
   '--safe-bottom',
   '--safe-left',
   '--safe-right',
+  // MainActivity 把系统栏与键盘高度注入 root，--safe-* 由 mobile.css 派生
+  '--sys-safe-top',
+  '--sys-safe-bottom',
+  '--sys-safe-left',
+  '--sys-safe-right',
+  '--ime-bottom',
   '--tab-underline-inset',
   '--mask-solid',
   // room.js 的 applyStageSize 按视频比例量出来的竖屏舞台高度
