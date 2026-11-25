@@ -1319,6 +1319,21 @@ textarea.input {
   gap: 10px;
 }
 
+.log-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 关闭记录后已有内容仍可读，变淡表示不再新增。 */
+.is-log-off .log-view {
+  opacity: 0.55;
+}
+
 .log-path {
   flex: 1 1 160px;
   min-width: 0;

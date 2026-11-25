@@ -2523,25 +2523,69 @@ async fn bili_qr_poll(key: String) -> Result<QrPollResult, String> {
 
 // ---------------------------------------------------------------- 窗口与托盘
 
-/// WebView2 用户数据目录：`%LOCALAPPDATA%\Starveil\WebView2`。
+/// 便携版标记：与 exe 同级的 `portable.txt`。存在时数据写在 exe 同级的 `data` 目录。
 #[cfg(windows)]
-fn webview_data_dir() -> PathBuf {
-    match std::env::var("LOCALAPPDATA") {
-        Ok(local) => Path::new(&local).join("Starveil").join("WebView2"),
-        // 非 Windows 或读不到 LOCALAPPDATA 时退回当前目录，保证还能起来。
-        Err(_) => PathBuf::from("starveil-webview"),
+const PORTABLE_MARKER: &str = "portable.txt";
+
+/// 数据根目录（设置与登录态所在的 WebView2 目录、日志、GPU 标记都在其下），进程内只判定一次。
+#[cfg(windows)]
+fn data_root() -> &'static Path {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(resolve_data_root)
+}
+
+/// 优先用 exe 同级的 `data`；目录不可写（Program Files、只读盘）时回到系统目录。
+#[cfg(windows)]
+fn resolve_data_root() -> PathBuf {
+    let portable = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .and_then(|dir| portable_data_dir_in(&dir));
+    match portable {
+        Some(dir) if writable(&dir) => dir,
+        _ => system_data_dir(),
     }
 }
 
-/// 运行时日志目录。Windows 用 `%LOCALAPPDATA%\Starveil`；安卓用私有目录下的
+/// 目录能建出来且能写入。
+#[cfg(windows)]
+fn writable(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".write-test");
+    let ok = std::fs::write(&probe, b"").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+/// `dir` 下存在便携标记时返回 `<dir>\data`。
+#[cfg(windows)]
+fn portable_data_dir_in(dir: &Path) -> Option<PathBuf> {
+    dir.join(PORTABLE_MARKER).is_file().then(|| dir.join("data"))
+}
+
+#[cfg(windows)]
+fn system_data_dir() -> PathBuf {
+    match std::env::var("LOCALAPPDATA") {
+        Ok(local) => Path::new(&local).join("Starveil"),
+        // 读不到时用临时目录，至少能起来并留下日志。
+        Err(_) => std::env::temp_dir().join("starveil"),
+    }
+}
+
+/// WebView2 用户数据目录：`<数据根>\WebView2`。
+#[cfg(windows)]
+fn webview_data_dir() -> PathBuf {
+    data_root().join("WebView2")
+}
+
+/// 运行时日志目录。Windows 用数据根目录；安卓用私有目录下的
 /// `files/logs`，落在 FileProvider 的 files-path 里，分享不需要额外声明路径。
 fn log_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            return Some(Path::new(&local).join("Starveil"));
-        }
-        Some(std::env::temp_dir().join("starveil"))
+        Some(data_root().to_path_buf())
     }
     #[cfg(target_os = "android")]
     {
@@ -2639,6 +2683,26 @@ fn set_log_level(level: String) -> Result<String, String> {
     Ok(logging::level_name().to_string())
 }
 
+/// 是否记录日志。关闭后不落盘、不写标准输出，已有内容保留可读。
+#[tauri::command]
+fn log_enabled() -> bool {
+    logging::enabled()
+}
+
+/// 开关日志记录，立即生效并保留到下次启动。
+#[tauri::command]
+fn set_log_enabled(enabled: bool) -> bool {
+    if enabled {
+        logging::set_enabled(true);
+        logging::info("app", "开始记录日志");
+    } else {
+        // 先记一条再关，日志文件末尾能看到关闭时间。
+        logging::info("app", "停止记录日志");
+        logging::set_enabled(false);
+    }
+    logging::enabled()
+}
+
 /// 安卓分享一段文本（日志面板的「分享」）；桌面端由前端复制到剪贴板。
 #[tauri::command]
 fn share_log_text(app: AppHandle, text: String) -> Result<(), String> {
@@ -2669,6 +2733,10 @@ fn open_log_dir(app: AppHandle) -> Result<String, String> {
     let _ = std::fs::create_dir_all(&dir);
     // 文件还不存在时先写一行：否则安卓分享拿到空文件，桌面打开的是空文件夹。
     if !file.exists() {
+        // 记录关闭时不会再生成日志，也没有可分享的内容。
+        if !logging::enabled() {
+            return Err("日志记录已关闭，没有可分享的内容".to_string());
+        }
         logging::info("app", "打开日志");
     }
 
@@ -2887,15 +2955,7 @@ fn prepare_webview_data() {}
 /// GPU 沙箱不可用的标记文件路径。
 #[cfg(windows)]
 fn gpu_sandbox_broken_marker() -> PathBuf {
-    starveil_data_dir().join("gpu-sandbox-broken.flag")
-}
-
-#[cfg(windows)]
-fn starveil_data_dir() -> PathBuf {
-    match std::env::var("LOCALAPPDATA") {
-        Ok(local) => Path::new(&local).join("Starveil"),
-        Err(_) => PathBuf::from("."),
-    }
+    data_root().join("gpu-sandbox-broken.flag")
 }
 
 /// 当前进程是否位于 Job Object 中（`IsProcessInJob(NULL, ...)`）。
@@ -2954,7 +3014,7 @@ fn apply_gpu_sandbox_workaround() {
     match current_process_in_job() {
         Some(true) => {
             // 在 Job 里 → GPU 沙箱起不来，直接关掉。
-            let _ = std::fs::create_dir_all(starveil_data_dir());
+            let _ = std::fs::create_dir_all(data_root());
             let _ = std::fs::write(&marker, b"1");
             append_browser_args("--disable-gpu-sandbox");
             logging::warn("gpu", "沙箱：进程处于 Job Object 中，GPU 沙箱无法启动，已关闭");
@@ -2975,13 +3035,13 @@ fn apply_gpu_sandbox_workaround() {}
 /// GPU 模式文件：内容为 `auto` / `low` / `high` / `off`。
 #[cfg(windows)]
 fn gpu_mode_path() -> PathBuf {
-    starveil_data_dir().join("gpu-mode")
+    data_root().join("gpu-mode")
 }
 
 /// 0.7.5 之前的布尔标记，只在读取时迁移。
 #[cfg(windows)]
 fn legacy_gpu_marker() -> PathBuf {
-    starveil_data_dir().join("high-performance-gpu.flag")
+    data_root().join("high-performance-gpu.flag")
 }
 
 /// 读取 GPU 模式，缺省为 `auto`。
@@ -3042,7 +3102,7 @@ fn set_gpu_mode(mode: String) -> Result<String, String> {
         if !matches!(mode.as_str(), "auto" | "low" | "high" | "off") {
             return Err(format!("未知的 GPU 模式：{mode}"));
         }
-        std::fs::create_dir_all(starveil_data_dir())
+        std::fs::create_dir_all(data_root())
             .map_err(|e| format!("创建数据目录失败：{e}"))?;
         std::fs::write(gpu_mode_path(), mode.as_bytes())
             .map_err(|e| format!("写入设置失败：{e}"))?;
@@ -3091,6 +3151,20 @@ pub fn run() {
             "==== 启动 ==== 版本 {} {}",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS
+        ),
+    );
+    // 数据目录在日志初始化时已确定，记录一次便于排查。
+    #[cfg(windows)]
+    logging::info(
+        "app",
+        format!(
+            "数据目录 {}（{}）",
+            data_root().display(),
+            if data_root() == system_data_dir() {
+                "系统"
+            } else {
+                "便携"
+            }
         ),
     );
     // 必须在 Tauri 建窗之前设置，WebView2 只会在没有显式 user data folder 时读它。
@@ -3180,6 +3254,8 @@ pub fn run() {
             log_path,
             log_level,
             set_log_level,
+            log_enabled,
+            set_log_enabled,
             share_log_text,
             webdav_test,
             webdav_upload,
@@ -3196,4 +3272,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portable_marker_points_data_next_to_exe() {
+        let dir = std::env::temp_dir().join("starveil-portable-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        assert_eq!(portable_data_dir_in(&dir), None);
+        std::fs::write(dir.join(PORTABLE_MARKER), b"").expect("写标记");
+        assert_eq!(portable_data_dir_in(&dir), Some(dir.join("data")));
+        // 便携目录建不出来时不算可用。
+        let blocked = dir.join("blocked");
+        std::fs::write(&blocked, b"").expect("占位文件");
+        assert!(!writable(&blocked));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

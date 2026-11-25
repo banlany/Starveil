@@ -1,19 +1,24 @@
 // 统一运行日志。
 //
 // 一条日志同时落盘与标准输出（非 Windows 进 logcat），单文件超过 512KB 转成 `.1`。
-// 目录由 `init` 指定：Windows 是 `%LOCALAPPDATA%\Starveil`，安卓是
-// `<私有目录>/files/logs`（在 FileProvider 的 files-path 内，可以直接分享）。
-// 目录未定时只写标准输出，不阻塞调用方。
+// 目录由 `init` 指定：Windows 是数据根目录（默认 `%LOCALAPPDATA%\Starveil`，便携版为
+// exe 同级的 `data`），安卓是 `<私有目录>/files/logs`（在 FileProvider 的 files-path 内，
+// 可以直接分享）。目录未定时只写标准输出，不阻塞调用方。
+//
+// 记录开关由 `set_enabled` 控制，关闭后既不落盘也不写标准输出；状态存在日志目录的
+// `logging.off` 标记文件里，下次启动由 `init` 读回。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// 单个日志文件上限，超过后转存为 `starveil.log.1`（旧的 `.1` 直接丢弃）。
 pub const MAX_BYTES: u64 = 512 * 1024;
 const FILE_NAME: &str = "starveil.log";
 const BACKUP_NAME: &str = "starveil.log.1";
+/// 存在即表示关闭记录；用文件而不是配置项，`init` 拿到目录就能判断。
+const OFF_NAME: &str = "logging.off";
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -52,8 +57,10 @@ static DIR: OnceLock<PathBuf> = OnceLock::new();
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 /// 默认 info；`STARVEIL_LOG` 只在启动时读一次，设置页的临时值走 `set_level`。
 static LEVEL: AtomicU8 = AtomicU8::new(Level::Info.id());
+/// 默认记录；`init` 按标记文件恢复，设置页的开关走 `set_enabled`。
+static ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// 设定日志目录并读取启动级别。目录建不出来时保持仅标准输出。
+/// 设定日志目录，读取启动级别与记录开关。目录建不出来时保持仅标准输出。
 pub fn init(dir: Option<PathBuf>) {
     if let Ok(raw) = std::env::var("STARVEIL_LOG") {
         if let Some(level) = Level::parse(&raw) {
@@ -62,7 +69,33 @@ pub fn init(dir: Option<PathBuf>) {
     }
     let Some(dir) = dir else { return };
     let _ = std::fs::create_dir_all(&dir);
+    ENABLED.store(restore_enabled(&dir), Ordering::Relaxed);
     let _ = DIR.set(dir);
+}
+
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
+/// 开关记录并落盘标记；目录未定时只改内存状态（下次启动回到默认开启）。
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on, Ordering::Relaxed);
+    if let Some(dir) = DIR.get() {
+        write_marker(dir, on);
+    }
+}
+
+fn restore_enabled(dir: &Path) -> bool {
+    !dir.join(OFF_NAME).exists()
+}
+
+fn write_marker(dir: &Path, on: bool) {
+    let marker = dir.join(OFF_NAME);
+    if on {
+        let _ = std::fs::remove_file(marker);
+    } else {
+        let _ = std::fs::write(marker, b"");
+    }
 }
 
 pub fn level() -> Level {
@@ -109,7 +142,7 @@ pub fn debug(module: &str, message: impl AsRef<str>) {
 }
 
 fn write(level: Level, module: &str, message: &str) {
-    if level < self::level() {
+    if !enabled() || level < self::level() {
         return;
     }
     let line = format_line(level, module, message);
@@ -240,6 +273,17 @@ mod tests {
         rotate(&file, 64);
         let backup = std::fs::read(dir.join(BACKUP_NAME)).expect("读备份");
         assert!(backup.iter().all(|byte| *byte == b'b'));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn marker_keeps_switch_across_restart() {
+        let dir = temp_dir("marker");
+        assert!(restore_enabled(&dir));
+        write_marker(&dir, false);
+        assert!(!restore_enabled(&dir));
+        write_marker(&dir, true);
+        assert!(restore_enabled(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

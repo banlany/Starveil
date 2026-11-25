@@ -17,7 +17,8 @@ env:
     聚合直播客户端（哔哩哔哩 / 斗鱼 / 虎牙）。
 
     - Windows 安装包：`starveil-<版本>-x64-setup.exe`（NSIS）
-    - Windows 免安装：解压 `starveil-<版本>-portable.zip` 直接运行 `starveil.exe`
+    - Windows 便携版：解压 `starveil-<版本>-portable.zip` 直接运行 `starveil.exe`，
+      数据保存在同目录的 `data` 文件夹
     - Android：`starveil-<版本>-arm64.apk`（arm64-v8a，Android 8.0+）
     - 变更详情见仓库的 CHANGELOG.md
 
@@ -75,8 +76,9 @@ jobs:
             echo "重命名：$f -> starveil-${VERSION}-x64-setup.exe"
           done
 
-      # 除了安装包，再单独提供免安装版，方便不想装东西的人。
-      - name: 打包免安装版
+      # 便携版：zip 里带 `portable.txt`，exe 同级存在该标记时程序把数据写在同级的 `data`
+      # 目录，不写 `%LOCALAPPDATA%`。安装包不带标记，仍用系统目录。
+      - name: 打包便携版
         shell: bash
         run: |
           set -euo pipefail
@@ -84,6 +86,7 @@ jobs:
           mkdir -p portable
           cp src-tauri/target/release/starveil.exe portable/
           cp dist/README.txt portable/ 2>/dev/null || true
+          printf 'portable\n' > portable/portable.txt
           7z a -tzip "starveil-${VERSION}-portable.zip" ./portable/* > /dev/null
 
       - name: 创建 Release 并上传

@@ -56,7 +56,7 @@ import {
 } from '../ui.js';
 
 // 兜底版本号，与 tauri.conf.json 一致；运行时优先用 app.getVersion()。
-const FALLBACK_VERSION = '0.8.3';
+const FALLBACK_VERSION = '0.8.4';
 // 本项目自己的仓库（「设置 → 开源主页」与关于页的「项目主页」都指向这里）。
 const PROJECT_REPO = 'https://github.com/banlany/Starveil';
 // 参考项目（原版 dart_simple_live 的 fork），保留在关于页作为致敬入口。
@@ -971,7 +971,7 @@ function detailSections(key, ctx, repaint) {
             { type: 'switch', key: 'player.muteOnStart', title: '进入直播间默认静音' },
             { type: 'switch', key: 'live.autoSwitchNext', title: '关播后自动换下一个', desc: '当前房间确认下播后，自动切到关注列表里的下一个直播间' },
             { type: 'switch', key: 'live.allowBackground', title: '允许后台继续播放', desc: '窗口失去焦点时保持视频与弹幕连接' },
-            { type: 'switch', key: 'live.gesture', title: '滑动调节音量/亮度', desc: '播放页左半屏上下滑调亮度；桌面右半屏调音量，移动端音量走系统音量键' },
+            { type: 'switch', key: 'live.gesture', title: '手势调节音量 / 亮度', desc: '触屏：左半屏上下滑调亮度，右半屏调音量；桌面：画面上滚动滚轮调音量' },
             { type: 'switch', key: 'live.hideDanmakuOnMinimize', title: '最小化时隐藏弹幕' },
           ],
         },
@@ -2021,7 +2021,7 @@ function paintAbout(content, ctx) {
   logs.className = 'settings-action-card';
   logs.innerHTML = `
     <div class="action-icon">${icon('info', 20)}</div>
-    <div class="action-text"><h4>运行日志</h4><p>查看最近的记录；出问题时复制或分享出来</p></div>
+    <div class="action-text"><h4>运行日志</h4><p>查看最近的记录；可关闭记录，出问题时复制或分享出来</p></div>
     <button class="btn small">查看</button>`;
   logs.querySelector('button').addEventListener('click', () => openLogPanel());
   content.appendChild(logs);
@@ -2045,12 +2045,13 @@ function paintAbout(content, ctx) {
   content.appendChild(reset);
 }
 
-/// 运行日志面板：查看最近 300 行、切级别、复制 / 分享 / 打开目录、清空。
+/// 运行日志面板：查看最近 300 行、开关记录、切级别、复制 / 分享 / 打开目录、清空。
 function openLogPanel() {
   const body = document.createElement('div');
   body.className = 'log-panel';
   body.innerHTML = `
     <div class="log-bar">
+      <div class="log-toggle"><span>记录日志</span><button class="switch log-switch" role="switch" aria-checked="true" aria-label="记录日志"></button></div>
       <span class="log-path"></span>
       <div class="log-actions">
         <button class="select-btn log-level" aria-haspopup="menu" aria-label="日志级别"><span class="log-level-value">信息</span>${icon('chevron', 14)}</button>
@@ -2063,8 +2064,23 @@ function openLogPanel() {
 
   const pathLabel = body.querySelector('.log-path');
   const level = body.querySelector('.log-level');
+  const enabledButton = body.querySelector('.log-switch');
   const view = body.querySelector('.log-view');
   let text = '';
+  let filePath = '';
+  let enabled = true;
+
+  const paintPath = () => {
+    const label = filePath || '当前平台没有日志文件';
+    pathLabel.textContent = enabled ? label : `已停止记录 · ${label}`;
+    pathLabel.title = filePath;
+  };
+  const paintEnabled = (on) => {
+    enabled = on;
+    enabledButton.setAttribute('aria-checked', String(on));
+    body.classList.toggle('is-log-off', !on);
+    paintPath();
+  };
 
   const paint = (value) => {
     text = value || '';
@@ -2078,10 +2094,22 @@ function openLogPanel() {
 
   api.logPath()
     .then((path) => {
-      pathLabel.textContent = path || '当前平台没有日志文件';
-      pathLabel.title = path || '';
+      filePath = path || '';
+      paintPath();
     })
     .catch(() => {});
+  api.logEnabled().then(paintEnabled).catch(() => {});
+
+  enabledButton.addEventListener('click', async () => {
+    const next = !enabled;
+    try {
+      paintEnabled(await api.setLogEnabled(next));
+      toast(next ? '已开启记录日志' : '已停止记录日志', 'success');
+      reload();
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+  });
   // 级别用自绘菜单，与二级页的 select 行同一套（菜单会挂进弹窗，不受遮罩影响）。
   const LEVELS = { debug: '调试', info: '信息', warn: '警告', error: '错误' };
   const levelText = level.querySelector('.log-level-value');

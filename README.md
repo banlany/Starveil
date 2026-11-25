@@ -4,7 +4,7 @@
 推荐、分类、搜索、直播间与播放。界面是纯 HTML / CSS / ES Modules（无前端框架），
 播放走 mpegts.js（FLV）与 hls.js（HLS），协议层是 Rust 的 [`live_core`](src-tauri/vendor/live_core)。
 
-> **0.8.3** · Windows 10/11 x64 · Android 8.0+（arm64-v8a） · GPL-3.0 · 非官方第三方客户端，仅供学习交流
+> **0.8.4** · Windows 10/11 x64 · Android 8.0+（arm64-v8a） · GPL-3.0 · 非官方第三方客户端，仅供学习交流
 
 ![首页](docs/img/home.png)
 
@@ -21,8 +21,8 @@
   暂停、缓冲、断流重连、未开播都不影响弹幕接收。
 - **直播间**：右侧聊天面板分 聊天 / SC / 关注 / 设置 四栏，SC 分「正在显示 / 历史」；
   底部控制条为三段式（音量 · 时间 / 画质 / 线路 / 弹幕 / 设置 · 全屏），窄屏按优先级收起；
-  单击唤出控件，双击或 `F` 全屏，`D` 开关弹幕，`Esc` 返回，`↑ / ↓` 调音量；
-  画面上左半屏上下滑调亮度，桌面右半屏上下滑调音量（移动端音量走系统按键）。
+  单击唤出控件，双击或 `F` 全屏，`D` 开关弹幕，`S` 静音，`Esc` 返回，`↑ / ↓` 或画面上滚轮调音量；
+  触屏左半屏上下滑调亮度、右半屏调音量。
 - **首页 / 分类 / 搜索**：封面卡网格（平台角标、标题、主播、人气）与「加载更多」；
   分类页一级分区 + 二级图标网格；搜索支持关键词、房间号、直播间链接与主播模式。
 - **关注**：关注 / 取关、标签分组、按直播状态或平台筛选、网格 / 列表切换、
@@ -104,8 +104,9 @@ CDP_PORT=9225 node tools/cdp.mjs shot shot.png
 需要 DevTools 面板时用 `--features devtools` 构建（`cargo build --features devtools`、
 `cargo tauri android build --features devtools --target aarch64 --apk`）。
 
-**数据位置**：桌面端存在 `%LOCALAPPDATA%\Starveil\WebView2`，删除该目录会同时清掉设置与登录态；
-Android 在应用私有目录 `/data/data/com.banlany.starveil`，卸载即清空。
+**数据位置**：桌面端存在 `%LOCALAPPDATA%\Starveil\WebView2`，删除该目录会同时清掉设置与登录态。
+exe 同级存在 `portable.txt` 时按便携模式运行，数据与日志改存同级的 `data` 目录；
+该目录不可写时仍用系统目录。Android 在应用私有目录 `/data/data/com.banlany.starveil`，卸载即清空。
 
 ## 目录结构
 
@@ -149,7 +150,7 @@ Starveil/
 | `lan_sync_*` | 局域网同步服务的启停、发布、收取与对端拉推 |
 | `set_gpu_mode` / `gpu_mode` | 显卡加速模式（切换后需重启） |
 | `set_screen_orientation` / `set_system_bar` / `set_immersive` / `enter_picture_in_picture` | 安卓方向、系统栏、沉浸模式、小窗 |
-| `log_level` / `read_log` / `clear_log` / `share_log_text` / `open_log_dir` | 运行日志的读取、清空、分享与级别切换 |
+| `log_level` / `set_log_level` / `read_log` / `clear_log` / `share_log_text` / `open_log_dir` / `log_enabled` / `set_log_enabled` | 运行日志的读取、清空、分享、级别与记录开关 |
 | `app_platform` / `list_fonts` / `copy_text` / `open_url` | 平台判断、字体列表、剪贴板与外部链接 |
 
 ## 文档
@@ -186,11 +187,12 @@ Starveil/
 - **窗口全黑**：部分环境下 WebView2 的 GPU 进程起不来。程序建窗前会检测进程是否处于 Job 中，
   是则自动关闭 GPU 沙箱并记住结论（`%LOCALAPPDATA%\Starveil\gpu-sandbox-broken.flag`）。
   需要手动控制时用 `STARVEIL_FORCE_GPU_SANDBOX=1` 或 `STARVEIL_DISABLE_GPU_SANDBOX=1`。
-- **运行日志**：Windows 在 `%LOCALAPPDATA%\Starveil\starveil.log`，Android 在
+- **运行日志**：Windows 在 `%LOCALAPPDATA%\Starveil\starveil.log`（便携模式在 exe 同级 `data`），Android 在
   `/data/data/com.banlany.starveil/files/logs/starveil.log`。设置 → 关于 → 运行日志里可以直接查看、
   复制、分享或清空，也能临时切到「调试」级别；单文件超过 512KB 轮转为 `starveil.log.1`，
   只保留上一份。记录内容含请求失败、播放器错误、弹幕断连、panic 与前端未捕获异常，
   不含 Cookie。反馈问题时请附上。日志级别也可在启动前用 `STARVEIL_LOG=debug|info|warn|error` 指定。
+  同一面板可关闭记录：关闭后不再写入新内容，已有日志保留，状态在重启后仍有效。
 - **画面比所选档位低**：先确认设置 → 账号里该平台是已登录。斗鱼按登录态与设备号分配码流，
   身份对不上时档位名不变、实际给低码率流。日志里有一行
   `[douyu] 取流 … 清晰度=原画1080P60 登录=是 直链=xxx.flv`，直链带 `_4000`、`_900`

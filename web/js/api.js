@@ -308,6 +308,16 @@ export const api = {
     const next = await call('set_log_level', { level });
     return typeof next === 'string' ? next : level;
   },
+  /// 是否记录日志。浏览器演示模式没有后端，按开启显示。
+  async logEnabled() {
+    if (!invoke) return true;
+    return Boolean(await call('log_enabled'));
+  },
+  /// 开关日志记录；关闭后不再写入新内容，已有日志保留。
+  async setLogEnabled(enabled) {
+    if (!invoke) return Boolean(enabled);
+    return Boolean(await call('set_log_enabled', { enabled: Boolean(enabled) }));
+  },
   /// 安卓分享一段文本；桌面端由调用方改成复制到剪贴板。
   shareLogText(text) {
     return call('share_log_text', { text });

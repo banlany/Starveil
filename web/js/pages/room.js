@@ -451,9 +451,9 @@ export function renderRoom(ctx, params = {}) {
     event.stopPropagation();
   }, true);
 
-  // ------------------------------------------------------------ 滑动手势
+  // ------------------------------------------------------------ 亮度 / 音量
 
-  // 左半屏上下滑调亮度（遮罩），右半屏调音量。只在触屏上启用，鼠标拖动会误触。
+  // 左半屏上下滑调亮度，右半屏调音量。只在触屏上启用，鼠标拖动会误触。
   const gestureDim = $('gesture-dim');
   const gestureHud = $('gesture-hud');
   const gestureHudText = gestureHud.querySelector('span');
@@ -480,14 +480,11 @@ export function renderRoom(ctx, params = {}) {
     }
     const touch = event.touches[0];
     const rect = stage.getBoundingClientRect();
-    const rightHalf = touch.clientX - rect.left >= rect.width / 2;
-    // 移动端音量由系统音量键控制，右半屏不接管。
-    if (IS_MOBILE && rightHalf) return;
     gesture.pending = true;
     gesture.active = false;
     gesture.x = touch.clientX;
     gesture.y = touch.clientY;
-    gesture.side = rightHalf ? 'right' : 'left';
+    gesture.side = touch.clientX - rect.left >= rect.width / 2 ? 'right' : 'left';
     gesture.base = gesture.side === 'left' ? brightness : video.muted ? 0 : video.volume;
   }
 
@@ -527,10 +524,28 @@ export function renderRoom(ctx, params = {}) {
     gesture.active = false;
   }
 
-  stage.addEventListener('touchstart', onGestureStart, { passive: true });
-  stage.addEventListener('touchmove', onGestureMove, { passive: false });
-  stage.addEventListener('touchend', onGestureEnd, { passive: true });
-  stage.addEventListener('touchcancel', onGestureEnd, { passive: true });
+  // 桌面没有触屏手势，改用滚轮调音量：一格（deltaY 100）约 8%。
+  function onWheel(event) {
+    if (!state.settings.live.gesture) return;
+    event.preventDefault();
+    const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+    const base = video.muted ? 0 : video.volume;
+    const value = Math.min(1, Math.max(0, base - delta * 0.0008));
+    video.volume = value;
+    video.muted = value === 0;
+    session.lastVolume = value || session.lastVolume;
+    updateVolumeIcon();
+    showHud(`音量 ${Math.round(value * 100)}%`);
+  }
+
+  if (IS_MOBILE) {
+    stage.addEventListener('touchstart', onGestureStart, { passive: true });
+    stage.addEventListener('touchmove', onGestureMove, { passive: false });
+    stage.addEventListener('touchend', onGestureEnd, { passive: true });
+    stage.addEventListener('touchcancel', onGestureEnd, { passive: true });
+  } else {
+    stage.addEventListener('wheel', onWheel, { passive: false });
+  }
 
   // ------------------------------------------------------------ 弹幕渲染
 
@@ -3987,6 +4002,11 @@ export function renderRoom(ctx, params = {}) {
     if (event.key === 'd' || event.key === 'D') {
       event.preventDefault();
       setDanmakuEnabled(!session.danmakuEnabled);
+      return;
+    }
+    if (event.key === 's' || event.key === 'S') {
+      event.preventDefault();
+      toggleMute();
       return;
     }
     if (event.key === 'ArrowUp') {
