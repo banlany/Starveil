@@ -31,12 +31,12 @@ const BIG_EMOJI_LINE_OPTIONS = [1, 2, 3, 4, 5];
 
 const DEFAULT_BIG_EMOJI_LINES = 2;
 
-/// 性能档位：只调整绘制成本与实例上限，不改字号、颜色、区域。
+/// 性能档位：只调整绘制成本，不改字号、颜色、区域。
 /// 阴影一律关闭；移动端 DPR 上限 2。
 const PERF_PROFILES = {
-  balanced: { maxStored: 1500, dprCap: IS_MOBILE ? 2 : 0, minSpace: 26, sendScale: 1, noStroke: false },
-  smooth: { maxStored: 1000, dprCap: 1.75, minSpace: 22, sendScale: 0.8, noStroke: false },
-  ultra: { maxStored: 700, dprCap: 1.25, minSpace: 18, sendScale: 0.6, noStroke: true },
+  balanced: { dprCap: IS_MOBILE ? 2 : 0, minSpace: 26, sendScale: 1, noStroke: false },
+  smooth: { dprCap: 1.75, minSpace: 22, sendScale: 0.8, noStroke: false },
+  ultra: { dprCap: 1.25, minSpace: 18, sendScale: 0.6, noStroke: true },
 };
 
 /// 性能档位与帧率选项表，设置页与直播间共用。
@@ -157,6 +157,7 @@ export function createDanmakuLayer(container, video, config = null) {
     resizeHandle: 0,
     // 定时确认渲染循环还在跑（见下方 keepAlive）
     keepAliveTimer: 0,
+    pruneTimer: 0,
     enabled: true,
     width: 0,
     height: 0,
@@ -364,8 +365,7 @@ export function createDanmakuLayer(container, video, config = null) {
         }
       }
     }
-    // 计数归零，下一轮重新累计（id 走 session.seq，不会因此重复）。
-    session.sent = 0;
+    // 计数不清零：id 走 session.seq，与回收无关；清零会让调试时看不到实际上屏数。
     session.pruned += removed.size;
     return removed.size;
   }
@@ -736,14 +736,22 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     };
     if (barrageType !== 'scroll') option.duration = 4200;
     const calc = renderer.barrageLayoutCalculate;
-    const before = calc?.scrollBarrageInstances.length || 0;
     // 轨道被重排清空时先补回来，否则这条弹幕拿到 undefined 的 top、整层都看不见。
     ensureTracks();
+    // 同一批的 time 相同，库按时间二分插入，新实例不一定落在数组末尾；
+    // 用发送前后的差集认它，取末尾会认成别人，满轨撤下时删错对象、实例只增不减。
+    const list = calc
+      ? barrageType === 'scroll'
+        ? calc.scrollBarrageInstances
+        : barrageType === 'senior'
+          ? calc.seniorBarrageInstances
+          : calc.fixedBarrageInstances
+      : null;
+    const before = list ? new Set(list) : null;
     let created = null;
     try {
       renderer.send(option);
-      const instances = calc?.scrollBarrageInstances;
-      if (instances && instances.length > before) created = instances[instances.length - 1];
+      if (list) created = list.find((item) => !before.has(item)) || null;
     } catch {
       /* 库对个别非法参数会抛错，忽略单条不影响其他弹幕 */
       return 'dropped';
@@ -803,6 +811,12 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     const renderer = session.renderer;
     if (renderer && !renderer.animationHandle) renderer.play();
   }, 5000);
+
+  // 按时间回收过期实例。库不清除 canShow 集合，每帧都要 filter 整个数组并新建数组，
+  // 集合越长 GC 停顿越频繁；按条数触发在慢速弹幕下太迟，这里固定间隔做一次。
+  session.pruneTimer = setInterval(() => {
+    if (!session.destroyed) pruneEnded();
+  }, 1000);
 
   // 调试句柄：在控制台里可以查 sent / queued / renderer 状态，也能手动塞一条弹幕试样式。
   const api = {
@@ -880,13 +894,9 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
     prune() {
       return pruneEnded();
     },
-    /** 已收下的弹幕数量，用于判断是否需要回收 */
+    /** 累计上屏条数（回收不清零），调试用 */
     get sent() {
       return session.sent;
-    },
-    /** 回收阈值随性能档位变化：越极速越早清理，控制每帧遍历的实例数 */
-    get limit() {
-      return profile().maxStored;
     },
     destroy() {
       session.destroyed = true;
@@ -894,6 +904,8 @@ function fitEmoticon(width, height, fontSize, lines = 0) {
       clearTimeout(session.queueTimer);
       clearInterval(session.keepAliveTimer);
       session.keepAliveTimer = 0;
+      clearInterval(session.pruneTimer);
+      session.pruneTimer = 0;
       if (session.resizeHandle) cancelAnimationFrame(session.resizeHandle);
       session.resizeHandle = 0;
       session.observer?.disconnect();

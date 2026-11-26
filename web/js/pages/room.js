@@ -639,8 +639,6 @@ export function renderRoom(ctx, params = {}) {
     if (!session.danmakuEnabled || message.system || message.sc) return false;
     if (blocked(message) || deduped(message)) return false;
     if (!danmaku) return false;
-    // 用 prune() 摘掉已下屏的弹幕，避免数组无限增长。
-    if (danmaku.sent > danmaku.limit) danmaku.prune();
     danmaku.send(message);
     return true;
   }
